@@ -30,7 +30,7 @@ namespace org::apache::nifi::minifi::extensions::gcp {
 class DeleteGCSObject : public GCSProcessor {
  public:
   explicit DeleteGCSObject(std::string name, const utils::Identifier& uuid = {})
-      : GCSProcessor(std::move(name), uuid, core::logging::LoggerFactory<DeleteGCSObject>::getLogger()) {
+      : GCSProcessor(std::move(name), uuid, core::logging::LoggerFactory<DeleteGCSObject>::getLogger(uuid)) {
   }
   ~DeleteGCSObject() override = default;
 
@@ -52,6 +52,11 @@ class DeleteGCSObject : public GCSProcessor {
   EXTENSIONAPI static const core::Relationship Success;
   EXTENSIONAPI static const core::Relationship Failure;
   static auto relationships() { return std::array{Success, Failure}; }
+
+  EXTENSIONAPI static const core::OutputAttribute Message;
+  EXTENSIONAPI static const core::OutputAttribute Reason;
+  EXTENSIONAPI static const core::OutputAttribute Domain;
+  static auto outputAttributes() { return std::array{Message, Reason, Domain}; }
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;

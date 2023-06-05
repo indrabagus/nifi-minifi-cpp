@@ -28,6 +28,10 @@ namespace org::apache::nifi::minifi::state {
 
 class ConnectionStore {
  public:
+  const std::unordered_map<utils::Identifier, minifi::Connection*>& getConnections() {
+    return connections_;
+  }
+
   void updateConnection(minifi::Connection* connection) {
     if (nullptr != connection) {
       connections_[connection->getUUID()] = connection;
@@ -40,18 +44,16 @@ class ConnectionStore {
     for (const auto& [_, connection] : connections_) {
       metrics.push_back({"queue_data_size", static_cast<double>(connection->getQueueDataSize()),
         {{"connection_uuid", connection->getUUIDStr()}, {"connection_name", connection->getName()}, {"metric_class", metric_class}}});
-      metrics.push_back({"queue_data_size_max", static_cast<double>(connection->getMaxQueueDataSize()),
+      metrics.push_back({"queue_data_size_max", static_cast<double>(connection->getBackpressureThresholdDataSize()),
         {{"connection_uuid", connection->getUUIDStr()}, {"connection_name", connection->getName()}, {"metric_class", metric_class}}});
       metrics.push_back({"queue_size", static_cast<double>(connection->getQueueSize()),
         {{"connection_uuid", connection->getUUIDStr()}, {"connection_name", connection->getName()}, {"metric_class", metric_class}}});
-      metrics.push_back({"queue_size_max", static_cast<double>(connection->getMaxQueueSize()),
+      metrics.push_back({"queue_size_max", static_cast<double>(connection->getBackpressureThresholdCount()),
         {{"connection_uuid", connection->getUUIDStr()}, {"connection_name", connection->getName()}, {"metric_class", metric_class}}});
     }
 
     return metrics;
   }
-
-  virtual ~ConnectionStore() = default;
 
  protected:
   std::unordered_map<utils::Identifier, minifi::Connection*> connections_;

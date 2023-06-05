@@ -45,10 +45,16 @@ void RESTSender::initialize(core::controller::ControllerServiceProvider* control
     std::string ssl_context_service_str;
     configure->get(Configuration::nifi_c2_rest_url, "c2.rest.url", rest_uri_);
     configure->get(Configuration::nifi_c2_rest_url_ack, "c2.rest.url.ack", ack_uri_);
-    if (configure->get(Configuration::nifi_c2_rest_ssl_context_service, "c2.rest.ssl.context.service", ssl_context_service_str)) {
-      auto service = controller->getControllerService(ssl_context_service_str);
-      if (nullptr != service) {
+    if (controller && configure->get(Configuration::nifi_c2_rest_ssl_context_service, "c2.rest.ssl.context.service", ssl_context_service_str)) {
+      if (auto service = controller->getControllerService(ssl_context_service_str)) {
         ssl_context_service_ = std::static_pointer_cast<minifi::controllers::SSLContextService>(service);
+      }
+    }
+    if (nullptr == ssl_context_service_) {
+      std::string ssl_context_str;
+      if (configure->get(Configure::nifi_remote_input_secure, ssl_context_str) && org::apache::nifi::minifi::utils::StringUtils::toBool(ssl_context_str).value_or(false)) {
+        ssl_context_service_ = std::make_shared<minifi::controllers::SSLContextService>("RESTSenderSSL", configure);
+        ssl_context_service_->onEnable();
       }
     }
     if (auto req_encoding_str = configure->get(Configuration::nifi_c2_rest_request_encoding)) {
@@ -94,7 +100,8 @@ void RESTSender::setSecurityContext(extensions::curl::HTTPClient &client, const 
   client.initialize(type, url, generatedService);
 }
 
-C2Payload RESTSender::sendPayload(const std::string& url, const Direction direction, const C2Payload &payload, std::optional<std::string> data) {
+C2Payload RESTSender::sendPayload(const std::string& url, const Direction direction, const C2Payload &payload, std::optional<std::string> data,
+                                  const std::optional<std::vector<std::string>>& accepted_formats) {
   if (url.empty()) {
     return {payload.getOperation(), state::UpdateState::READ_ERROR};
   }
@@ -162,6 +169,9 @@ C2Payload RESTSender::sendPayload(const std::string& url, const Direction direct
   if (payload.getOperation() == Operation::TRANSFER) {
     auto read = std::make_unique<utils::HTTPReadCallback>(std::numeric_limits<size_t>::max());
     client.setReadCallback(std::move(read));
+    if (accepted_formats && !accepted_formats->empty()) {
+      client.setRequestHeader("Accept", utils::StringUtils::join(", ", accepted_formats.value()));
+    }
   } else {
     // Due to a bug in MiNiFi C2 the Accept header is not handled properly thus we need to exclude it to be compatible
     // TODO(lordgamez): The header should be re-added when the issue in MiNiFi C2 is fixed: https://issues.apache.org/jira/browse/NIFI-10535
@@ -180,7 +190,7 @@ C2Payload RESTSender::sendPayload(const std::string& url, const Direction direct
   const auto response_body_bytes = gsl::make_span(client.getResponseBody()).as_span<const std::byte>();
   logger_->log_trace("Received response: \"%s\"", [&] {return utils::StringUtils::escapeUnprintableBytes(response_body_bytes);});
   if (isOkay && !clientError && !serverError) {
-    if (payload.isRaw()) {
+    if (accepted_formats) {
       C2Payload response_payload(payload.getOperation(), state::UpdateState::READ_COMPLETE, true);
       response_payload.setRawData(response_body_bytes);
       return response_payload;
@@ -189,6 +199,10 @@ C2Payload RESTSender::sendPayload(const std::string& url, const Direction direct
   } else {
     return {payload.getOperation(), state::UpdateState::READ_ERROR};
   }
+}
+
+C2Payload RESTSender::fetch(const std::string& url, const std::vector<std::string>& accepted_formats, bool /*async*/) {
+  return sendPayload(url, Direction::RECEIVE, C2Payload(Operation::TRANSFER, true), std::nullopt, accepted_formats);
 }
 
 REGISTER_RESOURCE(RESTSender, DescriptionOnly);

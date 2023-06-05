@@ -97,9 +97,9 @@ struct PutObjectResult {
 };
 
 struct RequestParameters {
-  RequestParameters(Aws::Auth::AWSCredentials creds, Aws::Client::ClientConfiguration  config)
-    : credentials(std::move(creds))
-    , client_config(std::move(config)) {}
+  RequestParameters(Aws::Auth::AWSCredentials creds, Aws::Client::ClientConfiguration config)
+    : credentials(std::move(creds)),
+      client_config(std::move(config)) {}
   Aws::Auth::AWSCredentials credentials;
   Aws::Client::ClientConfiguration client_config;
 
@@ -126,6 +126,7 @@ struct PutObjectRequestParameters : public RequestParameters {
   std::string read_acl_user_list;
   std::string write_acl_user_list;
   std::string canned_acl;
+  bool use_virtual_addressing = true;
 };
 
 struct DeleteObjectRequestParameters : public RequestParameters {

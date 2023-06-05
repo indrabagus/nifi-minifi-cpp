@@ -109,7 +109,7 @@ class LinuxPowerManagerService : public ThreadManagementService {
 
   void yield() override;
 
-  bool isRunning() override;
+  bool isRunning() const override;
 
   bool isWorkAvailable() override;
 
@@ -133,7 +133,7 @@ class LinuxPowerManagerService : public ThreadManagementService {
   std::string status_keyword_;
 
  private:
-  std::shared_ptr<core::logging::Logger> logger_ = core::logging::LoggerFactory<LinuxPowerManagerService>::getLogger();
+  std::shared_ptr<core::logging::Logger> logger_ = core::logging::LoggerFactory<LinuxPowerManagerService>::getLogger(uuid_);
 };
 
 }  // namespace org::apache::nifi::minifi::controllers

@@ -15,39 +15,36 @@
  * limitations under the License.
  */
 
-#ifndef LIBMINIFI_INCLUDE_CORE_REPOSITORY_VOLATILECONTENTREPOSITORY_H_
-#define LIBMINIFI_INCLUDE_CORE_REPOSITORY_VOLATILECONTENTREPOSITORY_H_
+#pragma once
 
 #include <map>
 #include <memory>
 #include <string>
 
-#include "core/Core.h"
 #include "AtomicRepoEntries.h"
 #include "io/AtomicEntryStream.h"
 #include "../ContentRepository.h"
-#include "core/repository/VolatileRepository.h"
 #include "properties/Configure.h"
 #include "core/Connectable.h"
 #include "core/logging/LoggerFactory.h"
 #include "utils/GeneralUtils.h"
+#include "VolatileRepositoryData.h"
+#include "utils/Literals.h"
 
 namespace org::apache::nifi::minifi::core::repository {
-
 /**
  * Purpose: Stages content into a volatile area of memory. Note that when the maximum number
  * of entries is consumed we will rollback a session to wait for others to be freed.
  */
-class VolatileContentRepository : public core::ContentRepository, public core::repository::VolatileRepository<ResourceClaim::Path> {
+class VolatileContentRepository : public core::ContentRepository {
  public:
   static const char *minimal_locking;
 
   explicit VolatileContentRepository(std::string name = getClassName<VolatileContentRepository>())
-      : core::SerializableComponent(name),
-        core::repository::VolatileRepository<ResourceClaim::Path>(name),
-        minimize_locking_(true),
-        logger_(logging::LoggerFactory<VolatileContentRepository>::getLogger()) {
-    max_count_ = 15000;
+    : core::ContentRepository(name),
+      repo_data_(15000, static_cast<size_t>(10_MiB * 0.75)),
+      minimize_locking_(true),
+      logger_(logging::LoggerFactory<VolatileContentRepository>::getLogger()) {
   }
 
   ~VolatileContentRepository() override {
@@ -61,12 +58,20 @@ class VolatileContentRepository : public core::ContentRepository, public core::r
     }
   }
 
-  bool start() override {
-    return true;
+  uint64_t getRepositorySize() const override {
+    return repo_data_.getRepositorySize();
   }
 
-  bool stop() override {
-    return true;
+  uint64_t getMaxRepositorySize() const override {
+    return repo_data_.getMaxRepositorySize();
+  }
+
+  uint64_t getRepositoryEntryCount() const override {
+    return master_list_.size();
+  }
+
+  bool isFull() const override {
+    return repo_data_.isFull();
   }
 
   /**
@@ -99,25 +104,26 @@ class VolatileContentRepository : public core::ContentRepository, public core::r
     return remove(claim);
   }
 
+  void clearOrphans() override {
+    // there are no persisted orphans to delete
+  }
+
+ protected:
   /**
    * Closes the claim.
    * @return whether or not the claim is associated with content stored in volatile memory.
    */
-  bool remove(const minifi::ResourceClaim &claim) override;
+  bool removeKey(const std::string& content_path) override;
 
  private:
+  VolatileRepositoryData repo_data_;
   bool minimize_locking_;
 
   // mutex and master list that represent a cache of Atomic entries. this exists so that we don't have to walk the atomic entry list.
   // The idea is to reduce the computational complexity while keeping access as maximally lock free as we can.
   std::mutex map_mutex_;
-
   std::map<ResourceClaim::Path, AtomicEntry<ResourceClaim::Path>*> master_list_;
-
-  // logger
   std::shared_ptr<logging::Logger> logger_;
 };
 
 }  // namespace org::apache::nifi::minifi::core::repository
-
-#endif  // LIBMINIFI_INCLUDE_CORE_REPOSITORY_VOLATILECONTENTREPOSITORY_H_

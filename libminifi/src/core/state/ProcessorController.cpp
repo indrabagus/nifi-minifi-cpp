@@ -22,9 +22,9 @@
 
 namespace org::apache::nifi::minifi::state {
 
-ProcessorController::ProcessorController(core::Processor& processor, std::shared_ptr<SchedulingAgent> scheduler)
+ProcessorController::ProcessorController(core::Processor& processor, SchedulingAgent& scheduler)
     : processor_(&processor),
-      scheduler_(std::move(scheduler)) {
+      scheduler_(&scheduler) {
 }
 
 ProcessorController::~ProcessorController() = default;
@@ -44,7 +44,7 @@ int16_t ProcessorController::stop() {
   return 0;
 }
 
-bool ProcessorController::isRunning() {
+bool ProcessorController::isRunning() const {
   return processor_->isRunning();
 }
 

@@ -18,6 +18,7 @@
 #pragma once
 
 #include <vector>
+#include <unordered_map>
 #include <string>
 
 #include "properties/Properties.h"
@@ -27,7 +28,7 @@
 namespace org::apache::nifi::minifi {
 
 namespace core {
-  struct ConfigurationProperty;
+class PropertyValidator;
 }
 
 class Configuration : public Properties {
@@ -51,7 +52,9 @@ class Configuration : public Properties {
   static constexpr const char *nifi_server_name = "nifi.server.name";
   static constexpr const char *nifi_configuration_class_name = "nifi.flow.configuration.class.name";
   static constexpr const char *nifi_flow_repository_class_name = "nifi.flowfile.repository.class.name";
+  static constexpr const char *nifi_flow_repository_rocksdb_compression = "nifi.flowfile.repository.rocksdb.compression";
   static constexpr const char *nifi_content_repository_class_name = "nifi.content.repository.class.name";
+  static constexpr const char *nifi_content_repository_rocksdb_compression = "nifi.content.repository.rocksdb.compression";
   static constexpr const char *nifi_provenance_repository_class_name = "nifi.provenance.repository.class.name";
   static constexpr const char *nifi_volatile_repository_options_flowfile_max_count = "nifi.volatile.repository.options.flowfile.max.count";
   static constexpr const char *nifi_volatile_repository_options_flowfile_max_bytes = "nifi.volatile.repository.options.flowfile.max.bytes";
@@ -67,6 +70,11 @@ class Configuration : public Properties {
   static constexpr const char *nifi_provenance_repository_directory_default = "nifi.provenance.repository.directory.default";
   static constexpr const char *nifi_flowfile_repository_directory_default = "nifi.flowfile.repository.directory.default";
   static constexpr const char *nifi_dbcontent_repository_directory_default = "nifi.database.content.repository.directory.default";
+
+  // these are internal properties related to the rocksdb backend
+  static constexpr const char *nifi_flowfile_repository_rocksdb_compaction_period = "nifi.flowfile.repository.rocksdb.compaction.period";
+  static constexpr const char *nifi_dbcontent_repository_rocksdb_compaction_period = "nifi.database.content.repository.rocksdb.compaction.period";
+
   static constexpr const char *nifi_remote_input_secure = "nifi.remote.input.secure";
   static constexpr const char *nifi_security_need_ClientAuth = "nifi.security.need.ClientAuth";
   static constexpr const char *nifi_sensitive_props_additional_keys = "nifi.sensitive.props.additional.keys";
@@ -120,11 +128,16 @@ class Configuration : public Properties {
   static constexpr const char *nifi_c2_mqtt_update_topic = "nifi.c2.mqtt.update.topic";
 
   // state management options
-  static constexpr const char *nifi_state_management_provider_local = "nifi.state.management.provider.local";
-  static constexpr const char *nifi_state_management_provider_local_class_name = "nifi.state.management.provider.local.class.name";
-  static constexpr const char *nifi_state_management_provider_local_always_persist = "nifi.state.management.provider.local.always.persist";
-  static constexpr const char *nifi_state_management_provider_local_auto_persistence_interval = "nifi.state.management.provider.local.auto.persistence.interval";
-  static constexpr const char *nifi_state_management_provider_local_path = "nifi.state.management.provider.local.path";
+  static constexpr const char *nifi_state_storage_local = "nifi.state.storage.local";
+  static constexpr const char *nifi_state_storage_local_old = "nifi.state.management.provider.local";
+  static constexpr const char *nifi_state_storage_local_class_name = "nifi.state.storage.local.class.name";
+  static constexpr const char *nifi_state_storage_local_class_name_old = "nifi.state.management.provider.local.class.name";
+  static constexpr const char *nifi_state_storage_local_always_persist = "nifi.state.storage.local.always.persist";
+  static constexpr const char *nifi_state_storage_local_always_persist_old = "nifi.state.management.provider.local.always.persist";
+  static constexpr const char *nifi_state_storage_local_auto_persistence_interval = "nifi.state.storage.local.auto.persistence.interval";
+  static constexpr const char *nifi_state_storage_local_auto_persistence_interval_old = "nifi.state.management.provider.local.auto.persistence.interval";
+  static constexpr const char *nifi_state_storage_local_path = "nifi.state.storage.local.path";
+  static constexpr const char *nifi_state_storage_local_path_old = "nifi.state.management.provider.local.path";
 
   // disk space watchdog options
   static constexpr const char *minifi_disk_space_watchdog_enable = "minifi.disk.space.watchdog.enable";
@@ -172,7 +185,14 @@ class Configuration : public Properties {
   static constexpr const char *nifi_metrics_publisher_prometheus_metrics_publisher_port = "nifi.metrics.publisher.PrometheusMetricsPublisher.port";
   static constexpr const char *nifi_metrics_publisher_metrics = "nifi.metrics.publisher.metrics";
 
-  MINIFIAPI static const std::vector<core::ConfigurationProperty> CONFIGURATION_PROPERTIES;
+  // Controller socket options
+  static constexpr const char *controller_socket_enable = "controller.socket.enable";
+  static constexpr const char *controller_socket_local_any_interface = "controller.socket.local.any.interface";
+  static constexpr const char *controller_socket_host = "controller.socket.host";
+  static constexpr const char *controller_socket_port = "controller.socket.port";
+  static constexpr const char *controller_ssl_context_service = "controller.ssl.context.service";
+
+  MINIFIAPI static const std::unordered_map<std::string_view, gsl::not_null<const core::PropertyValidator*>> CONFIGURATION_PROPERTIES;
   MINIFIAPI static const std::array<const char*, 2> DEFAULT_SENSITIVE_PROPERTIES;
 
   static std::vector<std::string> mergeProperties(std::vector<std::string> properties,

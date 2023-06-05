@@ -17,8 +17,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef EXTENSIONS_STANDARD_PROCESSORS_PROCESSORS_ROUTEONATTRIBUTE_H_
-#define EXTENSIONS_STANDARD_PROCESSORS_PROCESSORS_ROUTEONATTRIBUTE_H_
+#pragma once
 
 #include <map>
 #include <memory>
@@ -39,7 +38,10 @@ class RouteOnAttribute : public core::Processor {
       : core::Processor(std::move(name), uuid) {
   }
 
-  EXTENSIONAPI static constexpr const char* Description = "Routes FlowFiles based on their Attributes using the Attribute Expression Language.";
+  EXTENSIONAPI static constexpr const char* Description = "Routes FlowFiles based on their Attributes using the Attribute Expression Language.\n\n"
+      "Any number of user-defined dynamic properties can be added, which all support the Attribute Expression Language. Relationships matching the name of the properties will be added.\n"
+      "FlowFiles will be routed to all the relationships whose matching property evaluates to \"true\". "
+      "Unmatched FlowFiles will be routed to the \"unmatched\" relationship, while failed ones to \"failure\".";
 
   static auto properties() { return std::array<core::Property, 0>{}; }
 
@@ -59,11 +61,9 @@ class RouteOnAttribute : public core::Processor {
   void initialize() override;
 
  private:
-  std::shared_ptr<core::logging::Logger> logger_ = core::logging::LoggerFactory<RouteOnAttribute>::getLogger();
+  std::shared_ptr<core::logging::Logger> logger_ = core::logging::LoggerFactory<RouteOnAttribute>::getLogger(uuid_);
   std::map<std::string, core::Property> route_properties_;
   std::map<std::string, core::Relationship> route_rels_;
 };
 
 }  // namespace org::apache::nifi::minifi::processors
-
-#endif  // EXTENSIONS_STANDARD_PROCESSORS_PROCESSORS_ROUTEONATTRIBUTE_H_

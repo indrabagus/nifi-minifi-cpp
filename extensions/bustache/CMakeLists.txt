@@ -25,7 +25,6 @@ include(BundledBustache)
 use_bundled_bustache(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR})
 
 include(${CMAKE_SOURCE_DIR}/extensions/ExtensionHeader.txt)
-cmake_minimum_required(VERSION 2.6)
 
 file(GLOB SOURCES "*.cpp")
 

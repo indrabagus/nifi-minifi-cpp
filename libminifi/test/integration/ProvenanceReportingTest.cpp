@@ -57,13 +57,11 @@ int main(int argc, char **argv) {
   std::shared_ptr<minifi::io::StreamFactory> stream_factory = minifi::io::StreamFactory::getInstance(configuration);
   std::shared_ptr<core::ContentRepository> content_repo = std::make_shared<core::repository::VolatileContentRepository>();
   std::unique_ptr<core::FlowConfiguration> yaml_ptr = std::make_unique<core::YamlConfiguration>(
-      core::ConfigurationContext{test_repo, test_repo, content_repo, stream_factory, configuration, test_file_location});
+      core::ConfigurationContext{ test_repo, content_repo, stream_factory, configuration, test_file_location});
 
-  const auto controller = std::make_shared<minifi::FlowController>(
-      test_repo, test_flow_repo, configuration, std::move(yaml_ptr), content_repo, DEFAULT_ROOT_GROUP_NAME,
-      std::make_shared<utils::file::FileSystem>(), []{});
+  const auto controller = std::make_shared<minifi::FlowController>(test_repo, test_flow_repo, configuration, std::move(yaml_ptr), content_repo);
 
-  core::YamlConfiguration yaml_config({test_repo, test_repo, content_repo, stream_factory, configuration, test_file_location});
+  core::YamlConfiguration yaml_config({test_repo, content_repo, stream_factory, configuration, test_file_location});
 
   std::shared_ptr<core::ProcessGroup> pg = yaml_config.getRoot();
   std::shared_ptr<org::apache::nifi::minifi::io::SocketContext> socket_context = std::make_shared<org::apache::nifi::minifi::io::SocketContext>(std::make_shared<minifi::Configure>());
@@ -74,7 +72,7 @@ int main(int argc, char **argv) {
 
   assert(verifyLogLinePresenceInPollTime(std::chrono::milliseconds(std::chrono::seconds(2)), "Add processor SiteToSiteProvenanceReportingTask into process group MiNiFi Flow"));
 
-  controller->waitUnload(60000);
+  controller->waitUnload(60s);
   LogTestController::getInstance().reset();
   rmdir("./content_repository");
   rmdir("/tmp/aljs39/");

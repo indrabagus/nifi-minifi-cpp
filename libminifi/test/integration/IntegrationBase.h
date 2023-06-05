@@ -24,6 +24,8 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
+
 #include "core/logging/Logger.h"
 #include "core/ProcessGroup.h"
 #include "core/yaml/YamlConfiguration.h"
@@ -36,6 +38,8 @@
 #include "controllers/SSLContextService.h"
 #include "HTTPUtils.h"
 #include "utils/FifoExecutor.h"
+#include "core/state/MetricsPublisherFactory.h"
+#include "c2/C2Utils.h"
 
 namespace minifi = org::apache::nifi::minifi;
 namespace core = minifi::core;
@@ -113,6 +117,7 @@ class IntegrationBase {
 
   void configureSecurity();
   std::shared_ptr<minifi::Configure> configuration;
+  std::unique_ptr<minifi::state::response::ResponseNodeLoader> response_node_loader_;
   std::unique_ptr<minifi::FlowController> flowController_;
   std::chrono::milliseconds wait_time_;
   std::string port, scheme;
@@ -146,7 +151,7 @@ void IntegrationBase::run(const std::optional<std::filesystem::path>& test_file_
   if (test_file_location) {
     configuration->set(minifi::Configure::nifi_flow_configuration_file, test_file_location->string());
   }
-  configuration->set(minifi::Configure::nifi_state_management_provider_local_class_name, "UnorderedMapKeyValueStoreService");
+  configuration->set(minifi::Configure::nifi_state_storage_local_class_name, "VolatileMapStateStorage");
 
   configureC2();
   configureFullHeartbeat();
@@ -174,15 +179,15 @@ void IntegrationBase::run(const std::optional<std::filesystem::path>& test_file_
       filesystem = std::make_shared<utils::file::FileSystem>();
     }
 
-    auto flow_config = std::make_unique<core::YamlConfiguration>(core::ConfigurationContext{test_repo, test_repo, content_repo, stream_factory, configuration, test_file_location, filesystem});
+    auto flow_config = std::make_shared<core::YamlConfiguration>(core::ConfigurationContext{test_repo, content_repo, stream_factory, configuration, test_file_location, filesystem});
 
     auto controller_service_provider = flow_config->getControllerServiceProvider();
     char state_dir_name_template[] = "/var/tmp/integrationstate.XXXXXX";
     state_dir = utils::file::create_temp_directory(state_dir_name_template);
-    if (!configuration->get(minifi::Configure::nifi_state_management_provider_local_path)) {
-      configuration->set(minifi::Configure::nifi_state_management_provider_local_path, state_dir.string());
+    if (!configuration->get(minifi::Configure::nifi_state_storage_local_path)) {
+      configuration->set(minifi::Configure::nifi_state_storage_local_path, state_dir.string());
     }
-    core::ProcessContext::getOrCreateDefaultStateManagerProvider(controller_service_provider.get(), configuration);
+    core::ProcessContext::getOrCreateDefaultStateStorage(controller_service_provider.get(), configuration);
 
     std::shared_ptr<core::ProcessGroup> pg(flow_config->getRoot());
     queryRootProcessGroup(pg);
@@ -191,8 +196,11 @@ void IntegrationBase::run(const std::optional<std::filesystem::path>& test_file_
       ++restart_requested_count_;
       running = true;
     };
-    flowController_ = std::make_unique<minifi::FlowController>(test_repo, test_flow_repo, configuration, std::move(flow_config), content_repo, DEFAULT_ROOT_GROUP_NAME,
-        std::make_shared<utils::file::FileSystem>(), request_restart);
+
+    std::vector<std::shared_ptr<core::RepositoryMetricsSource>> repo_metric_sources{test_repo, test_flow_repo, content_repo};
+    auto metrics_publisher_store = std::make_unique<minifi::state::MetricsPublisherStore>(configuration, repo_metric_sources, flow_config);
+    flowController_ = std::make_unique<minifi::FlowController>(test_repo, test_flow_repo, configuration,
+      std::move(flow_config), content_repo, std::move(metrics_publisher_store), filesystem, request_restart);
     flowController_->load();
     updateProperties(*flowController_);
     flowController_->start();
@@ -209,8 +217,7 @@ void IntegrationBase::run(const std::optional<std::filesystem::path>& test_file_
       // Only stop servers if we're shutting down
       shutdownBeforeFlowController();
     }
-    flowController_->unload();
-    flowController_->stopC2();
+    flowController_->stop();
   }
 
   cleanup();
@@ -260,7 +267,7 @@ cmd_args parse_cmdline_args_with_url(int argc, char ** argv) {
 #ifdef WIN32
     if (url.find("localhost") != std::string::npos) {
       std::string port, scheme, path;
-      parse_http_components(url, port, scheme, path);
+      minifi::utils::parse_http_components(url, port, scheme, path);
       url = scheme + "://" + org::apache::nifi::minifi::io::Socket::getMyHostName() + ":" + port +  path;
     }
 #endif

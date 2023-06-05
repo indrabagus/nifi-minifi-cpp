@@ -22,11 +22,7 @@
 #include "ColumnHandle.h"
 #include "RocksDbInstance.h"
 
-namespace org {
-namespace apache {
-namespace nifi {
-namespace minifi {
-namespace internal {
+namespace org::apache::nifi::minifi::internal {
 
 OpenRocksDb::OpenRocksDb(RocksDbInstance& db, gsl::not_null<std::shared_ptr<rocksdb::DB>> impl, gsl::not_null<std::shared_ptr<ColumnHandle>> column)
     : db_(&db), impl_(std::move(impl)), column_(std::move(column)) {}
@@ -95,6 +91,14 @@ rocksdb::Status OpenRocksDb::FlushWAL(bool sync) {
   return result;
 }
 
+rocksdb::Status OpenRocksDb::RunCompaction() {
+  rocksdb::Status result = impl_->CompactRange(rocksdb::CompactRangeOptions{
+    .bottommost_level_compaction = rocksdb::BottommostLevelCompaction::kForce
+  }, nullptr, nullptr);
+  handleResult(result);
+  return result;
+}
+
 void OpenRocksDb::handleResult(const rocksdb::Status& result) {
   if (result == rocksdb::Status::NoSpace()) {
     db_->invalidate();
@@ -118,8 +122,17 @@ rocksdb::DB* OpenRocksDb::get() {
   return impl_.get();
 }
 
-}  // namespace internal
-}  // namespace minifi
-}  // namespace nifi
-}  // namespace apache
-}  // namespace org
+std::optional<uint64_t> OpenRocksDb::getApproximateSizes() const {
+  const rocksdb::SizeApproximationOptions options{ .include_memtables = true };
+  std::string del_char_str(1, static_cast<char>(127));
+  std::string empty_str;
+  const rocksdb::Range range(empty_str, del_char_str);
+  uint64_t value = 0;
+  auto status = impl_->GetApproximateSizes(options, column_->handle.get(), &range, 1, &value);
+  if (status.ok()) {
+    return value;
+  }
+  return std::nullopt;
+}
+
+}  // namespace org::apache::nifi::minifi::internal

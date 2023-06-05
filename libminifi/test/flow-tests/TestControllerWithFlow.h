@@ -21,13 +21,15 @@
 #include <string>
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "FlowController.h"
 #include "unit/ProvenanceTestHelper.h"
+#include "core/yaml/YamlConfiguration.h"
 #include "repository/VolatileContentRepository.h"
 #include "CustomProcessors.h"
 
-class TestControllerWithFlow: public TestController{
+class TestControllerWithFlow: public TestController {
  public:
   explicit TestControllerWithFlow(const char* yamlConfigContent, bool setup_flow = true) {
     LogTestController::getInstance().setTrace<minifi::processors::TestProcessor>();
@@ -49,6 +51,7 @@ class TestControllerWithFlow: public TestController{
     configuration_ = std::make_shared<minifi::Configure>();
     configuration_->setHome(home_.string());
     configuration_->set(minifi::Configure::nifi_flow_configuration_file, yaml_path_.string());
+    configuration_->set(minifi::Configure::nifi_c2_enable, "true");
 
     if (setup_flow) {
       setupFlow();
@@ -63,14 +66,13 @@ class TestControllerWithFlow: public TestController{
     REQUIRE(content_repo->initialize(configuration_));
     std::shared_ptr<minifi::io::StreamFactory> stream_factory = minifi::io::StreamFactory::getInstance(configuration_);
 
-    auto flow = std::make_unique<core::YamlConfiguration>(core::ConfigurationContext{prov_repo, ff_repo, content_repo, stream_factory, configuration_, yaml_path_.string()});
+    auto flow = std::make_shared<core::YamlConfiguration>(core::ConfigurationContext{ff_repo, content_repo, stream_factory, configuration_, yaml_path_.string()});
     auto root = flow->getRoot();
     root_ = root.get();
-    controller_ = std::make_shared<minifi::FlowController>(
-        prov_repo, ff_repo, configuration_,
-        std::move(flow),
-        content_repo, DEFAULT_ROOT_GROUP_NAME,
-        std::make_shared<utils::file::FileSystem>(), []{});
+    std::vector<std::shared_ptr<core::RepositoryMetricsSource>> repo_metric_sources{prov_repo, ff_repo, content_repo};
+    auto metrics_publisher_store = std::make_unique<minifi::state::MetricsPublisherStore>(configuration_, repo_metric_sources, flow);
+    metrics_publisher_store_ = metrics_publisher_store.get();
+    controller_ = std::make_shared<minifi::FlowController>(prov_repo, ff_repo, configuration_, std::move(flow), content_repo, std::move(metrics_publisher_store));
     controller_->load(std::move(root));
   }
 
@@ -81,7 +83,6 @@ class TestControllerWithFlow: public TestController{
   ~TestControllerWithFlow() {
     if (controller_) {
       controller_->stop();
-      controller_->unload();
     }
     LogTestController::getInstance().reset();
   }
@@ -91,4 +92,5 @@ class TestControllerWithFlow: public TestController{
   std::shared_ptr<minifi::Configure> configuration_;
   std::shared_ptr<minifi::FlowController> controller_;
   core::ProcessGroup* root_{nullptr};
+  minifi::state::MetricsPublisherStore* metrics_publisher_store_{nullptr};
 };

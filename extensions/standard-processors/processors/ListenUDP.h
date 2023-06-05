@@ -27,7 +27,7 @@ namespace org::apache::nifi::minifi::processors {
 class ListenUDP : public NetworkListenerProcessor {
  public:
   explicit ListenUDP(const std::string& name, const utils::Identifier& uuid = {})
-    : NetworkListenerProcessor(name, uuid, core::logging::LoggerFactory<ListenUDP>::getLogger()) {
+    : NetworkListenerProcessor(name, uuid, core::logging::LoggerFactory<ListenUDP>::getLogger(uuid)) {
   }
 
   EXTENSIONAPI static constexpr const char* Description = "Listens for incoming UDP datagrams. For each datagram the processor produces a single FlowFile.";
@@ -45,6 +45,10 @@ class ListenUDP : public NetworkListenerProcessor {
 
   EXTENSIONAPI static const core::Relationship Success;
   static auto relationships() { return std::array{Success}; }
+
+  EXTENSIONAPI static const core::OutputAttribute PortOutputAttribute;
+  EXTENSIONAPI static const core::OutputAttribute Sender;
+  static auto outputAttributes() { return std::array{PortOutputAttribute, Sender}; }
 
   void initialize() override;
   void onSchedule(const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSessionFactory>& sessionFactory) override;

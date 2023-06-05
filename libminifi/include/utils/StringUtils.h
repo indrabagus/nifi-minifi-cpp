@@ -14,8 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef LIBMINIFI_INCLUDE_UTILS_STRINGUTILS_H_
-#define LIBMINIFI_INCLUDE_UTILS_STRINGUTILS_H_
+#pragma once
 
 #include <algorithm>
 #include <cstring>
@@ -36,6 +35,9 @@
 #include "utils/FailurePolicy.h"
 #include "utils/gsl.h"
 #include "utils/meta/detected.h"
+#include "range/v3/view/transform.hpp"
+#include "range/v3/range/conversion.hpp"
+#include "range/v3/view/join.hpp"
 
 // libc++ doesn't define operator<=> on strings, and apparently the operator rewrite rules don't automagically make one
 #if defined(_LIBCPP_VERSION) && _LIBCPP_VERSION < 16000
@@ -46,8 +48,7 @@ constexpr std::strong_ordering operator<=>(const std::string& lhs, const std::st
 }
 #endif
 
-namespace org::apache::nifi::minifi {
-namespace utils {
+namespace org::apache::nifi::minifi::utils {
 
 template<class Char>
 struct string_traits;
@@ -86,7 +87,17 @@ class StringUtils {
    */
   static std::optional<bool> toBool(const std::string& input);
 
-  static std::string toLower(std::string_view str);
+  static inline std::string toLower(std::string str) {
+    const auto tolower = [](auto c) { return std::tolower(static_cast<unsigned char>(c)); };
+    std::transform(std::begin(str), std::end(str), std::begin(str), tolower);
+    return str;
+  }
+
+  static inline std::string toUpper(std::string str)  {
+    const auto toupper = [](auto c) { return std::toupper(static_cast<unsigned char>(c)); };
+    std::transform(std::begin(str), std::end(str), std::begin(str), toupper);
+    return str;
+  }
 
   /**
    * Strips the line ending (\n or \r\n) from the end of the input line.
@@ -271,67 +282,40 @@ class StringUtils {
   }
 
   /**
-   * Concatenates strings stored in an arbitrary container using the provided separator.
-   * @tparam TChar char type of the string (char or wchar_t)
-   * @tparam U arbitrary container which has string or wstring value type
-   * @param separator that is inserted between each elements. Type should match the type of strings in container.
-   * @param container that contains the strings to be concatenated
-   * @return the result string
+   * Concatenates elements stored in a container to a string, using the separator.
+   * @param separator that is inserted between the elements (no separator at the end)
+   * @param container that contains the elements to be joined
+   * @param projection function object which can convert an element to a string
+   * @return the elements of the container (transformed by the projection) joined using the separator
    */
-  template<class TChar, class U, typename std::enable_if<std::is_same<typename U::value_type, std::basic_string<TChar>>::value>::type* = nullptr>
-  static std::basic_string<TChar> join(const std::basic_string<TChar>& separator, const U& container) {
-    typedef typename U::const_iterator ITtype;
-    ITtype it = container.cbegin();
-    std::basic_stringstream<TChar> sstream;
-    while (it != container.cend()) {
-      sstream << (*it);
-      ++it;
-      if (it != container.cend()) {
-        sstream << separator;
-      }
-    }
-    return sstream.str();
+  template<typename Separator, typename Container, typename Projection>
+  static auto join(Separator&& separator, Container&& container, Projection&& projection) {
+    const auto separator_view = [&separator] {
+      if constexpr (std::is_convertible_v<Separator, std::string_view>) { return std::string_view{separator}; }
+      else if constexpr (std::is_convertible_v<Separator, std::wstring_view>) { return std::wstring_view{separator}; }
+    }();
+
+    return container
+        | ranges::views::transform(projection)
+        | ranges::views::join(separator_view)
+        | ranges::to<std::basic_string>();
   }
 
-  /**
-   * Just a wrapper for the above function to be able to create separator from const char* or const wchar_t*
-   */
-  template<class TChar, class U, typename std::enable_if<std::is_same<typename U::value_type, std::basic_string<TChar>>::value>::type* = nullptr>
-  static std::basic_string<TChar> join(const TChar* separator, const U& container) {
-    return join(std::basic_string<TChar>(separator), container);
+  template<typename Separator, typename Container>
+  requires(std::is_arithmetic_v<typename std::remove_reference_t<Container>::value_type> && std::is_convertible_v<Separator, std::string_view>)
+  static auto join(Separator&& separator, Container&& container) {
+    return join(separator, container, [](auto number) { return std::to_string(number); });
   }
 
-  /**
-   * Concatenates string representation of integrals stored in an arbitrary container using the provided separator.
-   * @tparam TChar char type of the string (char or wchar_t)
-   * @tparam U arbitrary container which has any integral value type
-   * @param separator that is inserted between each elements. Type of this determines the result type. (wstring separator -> wstring)
-   * @param container that contains the integrals to be concatenated
-   * @return the result string
-   */
-  template<class TChar, class U, typename std::enable_if<std::is_integral<typename U::value_type>::value>::type* = nullptr,
-      typename std::enable_if<!std::is_same<U, std::basic_string<TChar>>::value>::type* = nullptr>
-  static std::basic_string<TChar> join(const std::basic_string<TChar>& separator, const U& container) {
-    typedef typename U::const_iterator ITtype;
-    ITtype it = container.cbegin();
-    std::basic_stringstream<TChar> sstream;
-    while (it != container.cend()) {
-      sstream << string_traits<TChar>::convert_to_string(*it);
-      ++it;
-      if (it != container.cend()) {
-        sstream << separator;
-      }
-    }
-    return sstream.str();
+  template<typename Separator, typename Container>
+  requires(std::is_arithmetic_v<typename std::remove_reference_t<Container>::value_type> && std::is_convertible_v<Separator, std::wstring_view>)
+  static auto join(Separator&& separator, Container&& container) {
+    return join(separator, container, [](auto number) { return std::to_wstring(number); });
   }
 
-  /**
-   * Just a wrapper for the above function to be able to create separator from const char* or const wchar_t*
-   */
-  template<class TChar, class U, typename std::enable_if<std::is_integral<typename U::value_type>::value>::type* = nullptr,
-      typename std::enable_if<!std::is_same<U, std::basic_string<TChar>>::value>::type* = nullptr>
-  static std::basic_string<TChar> join(const TChar* separator, const U& container) {
-    return join(std::basic_string<TChar>(separator), container);
+  template<typename Separator, typename Container>
+  static auto join(Separator&& separator, Container&& container) {
+    return join(separator, container, [](auto x) { return x; });  // std::identity is not supported by AppleClang 13
   }
 
   /**
@@ -505,10 +489,7 @@ class StringUtils {
    */
   static bool matchesSequence(std::string_view str, const std::vector<std::string>& patterns);
 
- private:
+  static bool splitToValueAndUnit(std::string_view input, int64_t& value, std::string& unit);
 };
 
-}  // namespace utils
-}  // namespace org::apache::nifi::minifi
-
-#endif  // LIBMINIFI_INCLUDE_UTILS_STRINGUTILS_H_
+}  // namespace org::apache::nifi::minifi::utils

@@ -82,13 +82,13 @@ class SSLContextService : public core::controller::ControllerService {
   explicit SSLContextService(std::string name, const utils::Identifier &uuid = {})
       : ControllerService(std::move(name), uuid),
         initialized_(false),
-        logger_(core::logging::LoggerFactory<SSLContextService>::getLogger()) {
+        logger_(core::logging::LoggerFactory<SSLContextService>::getLogger(uuid_)) {
   }
 
   explicit SSLContextService(std::string name, const std::shared_ptr<Configure> &configuration)
       : ControllerService(std::move(name)),
         initialized_(false),
-        logger_(core::logging::LoggerFactory<SSLContextService>::getLogger()) {
+        logger_(core::logging::LoggerFactory<SSLContextService>::getLogger(uuid_)) {
     setConfiguration(configuration);
     initialize();
 
@@ -141,18 +141,15 @@ class SSLContextService : public core::controller::ControllerService {
 
   std::unique_ptr<SSLContext> createSSLContext();
 
-  const std::filesystem::path& getCertificateFile();
-
-  const std::string& getPassphrase();
-
-  const std::filesystem::path& getPrivateKeyFile();
-
-  const std::filesystem::path& getCACertificate();
+  const std::filesystem::path& getCertificateFile() const;
+  const std::string& getPassphrase() const;
+  const std::filesystem::path& getPrivateKeyFile() const;
+  const std::filesystem::path& getCACertificate() const;
 
   void yield() override {
   }
 
-  bool isRunning() override {
+  bool isRunning() const override {
     return getState() == core::controller::ControllerServiceState::ENABLED;
   }
 
@@ -203,7 +200,7 @@ class SSLContextService : public core::controller::ControllerService {
  protected:
   virtual void initializeProperties();
 
-  std::mutex initialization_mutex_;
+  mutable std::mutex initialization_mutex_;
   bool initialized_;
   std::filesystem::path certificate_;
   std::filesystem::path private_key_;
@@ -256,6 +253,5 @@ class SSLContextService : public core::controller::ControllerService {
 
   std::shared_ptr<core::logging::Logger> logger_;
 };
-typedef int (SSLContextService::*ptr)(char *, int, int, void *);
 
 }  // namespace org::apache::nifi::minifi::controllers

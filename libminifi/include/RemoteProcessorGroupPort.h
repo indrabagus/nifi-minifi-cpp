@@ -81,7 +81,7 @@ class RemoteProcessorGroupPort : public core::Processor {
         timeout_(0),
         bypass_rest_api_(false),
         ssl_service(nullptr),
-        logger_(core::logging::LoggerFactory<RemoteProcessorGroupPort>::getLogger()) {
+        logger_(core::logging::LoggerFactory<RemoteProcessorGroupPort>::getLogger(uuid)) {
     client_type_ = sitetosite::CLIENT_TYPE::RAW;
     stream_factory_ = stream_factory;
     protocol_uuid_ = uuid;
@@ -158,6 +158,10 @@ class RemoteProcessorGroupPort : public core::Processor {
         logger_->log_error("Could not parse RPG URL '%s'", url);
       }
     }
+  }
+
+  std::vector<RPG> getInstances() const {
+    return nifi_instances_;
   }
 
   void setHTTPProxy(const utils::HTTPProxy &proxy) {

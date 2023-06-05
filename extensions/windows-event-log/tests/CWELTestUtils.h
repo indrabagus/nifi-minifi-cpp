@@ -45,16 +45,16 @@ class OutputFormatTestController : public TestController {
       json_format_(std::move(json_format)) {}
 
   std::string run() {
-    LogTestController::getInstance().setDebug<ConsumeWindowsEventLog>();
+    LogTestController::getInstance().setTrace<ConsumeWindowsEventLog>();
     LogTestController::getInstance().setDebug<PutFile>();
     std::shared_ptr<TestPlan> test_plan = createPlan();
 
     auto cwel_processor = test_plan->addProcessor("ConsumeWindowsEventLog", "cwel");
     test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Channel.getName(), channel_);
     test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Query.getName(), query_);
-    test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::OutputFormat.getName(), output_format_);
+    test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::OutputFormatProperty.getName(), output_format_);
     if (json_format_) {
-      test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::JSONFormat.getName(), json_format_.value());
+      test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::JsonFormatProperty.getName(), json_format_.value());
     }
 
     auto dir = createTempDirectory();
@@ -69,7 +69,7 @@ class OutputFormatTestController : public TestController {
     }
 
     test_plan->reset();
-    LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+    LogTestController::getInstance().clear();
 
 
     {

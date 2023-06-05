@@ -59,12 +59,12 @@ class ListAzureDataLakeStorage final : public AzureDataLakeStorageProcessorBase 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
   EXTENSIONAPI static constexpr core::annotation::Input InputRequirement = core::annotation::Input::INPUT_FORBIDDEN;
-  EXTENSIONAPI static constexpr bool IsSingleThreaded = false;
+  EXTENSIONAPI static constexpr bool IsSingleThreaded = true;
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
   explicit ListAzureDataLakeStorage(std::string name, const minifi::utils::Identifier& uuid = minifi::utils::Identifier())
-    : AzureDataLakeStorageProcessorBase(std::move(name), uuid, core::logging::LoggerFactory<ListAzureDataLakeStorage>::getLogger()) {
+    : AzureDataLakeStorageProcessorBase(std::move(name), uuid, core::logging::LoggerFactory<ListAzureDataLakeStorage>::getLogger(uuid)) {
   }
 
   ~ListAzureDataLakeStorage() override = default;
@@ -77,7 +77,7 @@ class ListAzureDataLakeStorage final : public AzureDataLakeStorageProcessorBase 
   friend class ::ListAzureDataLakeStorageTestsFixture;
 
   explicit ListAzureDataLakeStorage(std::string name, const minifi::utils::Identifier& uuid, std::unique_ptr<storage::DataLakeStorageClient> data_lake_storage_client)
-    : AzureDataLakeStorageProcessorBase(std::move(name), uuid, core::logging::LoggerFactory<ListAzureDataLakeStorage>::getLogger(), std::move(data_lake_storage_client)) {
+    : AzureDataLakeStorageProcessorBase(std::move(name), uuid, core::logging::LoggerFactory<ListAzureDataLakeStorage>::getLogger(uuid), std::move(data_lake_storage_client)) {
   }
 
   std::optional<storage::ListAzureDataLakeStorageParameters> buildListParameters(core::ProcessContext& context);

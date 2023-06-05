@@ -32,6 +32,8 @@
 #include <condition_variable>
 #include <memory>
 
+#include "StringUtils.h"
+
 // libc++ doesn't define operator<=> on durations, and apparently the operator rewrite rules don't automagically make one
 #if defined(_LIBCPP_VERSION) && _LIBCPP_VERSION < 16000
 #include <compare>
@@ -114,6 +116,8 @@ inline std::optional<std::chrono::sys_seconds> parseDateTimeStr(const std::strin
     return std::nullopt;
   return tp;
 }
+
+std::optional<std::chrono::system_clock::time_point> parseRfc3339(const std::string& str);
 
 inline std::string getDateTimeStr(std::chrono::sys_seconds tp) {
   return date::format("%Y-%m-%dT%H:%M:%SZ", tp);
@@ -201,37 +205,17 @@ std::optional<TargetDuration> cast_to_matching_unit(std::string& unit, const int
   ((result = cast_if_unit_matches<TargetDuration, T>(unit, value)) || ...);
   return result;
 }
-
-inline bool get_unit_and_value(const std::string& input, std::string& unit, int64_t& value) {
-  const char* begin = input.c_str();
-  char *end;
-  errno = 0;
-  value = std::strtoll(begin, &end, 0);
-  if (end == begin || errno == ERANGE) {
-    return false;
-  }
-
-  if (end[0] == '\0') {
-    return false;
-  }
-
-  while (*end == ' ') {
-    // Skip the spaces
-    end++;
-  }
-  unit = std::string(end);
-  std::transform(unit.begin(), unit.end(), unit.begin(), ::tolower);
-  return true;
-}
-
 }  // namespace details
 
 template<class TargetDuration>
 std::optional<TargetDuration> StringToDuration(const std::string& input) {
   std::string unit;
   int64_t value;
-  if (!details::get_unit_and_value(input, unit, value))
+  if (!StringUtils::splitToValueAndUnit(input, value, unit))
     return std::nullopt;
+
+
+  unit = utils::StringUtils::toLower(unit);
 
   return details::cast_to_matching_unit<TargetDuration,
     std::chrono::nanoseconds,

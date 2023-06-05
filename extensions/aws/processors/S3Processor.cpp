@@ -18,7 +18,6 @@
 #include "S3Processor.h"
 
 #include <string>
-#include <set>
 #include <memory>
 #include <utility>
 
@@ -27,6 +26,7 @@
 #include "AWSCredentialsService.h"
 #include "properties/Properties.h"
 #include "utils/StringUtils.h"
+#include "utils/HTTPUtils.h"
 
 namespace org::apache::nifi::minifi::aws::processors {
 
@@ -35,8 +35,8 @@ S3Processor::S3Processor(std::string name, const minifi::utils::Identifier& uuid
     logger_(std::move(logger)) {
 }
 
-S3Processor::S3Processor(const std::string& name, const minifi::utils::Identifier& uuid, std::shared_ptr<core::logging::Logger> logger, std::unique_ptr<aws::s3::S3RequestSender> s3_request_sender)
-  : core::Processor(name, uuid),
+S3Processor::S3Processor(std::string name, const minifi::utils::Identifier& uuid, std::shared_ptr<core::logging::Logger> logger, std::unique_ptr<aws::s3::S3RequestSender> s3_request_sender)
+  : core::Processor(std::move(name), uuid),
     logger_(std::move(logger)),
     s3_wrapper_(std::move(s3_request_sender)) {
 }
@@ -123,6 +123,11 @@ void S3Processor::onSchedule(const std::shared_ptr<core::ProcessContext>& contex
     client_config_->connectTimeoutMs = gsl::narrow<int64_t>(communications_timeout->getMilliseconds().count());
   } else {
     throw Exception(PROCESS_SCHEDULE_EXCEPTION, "Communications Timeout missing or invalid");
+  }
+
+  static const auto default_ca_path = minifi::utils::getDefaultCAPath();
+  if (default_ca_path) {
+    client_config_->caFile = default_ca_path->string();
   }
 }
 

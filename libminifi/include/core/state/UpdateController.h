@@ -129,7 +129,7 @@ class StateController : public Pausable {
    */
   virtual int16_t stop() = 0;
 
-  virtual bool isRunning() = 0;
+  virtual bool isRunning() const = 0;
 };
 
 /**
@@ -157,6 +157,8 @@ class StateMonitor : public StateController {
    * Clear connection for the agent.
    */
   virtual int16_t clearConnection(const std::string &connection) = 0;
+
+  virtual std::vector<std::string> getSupportedConfigurationFormats() const = 0;
 
   /**
    * Apply an update with the provided string.

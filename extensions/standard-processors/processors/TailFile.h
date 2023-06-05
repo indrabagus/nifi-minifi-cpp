@@ -201,7 +201,7 @@ class TailFile : public core::Processor {
   static const int BUFFER_SIZE = 512;
 
   std::string delimiter_;  // Delimiter for the data incoming from the tailed file.
-  core::CoreComponentStateManager* state_manager_ = nullptr;
+  core::StateManager* state_manager_ = nullptr;
   std::map<std::filesystem::path, TailState> tail_states_;
   Mode tail_mode_ = Mode::UNDEFINED;
   std::optional<utils::Regex> pattern_regex_;
@@ -215,7 +215,7 @@ class TailFile : public core::Processor {
   controllers::AttributeProviderService* attribute_provider_service_ = nullptr;
   std::unordered_map<std::string, controllers::AttributeProviderService::AttributeMap> extra_attributes_;
   std::optional<uint32_t> batch_size_;
-  std::shared_ptr<core::logging::Logger> logger_ = core::logging::LoggerFactory<TailFile>::getLogger();
+  std::shared_ptr<core::logging::Logger> logger_ = core::logging::LoggerFactory<TailFile>::getLogger(uuid_);
 };
 
 }  // namespace org::apache::nifi::minifi::processors

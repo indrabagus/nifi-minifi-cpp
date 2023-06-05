@@ -64,7 +64,6 @@ class FocusArchiveEntry : public core::Processor {
    public:
     explicit ReadCallback(core::Processor*, utils::file::FileManager *file_man, ArchiveMetadata *archiveMetadata);
     int64_t operator()(const std::shared_ptr<io::InputStream>& stream) const;
-    bool isRunning() {return proc_->isRunning();}
 
    private:
     utils::file::FileManager *file_man_;
@@ -76,7 +75,7 @@ class FocusArchiveEntry : public core::Processor {
   };
 
  private:
-  std::shared_ptr<core::logging::Logger> logger_ = core::logging::LoggerFactory<FocusArchiveEntry>::getLogger();
+  std::shared_ptr<core::logging::Logger> logger_ = core::logging::LoggerFactory<FocusArchiveEntry>::getLogger(uuid_);
   static std::shared_ptr<utils::IdGenerator> id_generator_;
 };
 

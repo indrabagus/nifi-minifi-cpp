@@ -224,6 +224,7 @@ token, filename.
 - [`hostname`](#hostname)
 - [`UUID`](#uuid)
 - [`literal`](#literal)
+- [`reverseDnsLookup`](#reversednslookup)
 
 ### Evaluating Multiple Attributes
 
@@ -1590,6 +1591,31 @@ to evaluate additional functions against.
 ${allMatchingAttributes('a.*'):count()} ):gt(3)}` returns true if there are
 more than 3 attributes whose names begin with the letter a.
 
+### reverseDnsLookup
+
+**Description**: Performs a reverse DNS lookup on an ip address, and returns the corresponding hostname.
+
+**Subject Type**: No subject
+
+**Arguments**:
+
+| Argument                      | Description                                                                                                                  |
+|-------------------------------|------------------------------------------------------------------------------------------------------------------------------|
+| IP address                    | The ip address to perform the reverse DNS lookup on.                                                                         |
+| Timeout duration milliseconds | Optional parameter that specifies the timeout duration of the operation in milliseconds. If not specified, defaults to 5000. |
+
+
+**Return Type**: String
+
+**Examples**:
+
+| Expression                                         | Value        |
+|----------------------------------------------------|--------------|
+| `${reverseDnsLookup('127.0.0.1')}`                 | `localhost`  |
+| `${reverseDnsLookup('::1')}`                       | `localhost`  |
+| `${reverseDnsLookup('2001:4860:4860::8888'), 100}` | `dns.google` |
+
+
 ## Evaluating Multiple Attributes
 
 When it becomes necessary to evaluate the same conditions against multiple
@@ -1834,9 +1860,9 @@ argument.
 
 **Arguments**:
 
-| Argument | Description |
-| - | - |
-| format | The format to use in the strftime syntax |
+| Argument  | Description                                                                                                      |
+|-----------|------------------------------------------------------------------------------------------------------------------|
+| format    | The format to use in the strftime syntax                                                                         |
 | time zone | Optional argument that specifies the time zone to use from the IANA Time Zone Database (e.g. 'America/New_York') |
 
 **Return Type**: String
@@ -1846,23 +1872,26 @@ argument.
 If the attribute "time" has the value "1420058163264", then the following
 Expressions will yield the following results:
 
-| Expression | Value |
-| - | - |
-| `${time:format("%Y/%m/%d %H:%M:%S", "GMT")}` | `2014/12/31 20:36:03` |
-| `${time:format("%Y", "America/Los_Angeles")}` | `2014` |
+| Expression                                    | Value                 |
+|-----------------------------------------------|-----------------------|
+| `${time:format("%Y/%m/%d %H:%M:%S", "GMT")}`  | `2014/12/31 20:36:03` |
+| `${time:format("%Y", "America/Los_Angeles")}` | `2014`                |
 
 ### toDate
 
 **Description**: Converts a String into a date represented by the number of
 milliseconds since the UNIX epoch, based on the format specified by the
-argument. The argument must be a String that is a valid strftime syntax. The
+argument. The first argument must be a String that is a valid strftime syntax. The
 Subject is expected to be a String that is formatted according the argument.
 The date will be evaluated using the local time zone unless specified in the
 second optional argument.
+If called without arguments it will parse the subject as a RFC3339 formatted datetime.  
 
 **Subject Type**: String
 
-| format | The format to use in the strftime syntax |
+| Argument  | Description                                                                                                                                |
+|-----------|--------------------------------------------------------------------------------------------------------------------------------------------|
+| format    | Optional argument that specifies the format to use in the strftime syntax                                                                  |
 | time zone | Optional argument that specifies the time zone to use when parsing the subject, from the IANA Time Zone Database (e.g. 'America/New_York') |
 
 **Return Type**: Number
@@ -1885,7 +1914,7 @@ chaining together the two functions:
 
 **Description**: Returns the current date and time as a Date data type object.
 
-**Subject Type**: String
+**Subject Type**: No Subject
 
 **Arguments**: No arguments
 
@@ -1893,9 +1922,9 @@ chaining together the two functions:
 
 **Examples**:
 
-| Expression | Value |
-| - | - |
-| `${now()}` | `Count of milliseconds since the UNIX epoch` |
-| `${now():minus(86400000)` | `A number presenting the time 24 hours ago` |
-| `${now():format('Y')}` | `The current year` |
+| Expression                              | Value                                                                                   |
+|-----------------------------------------|-----------------------------------------------------------------------------------------|
+| `${now()}`                              | `Count of milliseconds since the UNIX epoch`                                            |
+| `${now():minus(86400000)`               | `A number presenting the time 24 hours ago`                                             |
+| `${now():format('Y')}`                  | `The current year`                                                                      |
 | `${now():minus(86400000):format('%a')}` | `The day of the week that was yesterday, as a 3-letter abbreviation (For example, Wed)` |

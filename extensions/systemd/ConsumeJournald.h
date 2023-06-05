@@ -29,7 +29,7 @@
 #include <utility>
 #include <vector>
 
-#include "core/CoreComponentState.h"
+#include "core/StateManager.h"
 #include "core/Processor.h"
 #include "core/logging/LoggerConfiguration.h"
 #include "libwrapper/LibWrapper.h"
@@ -50,8 +50,8 @@ class ConsumeJournald final : public core::Processor {
   static constexpr const char* JOURNAL_TYPE_SYSTEM = "System";
   static constexpr const char* JOURNAL_TYPE_BOTH = "Both";
 
-  EXTENSIONAPI static constexpr const char* Description = "Consume systemd-journald journal messages. Creates one flow file per message."
-      "Fields are mapped to attributes. Realtime timestamp is mapped to the 'timestamp' attribute.";
+  EXTENSIONAPI static constexpr const char* Description = "Consume systemd-journald journal messages. Creates one flow file per message. "
+      "Fields are mapped to attributes. Realtime timestamp is mapped to the 'timestamp' attribute. Available on Linux only.";
 
   EXTENSIONAPI static const core::Property BatchSize;
   EXTENSIONAPI static const core::Property PayloadFormat;
@@ -111,8 +111,8 @@ class ConsumeJournald final : public core::Processor {
   std::string getCursor() const;
 
   std::atomic<bool> running_{false};
-  std::shared_ptr<core::logging::Logger> logger_ = core::logging::LoggerFactory<ConsumeJournald>::getLogger();
-  core::CoreComponentStateManager* state_manager_;
+  std::shared_ptr<core::logging::Logger> logger_ = core::logging::LoggerFactory<ConsumeJournald>::getLogger(uuid_);
+  core::StateManager* state_manager_;
   std::unique_ptr<libwrapper::LibWrapper> libwrapper_;
   std::unique_ptr<utils::FifoExecutor> worker_;
   std::unique_ptr<libwrapper::Journal> journal_;

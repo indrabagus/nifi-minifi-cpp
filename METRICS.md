@@ -59,13 +59,13 @@ The following option defines which metric classes should be exposed through the 
 
     # in minifi.properties
 
-    nifi.metrics.publisher.metrics=QueueMetrics,RepositoryMetrics,GetFileMetrics,DeviceInfoNode,FlowInformation
+    nifi.metrics.publisher.metrics=QueueMetrics,RepositoryMetrics,GetFileMetrics,DeviceInfoNode,FlowInformation,processorMetrics/Tail.*
 
 An agent identifier should also be defined to identify which agent the metric is exposed from. If not set, the hostname is used as the identifier.
 
-	# in minifi.properties
+    # in minifi.properties
 
-	nifi.metrics.publisher.agent.identifier=Agent1
+    nifi.metrics.publisher.agent.identifier=Agent1
 
 ## System Metrics
 
@@ -100,17 +100,19 @@ QueueMetrics is a system level metric that reports queue metrics for every conne
 
 ### RepositoryMetrics
 
-RepositoryMetrics is a system level metric that reports metrics for the registered repositories (by default flowfile and provenance repository)
+RepositoryMetrics is a system level metric that reports metrics for the registered repositories (by default flowfile, content, and provenance repositories)
 
-| Metric name          | Labels          | Description                           |
-|----------------------|-----------------|---------------------------------------|
-| is_running           | repository_name | Is the repository running (1 or 0)    |
-| is_full              | repository_name | Is the repository full (1 or 0)       |
-| repository_size      | repository_name | Current size of the repository        |
+| Metric name               | Labels          | Description                                     |
+|---------------------------|-----------------|-------------------------------------------------|
+| is_running                | repository_name | Is the repository running (1 or 0)              |
+| is_full                   | repository_name | Is the repository full (1 or 0)                 |
+| repository_size_bytes     | repository_name | Current size of the repository                  |
+| max_repository_size_bytes | repository_name | Maximum size of the repository (0 if unlimited) |
+| repository_entry_count    | repository_name | Current number of entries in the repository     |
 
-| Label                    | Description                                                     |
-|--------------------------|-----------------------------------------------------------------|
-| repository_name          | Name of the reported repository                                 |
+| Label                    | Description                                                                                                                           |
+|--------------------------|---------------------------------------------------------------------------------------------------------------------------------------|
+| repository_name          | Name of the reported repository. There are three repositories present with the following names: `flowfile`, `content` and `provenance` |
 
 ### DeviceInfoNode
 
@@ -145,15 +147,17 @@ FlowInformation is a system level metric that reports component and queue relate
 
 AgentStatus is a system level metric that defines current agent status including repository, component and resource usage information.
 
-| Metric name              | Labels                         | Description                                                                                                |
-|--------------------------|--------------------------------|------------------------------------------------------------------------------------------------------------|
-| is_running               | repository_name                | Is the repository running (1 or 0)                                                                         |
-| is_full                  | repository_name                | Is the repository full (1 or 0)                                                                            |
-| repository_size          | repository_name                | Current size of the repository                                                                             |
-| uptime_milliseconds      | -                              | Agent uptime in milliseconds                                                                               |
-| is_running               | component_uuid, component_name | Check if the component is running (1 or 0)                                                                 |
-| agent_memory_usage_bytes | -                              | Memory used by the agent process in bytes                                                                  |
-| agent_cpu_utilization    | -                              | CPU utilization of the agent process (between 0 and 1). In case of a query error the returned value is -1. |
+| Metric name               | Labels                         | Description                                                                                                |
+|---------------------------|--------------------------------|------------------------------------------------------------------------------------------------------------|
+| is_running                | repository_name                | Is the repository running (1 or 0)                                                                         |
+| is_full                   | repository_name                | Is the repository full (1 or 0)                                                                            |
+| repository_size_bytes     | repository_name                | Current size of the repository                                                                             |
+| max_repository_size_bytes | repository_name                | Maximum size of the repository (0 if unlimited)                                                            |
+| repository_entry_count    | repository_name                | Current number of entries in the repository                                                                |
+| uptime_milliseconds       | -                              | Agent uptime in milliseconds                                                                               |
+| is_running                | component_uuid, component_name | Check if the component is running (1 or 0)                                                                 |
+| agent_memory_usage_bytes  | -                              | Memory used by the agent process in bytes                                                                  |
+| agent_cpu_utilization     | -                              | CPU utilization of the agent process (between 0 and 1). In case of a query error the returned value is -1. |
 
 | Label           | Description                                              |
 |-----------------|----------------------------------------------------------|
@@ -168,18 +172,30 @@ AgentStatus is a system level metric that defines current agent status including
 
 Processor level metrics can be accessed for any processor provided by MiNiFi. These metrics correspond to the name of the processor appended by the "Metrics" suffix (e.g. GetFileMetrics, TailFileMetrics, etc.).
 
+Besides configuring processor metrics directly, they can also be configured using regular expressions with the `processorMetrics/` prefix.
+
+All available processor metrics can be requested in the `minifi.properties` by using the following configuration:
+
+    nifi.metrics.publisher.metrics=processorMetrics/.*
+
+Regular expressions can also be used for requesting multiple processor metrics at once, like GetFileMetrics and GetTCPMetrics with the following configuration:
+
+    nifi.metrics.publisher.metrics=processorMetrics/Get.*Metrics
+
 ### General Metrics
 
 There are general metrics that are available for all processors. Besides these metrics processors can implement additional metrics that are speicific to that processor.
 
-| Metric name                            | Labels                                       | Description                                                                         |
-|----------------------------------------|----------------------------------------------|-------------------------------------------------------------------------------------|
-| onTrigger_invocations                  | metric_class, processor_name, processor_uuid | The number of processor onTrigger calls                                             |
-| average_onTrigger_runtime_milliseconds | metric_class, processor_name, processor_uuid | The average runtime in milliseconds of the last 10 onTrigger calls of the processor |
-| last_onTrigger_runtime_milliseconds    | metric_class, processor_name, processor_uuid | The runtime in milliseconds of the last onTrigger call of the processor             |
-| transferred_flow_files                 | metric_class, processor_name, processor_uuid | Number of flow files transferred to a relationship                                  |
-| transferred_bytes                      | metric_class, processor_name, processor_uuid | Number of bytes transferred to a relationship                                       |
-| transferred_to_\<relationship\>        | metric_class, processor_name, processor_uuid | Number of flow files transferred to a specific relationship                         |
+| Metric name                                 | Labels                                       | Description                                                                              |
+|---------------------------------------------|----------------------------------------------|------------------------------------------------------------------------------------------|
+| onTrigger_invocations                       | metric_class, processor_name, processor_uuid | The number of processor onTrigger calls                                                  |
+| average_onTrigger_runtime_milliseconds      | metric_class, processor_name, processor_uuid | The average runtime in milliseconds of the last 10 onTrigger calls of the processor      |
+| last_onTrigger_runtime_milliseconds         | metric_class, processor_name, processor_uuid | The runtime in milliseconds of the last onTrigger call of the processor                  |
+| average_session_commit_runtime_milliseconds | metric_class, processor_name, processor_uuid | The average runtime in milliseconds of the last 10 session commit calls of the processor |
+| last_session_commit_runtime_milliseconds    | metric_class, processor_name, processor_uuid | The runtime in milliseconds of the last session commit call of the processor             |
+| transferred_flow_files                      | metric_class, processor_name, processor_uuid | Number of flow files transferred to a relationship                                       |
+| transferred_bytes                           | metric_class, processor_name, processor_uuid | Number of bytes transferred to a relationship                                            |
+| transferred_to_\<relationship\>             | metric_class, processor_name, processor_uuid | Number of flow files transferred to a specific relationship                              |
 
 | Label          | Description                                                            |
 |----------------|------------------------------------------------------------------------|

@@ -52,7 +52,9 @@ class PrometheusPublisherTestFixture {
     : configuration_(std::make_shared<Configure>()),
       provenance_repo_(core::createRepository("provenancerepository")),
       flow_file_repo_(core::createRepository("flowfilerepository")),
-      response_node_loader_(configuration_, provenance_repo_, flow_file_repo_, nullptr) {
+      content_repo_(core::createContentRepository("volatilecontentrepository")),
+      response_node_loader_(std::make_shared<state::response::ResponseNodeLoader>(configuration_,
+        std::vector<std::shared_ptr<core::RepositoryMetricsSource>>{provenance_repo_, flow_file_repo_, content_repo_}, nullptr)) {
     std::unique_ptr<DummyMetricsExposer> dummy_exposer;
     if (user_dummy_exposer) {
       dummy_exposer = std::make_unique<DummyMetricsExposer>();
@@ -63,9 +65,10 @@ class PrometheusPublisherTestFixture {
 
  protected:
   std::shared_ptr<Configure> configuration_;
-  std::shared_ptr<core::Repository> provenance_repo_;
-  std::shared_ptr<core::Repository> flow_file_repo_;
-  state::response::ResponseNodeLoader response_node_loader_;
+  std::shared_ptr<core::RepositoryMetricsSource> provenance_repo_;
+  std::shared_ptr<core::RepositoryMetricsSource> flow_file_repo_;
+  std::shared_ptr<core::RepositoryMetricsSource> content_repo_;
+  std::shared_ptr<state::response::ResponseNodeLoader> response_node_loader_;
   std::unique_ptr<PrometheusMetricsPublisher> publisher_;
   DummyMetricsExposer* exposer_ = nullptr;
 };
@@ -81,18 +84,19 @@ class PrometheusPublisherTestFixtureWithDummyExposer : public PrometheusPublishe
 };
 
 TEST_CASE_METHOD(PrometheusPublisherTestFixtureWithRealExposer, "Test prometheus empty port", "[prometheusPublisherTest]") {
-  REQUIRE_THROWS_WITH(publisher_->initialize(configuration_, response_node_loader_, nullptr), "General Operation: Port not configured for Prometheus metrics publisher!");
+  REQUIRE_THROWS_WITH(publisher_->initialize(configuration_, response_node_loader_), "General Operation: Port not configured for Prometheus metrics publisher!");
 }
 
 TEST_CASE_METHOD(PrometheusPublisherTestFixtureWithRealExposer, "Test prometheus invalid port", "[prometheusPublisherTest]") {
   configuration_->set(Configure::nifi_metrics_publisher_prometheus_metrics_publisher_port, "invalid");
-  REQUIRE_THROWS_AS(publisher_->initialize(configuration_, response_node_loader_, nullptr), std::exception);
+  REQUIRE_THROWS_AS(publisher_->initialize(configuration_, response_node_loader_), std::exception);
 }
 
 TEST_CASE_METHOD(PrometheusPublisherTestFixtureWithDummyExposer, "Test adding metrics to exposer", "[prometheusPublisherTest]") {
   configuration_->set(Configure::nifi_metrics_publisher_metrics, "QueueMetrics,RepositoryMetrics,DeviceInfoNode,FlowInformation,AgentInformation,InvalidMetrics,GetFileMetrics,GetTCPMetrics");
   configuration_->set(Configure::nifi_metrics_publisher_agent_identifier, "AgentId-1");
-  publisher_->initialize(configuration_, response_node_loader_, nullptr);
+  publisher_->initialize(configuration_, response_node_loader_);
+  publisher_->loadMetricNodes();
   auto stored_metrics = exposer_->getMetrics();
   std::vector<std::string> valid_metrics_without_flow = {"QueueMetrics", "RepositoryMetrics", "DeviceInfoNode", "FlowInformation", "AgentInformation"};
   REQUIRE(stored_metrics.size() == valid_metrics_without_flow.size());

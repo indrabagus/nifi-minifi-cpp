@@ -20,13 +20,14 @@
 #include "core/PropertyBuilder.h"
 #include "controllers/SSLContextService.h"
 #include "utils/ProcessorConfigUtils.h"
+#include "utils/net/Ssl.h"
 
 namespace org::apache::nifi::minifi::processors {
 
 const core::Property ListenTCP::Port(
     core::PropertyBuilder::createProperty("Listening Port")
         ->withDescription("The port to listen on for communication.")
-        ->withType(core::StandardValidators::get().LISTEN_PORT_VALIDATOR)
+        ->withType(core::StandardValidators::LISTEN_PORT_VALIDATOR)
         ->isRequired(true)
         ->build());
 
@@ -54,11 +55,14 @@ const core::Property ListenTCP::SSLContextService(
 const core::Property ListenTCP::ClientAuth(
     core::PropertyBuilder::createProperty("Client Auth")
       ->withDescription("The client authentication policy to use for the SSL Context. Only used if an SSL Context Service is provided.")
-      ->withDefaultValue<std::string>(toString(utils::net::SslServer::ClientAuthOption::NONE))
-      ->withAllowableValues<std::string>(utils::net::SslServer::ClientAuthOption::values())
+      ->withDefaultValue<std::string>(toString(utils::net::ClientAuthOption::NONE))
+      ->withAllowableValues<std::string>(utils::net::ClientAuthOption::values())
       ->build());
 
 const core::Relationship ListenTCP::Success("success", "Messages received successfully will be sent out this relationship.");
+
+const core::OutputAttribute ListenTCP::PortOutputAttribute{"tcp.port", {}, "The sending port the messages were received."};
+const core::OutputAttribute ListenTCP::Sender{"tcp.sender", {}, "The sending host of the messages."};
 
 void ListenTCP::initialize() {
   setSupportedProperties(properties());

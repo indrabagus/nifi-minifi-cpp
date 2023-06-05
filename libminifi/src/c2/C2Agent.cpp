@@ -29,9 +29,8 @@
 #include <utility>
 #include <vector>
 
-#include "c2/ControllerSocketProtocol.h"
 #include "core/ProcessContext.h"
-#include "core/CoreComponentState.h"
+#include "core/StateManager.h"
 #include "core/state/UpdateController.h"
 #include "core/logging/Logger.h"
 #include "core/logging/LoggerConfiguration.h"
@@ -44,31 +43,42 @@
 #include "utils/StringUtils.h"
 #include "io/ArchiveStream.h"
 #include "io/StreamPipe.h"
+#include "utils/Id.h"
 
 using namespace std::literals::chrono_literals;
 
 namespace org::apache::nifi::minifi::c2 {
 
-C2Agent::C2Agent(core::controller::ControllerServiceProvider *controller,
-                 state::Pausable *pause_handler,
-                 state::StateMonitor* updateSink,
-                 std::shared_ptr<Configure> configuration,
+C2Agent::C2Agent(std::shared_ptr<Configure> configuration,
+                 std::weak_ptr<state::response::NodeReporter> node_reporter,
                  std::shared_ptr<utils::file::FileSystem> filesystem,
                  std::function<void()> request_restart)
     : heart_beat_period_(3s),
       max_c2_responses(5),
-      update_sink_(updateSink),
-      update_service_(nullptr),
-      controller_(controller),
-      pause_handler_(pause_handler),
       configuration_(std::move(configuration)),
+      node_reporter_(std::move(node_reporter)),
       filesystem_(std::move(filesystem)),
-      protocol_(nullptr),
       thread_pool_(2, false, nullptr, "C2 threadpool"),
-      request_restart_(std::move(request_restart)) {
-  manifest_sent_ = false;
+      request_restart_(std::move(request_restart)),
+      last_run_(std::chrono::steady_clock::now()) {
+  if (!configuration_->getAgentClass()) {
+    logger_->log_info("Agent class is not predefined");
+  }
 
-  last_run_ = std::chrono::steady_clock::now();
+  // Set a persistent fallback agent id. This is needed so that the C2 server can identify the same agent after a restart, even if nifi.c2.agent.identifier is not specified.
+  if (auto id = configuration_->get(Configuration::nifi_c2_agent_identifier_fallback)) {
+    configuration_->setFallbackAgentIdentifier(*id);
+  } else {
+    const auto agent_id = utils::IdGenerator::getIdGenerator()->generate().to_string();
+    configuration_->setFallbackAgentIdentifier(agent_id);
+    configuration_->set(Configuration::nifi_c2_agent_identifier_fallback, agent_id, PropertyChangeLifetime::PERSISTENT);
+  }
+}
+
+void C2Agent::initialize(core::controller::ControllerServiceProvider *controller, state::Pausable *pause_handler, state::StateMonitor* update_sink) {
+  controller_ = controller;
+  pause_handler_ = pause_handler;
+  update_sink_ = update_sink;
 
   if (nullptr != controller_) {
     update_service_ = std::static_pointer_cast<controllers::UpdatePolicyControllerService>(controller_->getControllerService(UPDATE_NAME));
@@ -102,6 +112,9 @@ void C2Agent::start() {
 }
 
 void C2Agent::stop() {
+  if (!controller_running_) {
+    return;
+  }
   controller_running_ = false;
   for (const auto& id : task_ids_) {
     thread_pool_.stopTasks(id.to_string());
@@ -166,17 +179,18 @@ void C2Agent::configure(const std::shared_ptr<Configure> &configure, bool reconf
     try {
       if (auto heartbeat_period_ms = utils::timeutils::StringToDuration<std::chrono::milliseconds>(heartbeat_period)) {
         heart_beat_period_ = *heartbeat_period_ms;
-        logger_->log_debug("Using %u ms as the heartbeat period", heart_beat_period_.count());
       } else {
         heart_beat_period_ = std::chrono::milliseconds(std::stoi(heartbeat_period));
       }
     } catch (const std::invalid_argument &) {
+      logger_->log_error("Invalid heartbeat period: %s", heartbeat_period);
       heart_beat_period_ = 3s;
     }
   } else {
     if (!reconfigure)
       heart_beat_period_ = 3s;
   }
+  logger_->log_debug("Using %" PRId64 " ms as the heartbeat period", heart_beat_period_.count());
 
   std::string heartbeat_reporters;
   if (configure->get(Configuration::nifi_c2_agent_heartbeat_reporter_classes, "c2.agent.heartbeat.reporter.classes", heartbeat_reporters)) {
@@ -207,39 +221,29 @@ void C2Agent::configure(const std::shared_ptr<Configure> &configure, bool reconf
       }
     }
   }
-
-  std::string base_reporter = "ControllerSocketProtocol";
-  auto heartbeat_reporter_obj = core::ClassLoader::getDefaultClassLoader().instantiate<HeartbeatReporter>(base_reporter, base_reporter);
-  if (heartbeat_reporter_obj == nullptr) {
-    logger_->log_error("Could not instantiate %s", base_reporter);
-  } else {
-    heartbeat_reporter_obj->initialize(controller_, update_sink_, configuration_);
-    heartbeat_protocols_.push_back(std::move(heartbeat_reporter_obj));
-  }
 }
 
 void C2Agent::performHeartBeat() {
   C2Payload payload(Operation::HEARTBEAT);
   logger_->log_trace("Performing heartbeat");
-  auto reporter = dynamic_cast<state::response::NodeReporter*>(update_sink_);
   std::vector<state::response::NodeReporter::ReportedNode> metrics;
-  if (reporter) {
+  if (auto node_reporter = node_reporter_.lock()) {
     if (!manifest_sent_) {
       // include agent manifest for the first heartbeat
-      metrics = reporter->getHeartbeatNodes(true);
+      metrics = node_reporter->getHeartbeatNodes(true);
       manifest_sent_ = true;
     } else {
-      metrics = reporter->getHeartbeatNodes(false);
+      metrics = node_reporter->getHeartbeatNodes(false);
     }
+  }
 
-    payload.reservePayloads(metrics.size());
-    for (const auto& metric : metrics) {
-      C2Payload child_metric_payload(Operation::HEARTBEAT);
-      child_metric_payload.setLabel(metric.name);
-      child_metric_payload.setContainer(metric.is_array);
-      serializeMetrics(child_metric_payload, metric.name, metric.serialized_nodes, metric.is_array);
-      payload.addPayload(std::move(child_metric_payload));
-    }
+  payload.reservePayloads(metrics.size());
+  for (const auto& metric : metrics) {
+    C2Payload child_metric_payload(Operation::HEARTBEAT);
+    child_metric_payload.setLabel(metric.name);
+    child_metric_payload.setContainer(metric.is_array);
+    serializeMetrics(child_metric_payload, metric.name, metric.serialized_nodes, metric.is_array);
+    payload.addPayload(std::move(child_metric_payload));
   }
   C2Payload response = protocol_.load()->consumePayload(payload);
 
@@ -450,11 +454,11 @@ void C2Agent::handle_clear(const C2ContentResponse &resp) {
     }
     case ClearOperand::CORECOMPONENTSTATE: {
       for (const auto& corecomponent : resp.operation_arguments) {
-        auto state_manager_provider = core::ProcessContext::getStateManagerProvider(logger_, controller_, configuration_);
-        if (state_manager_provider != nullptr) {
-          update_sink_->executeOnComponent(corecomponent.second.to_string(), [this, &state_manager_provider] (state::StateController& component) {
+        auto state_storage = core::ProcessContext::getStateStorage(logger_, controller_, configuration_);
+        if (state_storage != nullptr) {
+          update_sink_->executeOnComponent(corecomponent.second.to_string(), [this, &state_storage] (state::StateController& component) {
             logger_->log_debug("Clearing state for component %s", component.getComponentName());
-            auto state_manager = state_manager_provider->getCoreComponentStateManager(component.getComponentUUID());
+            auto state_manager = state_storage->getStateManager(component.getComponentUUID());
             if (state_manager != nullptr) {
               component.stop();
               state_manager->clear();
@@ -465,7 +469,7 @@ void C2Agent::handle_clear(const C2ContentResponse &resp) {
             }
           });
         } else {
-          logger_->log_error("Failed to get StateManagerProvider");
+          logger_->log_error("Failed to get StateStorage");
         }
       }
       break;
@@ -492,24 +496,24 @@ void C2Agent::handle_describe(const C2ContentResponse &resp) {
     return;
   }
 
-  auto reporter = dynamic_cast<state::response::NodeReporter*>(update_sink_);
   switch (operand.value()) {
     case DescribeOperand::METRICS: {
       C2Payload response(Operation::ACKNOWLEDGE, resp.ident, true);
-      if (reporter != nullptr) {
-        auto iter = resp.operation_arguments.find("metricsClass");
-        std::string metricsClass;
-        if (iter != resp.operation_arguments.end()) {
-          metricsClass = iter->second.to_string();
-        }
-        auto metricsNode = reporter->getMetricsNode(metricsClass);
-        C2Payload metrics(Operation::ACKNOWLEDGE);
-        metricsClass.empty() ? metrics.setLabel("metrics") : metrics.setLabel(metricsClass);
-        if (metricsNode) {
-          serializeMetrics(metrics, metricsNode->name, metricsNode->serialized_nodes, metricsNode->is_array);
-        }
-        response.addPayload(std::move(metrics));
+      auto iter = resp.operation_arguments.find("metricsClass");
+      std::string metricsClass;
+      if (iter != resp.operation_arguments.end()) {
+        metricsClass = iter->second.to_string();
       }
+      std::optional<state::response::NodeReporter::ReportedNode> metricsNode;
+      if (auto node_reporter = node_reporter_.lock()) {
+        metricsNode = node_reporter->getMetricsNode(metricsClass);
+      }
+      C2Payload metrics(Operation::ACKNOWLEDGE);
+      metricsClass.empty() ? metrics.setLabel("metrics") : metrics.setLabel(metricsClass);
+      if (metricsNode) {
+        serializeMetrics(metrics, metricsNode->name, metricsNode->serialized_nodes, metricsNode->is_array);
+      }
+      response.addPayload(std::move(metrics));
       enqueue_c2_response(std::move(response));
       break;
     }
@@ -520,14 +524,14 @@ void C2Agent::handle_describe(const C2ContentResponse &resp) {
     }
     case DescribeOperand::MANIFEST: {
       C2Payload response(prepareConfigurationOptions(resp));
-      if (reporter != nullptr) {
-        C2Payload agentInfo(Operation::ACKNOWLEDGE, resp.ident, true);
-        agentInfo.setLabel("agentInfo");
+      C2Payload agentInfo(Operation::ACKNOWLEDGE, resp.ident, true);
+      agentInfo.setLabel("agentInfo");
 
-        const auto manifest = reporter->getAgentManifest();
+      if (auto node_reporter = node_reporter_.lock()) {
+        auto manifest = node_reporter->getAgentManifest();
         serializeMetrics(agentInfo, manifest.name, manifest.serialized_nodes);
-        response.addPayload(std::move(agentInfo));
       }
+      response.addPayload(std::move(agentInfo));
       enqueue_c2_response(std::move(response));
       break;
     }
@@ -562,9 +566,9 @@ void C2Agent::handle_describe(const C2ContentResponse &resp) {
       response.setLabel("corecomponentstate");
       C2Payload states(Operation::ACKNOWLEDGE, resp.ident, true);
       states.setLabel("corecomponentstate");
-      auto state_manager_provider = core::ProcessContext::getStateManagerProvider(logger_, controller_, configuration_);
-      if (state_manager_provider != nullptr) {
-        auto core_component_states = state_manager_provider->getAllCoreComponentStates();
+      auto state_storage = core::ProcessContext::getStateStorage(logger_, controller_, configuration_);
+      if (state_storage != nullptr) {
+        auto core_component_states = state_storage->getAllStates();
         for (const auto& core_component_state : core_component_states) {
           C2Payload state(Operation::ACKNOWLEDGE, resp.ident, true);
           state.setLabel(core_component_state.first.to_string());
@@ -842,8 +846,7 @@ std::optional<std::string> C2Agent::fetchFlow(const std::string& uri) const {
     return std::nullopt;
   }
 
-  C2Payload payload(Operation::TRANSFER, true);
-  C2Payload &&response = protocol_.load()->consumePayload(resolved_url.value(), payload, RECEIVE, false);
+  C2Payload response = protocol_.load()->fetch(resolved_url.value(), update_sink_->getSupportedConfigurationFormats());
 
   return response.getRawDataAsString();
 }
@@ -995,7 +998,7 @@ void C2Agent::handleAssetUpdate(const C2ContentResponse& resp) {
     return;
   }
 
-  C2Payload file_response = protocol_.load()->consumePayload(url, C2Payload(Operation::TRANSFER, true), RECEIVE, false);
+  C2Payload file_response = protocol_.load()->fetch(url);
 
   if (file_response.getStatus().getState() != state::UpdateState::READ_COMPLETE) {
     send_error("Failed to fetch asset from '" + url + "'");
@@ -1004,7 +1007,7 @@ void C2Agent::handleAssetUpdate(const C2ContentResponse& resp) {
 
   auto raw_data = std::move(file_response).moveRawData();
   // ensure directory exists for file
-  if (utils::file::create_dir(file_path.parent_path().string()) != 0) {
+  if (utils::file::create_dir(file_path.parent_path()) != 0) {
     send_error("Failed to create directory '" + file_path.parent_path().string() + "'");
     return;
   }

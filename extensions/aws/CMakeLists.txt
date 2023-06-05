@@ -34,6 +34,9 @@ add_library(minifi-aws SHARED ${SOURCES})
 target_link_libraries(minifi-aws PUBLIC ${LIBMINIFI} Threads::Threads)
 
 target_wholearchive_library_private(minifi-aws AWS::aws-cpp-sdk-s3)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "(arm64)|(ARM64)|(aarch64)|(armv8)")
+    target_wholearchive_library_private(minifi-aws AWS::aws-checksums)
+endif()
 get_target_property(AWS_SDK_INCLUDE_DIRS AWS::aws-cpp-sdk-s3 INTERFACE_INCLUDE_DIRECTORIES)
 target_include_directories(minifi-aws INTERFACE ${AWS_SDK_INCLUDE_DIRS})
 if(WIN32)
@@ -41,6 +44,6 @@ if(WIN32)
     target_compile_definitions(minifi-aws INTERFACE "AWS_S3_API=__declspec(dllimport)")
 endif()
 
-register_extension(minifi-aws "AWS EXTENSIONS" AWS-EXTENSIONS "This enables AWS support" "${TEST_DIR}/aws-tests")
+register_extension(minifi-aws "AWS EXTENSIONS" AWS-EXTENSIONS "This enables AWS support" "extensions/aws/tests")
 
 register_extension_linter(minifi-aws-extensions-linter)

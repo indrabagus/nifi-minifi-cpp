@@ -16,9 +16,7 @@
  * limitations under the License.
  */
 
-#include <algorithm>
 #include <cstdint>
-#include <cstdlib>
 #include <list>
 #include <optional>
 #include <random>
@@ -32,6 +30,8 @@
 
 using org::apache::nifi::minifi::utils::StringUtils;
 using utils::as_string;
+
+// NOLINTBEGIN(readability-container-size-empty)
 
 TEST_CASE("StringUtils::chomp works correctly", "[StringUtils][chomp]") {
   using pair_of = std::pair<std::string, std::string>;
@@ -155,20 +155,41 @@ TEST_CASE("StringUtils::replaceEnvironmentVariables works correctly", "[replaceE
 
 TEST_CASE("TestStringUtils::testJoin", "[test string join]") {
   std::set<std::string> strings = {"3", "2", "1"};
-  REQUIRE(StringUtils::join(",", strings) == "1,2,3");
+  CHECK(StringUtils::join(",", strings) == "1,2,3");
 
   std::wstring sep = L"é";
   std::vector<std::wstring> wstrings = {L"1", L"2"};
-  REQUIRE(StringUtils::join(sep, wstrings) == L"1é2");
+  CHECK(StringUtils::join(sep, wstrings) == L"1é2");
 
   std::list<uint64_t> ulist = {1, 2};
-  REQUIRE(StringUtils::join(sep, ulist) == L"1é2");
+  CHECK(StringUtils::join(sep, ulist) == L"1é2");
 
-  REQUIRE(StringUtils::join(">", ulist) == "1>2");
+  CHECK(StringUtils::join(">", ulist) == "1>2");
 
-  REQUIRE(StringUtils::join("", ulist) == "12");
+  CHECK(StringUtils::join("", ulist) == "12");
 
-  REQUIRE(StringUtils::join("this separator wont appear", std::vector<std::string>()) == "");
+  CHECK(StringUtils::join("this separator wont appear", std::vector<std::string>()) == "");
+}
+
+TEST_CASE("Test the join function with a projection", "[join][projection]") {
+  std::vector<std::string> fruits = { "APPLE", "OrAnGe" };
+  CHECK(StringUtils::join(", ", fruits, [](auto fruit) { return StringUtils::toLower(fruit); }) == "apple, orange");
+
+  std::set numbers_set = { 3, 2, 1 };
+  CHECK(StringUtils::join(", ", numbers_set, [](auto x) { return std::to_string(x); }) == "1, 2, 3");
+
+  std::wstring sep = L"é";
+  std::vector numbers_vector = { 1,  2 };
+  CHECK(StringUtils::join(sep, numbers_vector, [](auto x) { return std::to_wstring(x); }) == L"1é2");
+
+  std::list<uint64_t> numbers_list = { 1, 2, 3 };
+  CHECK(StringUtils::join(", ", numbers_list, [](auto x) { return std::to_string(x * x); }) == "1, 4, 9");
+
+  CHECK(StringUtils::join(std::string_view{"-"}, numbers_list, [](auto x) { return std::to_string(5 * x); }) == "5-10-15");
+
+  CHECK(StringUtils::join(std::string{}, numbers_list, [](auto x) { return '<' + std::to_string(x) + '>'; }) == "<1><2><3>");
+
+  CHECK(StringUtils::join("this separator wont appear", std::vector<int>{}, [](int) { return std::string_view{"foo"}; }) == "");
 }
 
 TEST_CASE("TestStringUtils::trim", "[test trim]") {
@@ -388,30 +409,22 @@ TEST_CASE("TestStringUtils::testBase64Decode", "[test base64 decode]") {
   REQUIRE("oooooo" == StringUtils::from_base64("b29vb29v", as_string));
   REQUIRE("\xfb\xff\xbf" == StringUtils::from_base64("-_-_", as_string));
   REQUIRE("\xfb\xff\xbf" == StringUtils::from_base64("+/+/", as_string));
-  REQUIRE(std::string({   0,   16, -125,   16,
-                         81, -121,   32, -110,
-                       -117,   48,  -45, -113,
-                         65,   20, -109,   81,
-                         85, -105,   97, -106,
-                       -101,  113,  -41,  -97,
-                       -126,   24,  -93, -110,
-                         89,  -89,  -94, -102,
-                        -85,  -78,  -37,  -81,
-                        -61,   28,  -77,  -45,
-                         93,  -73,  -29,  -98,
-                        -69,  -13,  -33,  -65}) == StringUtils::from_base64("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", as_string));
-  REQUIRE(std::string({   0,   16, -125,   16,
-                         81, -121,   32, -110,
-                       -117,   48,  -45, -113,
-                         65,   20, -109,   81,
-                         85, -105,   97, -106,
-                       -101,  113,  -41,  -97,
-                       -126,   24,  -93, -110,
-                         89,  -89,  -94, -102,
-                        -85,  -78,  -37,  -81,
-                        -61,   28,  -77,  -45,
-                         93,  -73,  -29,  -98,
-                        -69,  -13,  -33,  -65}) == StringUtils::from_base64("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_", as_string));
+  std::string expected = {
+      '\x00', '\x10', '\x83', '\x10',
+      '\x51', '\x87', '\x20', '\x92',
+      '\x8b', '\x30', '\xd3', '\x8f',
+      '\x41', '\x14', '\x93', '\x51',
+      '\x55', '\x97', '\x61', '\x96',
+      '\x9b', '\x71', '\xd7', '\x9f',
+      '\x82', '\x18', '\xa3', '\x92',
+      '\x59', '\xa7', '\xa2', '\x9a',
+      '\xab', '\xb2', '\xdb', '\xaf',
+      '\xc3', '\x1c', '\xb3', '\xd3',
+      '\x5d', '\xb7', '\xe3', '\x9e',
+      '\xbb', '\xf3', '\xdf', '\xbf'};
+
+  REQUIRE(expected == StringUtils::from_base64("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", as_string));
+  REQUIRE(expected == StringUtils::from_base64("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_", as_string));
 
   REQUIRE("foobarbuzz" == StringUtils::from_base64("Zm9vYmFyYnV6eg==", as_string));
   REQUIRE("foobarbuzz"== StringUtils::from_base64("\r\nZm9vYmFyYnV6eg==", as_string));
@@ -542,3 +555,43 @@ TEST_CASE("StringUtils::matchesSequence works correctly", "[matchesSequence]") {
   REQUIRE(StringUtils::matchesSequence("xxxabcxxxabcxxxdefxxx", {"abc", "abc", "def"}));
   REQUIRE(!StringUtils::matchesSequence("xxxabcxxxdefxxx", {"abc", "abc", "def"}));
 }
+
+TEST_CASE("StringUtils::toLower and toUpper tests") {
+  CHECK(StringUtils::toUpper("Lorem ipsum dolor sit amet") == "LOREM IPSUM DOLOR SIT AMET");
+  CHECK(StringUtils::toLower("Lorem ipsum dolor sit amet") == "lorem ipsum dolor sit amet");
+
+  CHECK(StringUtils::toUpper("SuSpenDISse") == "SUSPENDISSE");
+  CHECK(StringUtils::toLower("SuSpenDISse") == "suspendisse");
+}
+
+TEST_CASE("StringUtils::splitToValueAndUnit tests") {
+  int64_t value;
+  std::string unit_str;
+  SECTION("Simple case") {
+    CHECK(StringUtils::splitToValueAndUnit("1 horse", value, unit_str));
+    CHECK(value == 1);
+    CHECK(unit_str == "horse");
+  }
+
+  SECTION("Without whitespace") {
+    CHECK(StringUtils::splitToValueAndUnit("112KiB", value, unit_str));
+    CHECK(value == 112);
+    CHECK(unit_str == "KiB");
+  }
+
+  SECTION("Additional whitespace in the middle") {
+    CHECK(StringUtils::splitToValueAndUnit("100    hOrSe", value, unit_str));
+    CHECK(value == 100);
+    CHECK(unit_str == "hOrSe");
+  }
+
+  SECTION("Invalid value") {
+    CHECK_FALSE(StringUtils::splitToValueAndUnit("one horse", value, unit_str));
+  }
+
+  SECTION("Empty string") {
+    CHECK_FALSE(StringUtils::splitToValueAndUnit("", value, unit_str));
+  }
+}
+
+// NOLINTEND(readability-container-size-empty)

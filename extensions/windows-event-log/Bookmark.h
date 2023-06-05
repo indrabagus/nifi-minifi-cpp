@@ -28,12 +28,9 @@
 #include "core/ProcessSession.h"
 #include "wel/UniqueEvtHandle.h"
 #include "logging/Logger.h"
+#include "utils/expected.h"
 
-namespace org {
-namespace apache {
-namespace nifi {
-namespace minifi {
-namespace processors {
+namespace org::apache::nifi::minifi::processors {
 
 #define LOG_LAST_ERROR(func) logger_->log_error("!"#func" error %x", GetLastError())
 
@@ -44,13 +41,13 @@ class Bookmark {
       const std::filesystem::path& bookmarkRootDir,
       const utils::Identifier& uuid,
       bool processOldEvents,
-      core::CoreComponentStateManager* state_manager,
+      core::StateManager* state_manager,
       std::shared_ptr<core::logging::Logger> logger);
   ~Bookmark();
   explicit operator bool() const noexcept;
 
   /* non-owning */ EVT_HANDLE getBookmarkHandleFromXML();
-  bool getNewBookmarkXml(EVT_HANDLE hEvent, std::wstring& bookmarkXml);
+  nonstd::expected<std::wstring, std::string> getNewBookmarkXml(EVT_HANDLE hEvent);
   bool saveBookmarkXml(const std::wstring& bookmarkXml);
 
  private:
@@ -60,15 +57,11 @@ class Bookmark {
   using unique_evt_handle = wel::unique_evt_handle;
 
   std::shared_ptr<core::logging::Logger> logger_;
-  core::CoreComponentStateManager* state_manager_;
+  core::StateManager* state_manager_;
   std::filesystem::path filePath_;
   bool ok_{};
   unique_evt_handle hBookmark_;
   std::wstring bookmarkXml_;
 };
 
-} /* namespace processors */
-} /* namespace minifi */
-} /* namespace nifi */
-} /* namespace apache */
-} /* namespace org */
+}  // namespace org::apache::nifi::minifi::processors

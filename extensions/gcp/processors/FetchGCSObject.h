@@ -31,7 +31,7 @@ namespace org::apache::nifi::minifi::extensions::gcp {
 class FetchGCSObject : public GCSProcessor {
  public:
   explicit FetchGCSObject(std::string name, const utils::Identifier& uuid = {})
-      : GCSProcessor(std::move(name), uuid, core::logging::LoggerFactory<FetchGCSObject>::getLogger()) {
+      : GCSProcessor(std::move(name), uuid, core::logging::LoggerFactory<FetchGCSObject>::getLogger(uuid)) {
   }
   ~FetchGCSObject() override = default;
 
@@ -53,6 +53,11 @@ class FetchGCSObject : public GCSProcessor {
   EXTENSIONAPI static const core::Relationship Success;
   EXTENSIONAPI static const core::Relationship Failure;
   static auto relationships() { return std::array{Success, Failure}; }
+
+  EXTENSIONAPI static const core::OutputAttribute Message;
+  EXTENSIONAPI static const core::OutputAttribute Reason;
+  EXTENSIONAPI static const core::OutputAttribute Domain;
+  static auto outputAttributes() { return std::array{Message, Reason, Domain}; }
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;

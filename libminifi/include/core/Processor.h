@@ -35,11 +35,13 @@
 #include "Connectable.h"
 #include "Core.h"
 #include "core/Annotation.h"
+#include "DynamicProperty.h"
 #include "Scheduling.h"
 #include "utils/TimeUtil.h"
 #include "core/state/nodes/MetricsBase.h"
 #include "ProcessorMetrics.h"
 #include "utils/gsl.h"
+#include "OutputAttribute.h"
 
 #define ADD_GET_PROCESSOR_NAME \
   std::string getProcessorType() const override { \
@@ -82,7 +84,7 @@ class Processor : public Connectable, public ConfigurableComponent, public state
   Processor(const Processor& parent) = delete;
   Processor& operator=(const Processor& parent) = delete;
 
-  bool isRunning() override;
+  bool isRunning() const override;
 
   ~Processor() override;
 
@@ -221,9 +223,13 @@ class Processor : public Connectable, public ConfigurableComponent, public state
 
   virtual annotation::Input getInputRequirement() const = 0;
 
-  std::shared_ptr<state::response::ResponseNode> getResponseNodes() override {
+  state::response::SharedResponseNode getResponseNode() override {
     return metrics_;
   }
+
+  static std::array<DynamicProperty, 0> dynamicProperties() { return {}; }
+
+  static std::array<OutputAttribute, 0> outputAttributes() { return {}; }
 
  protected:
   virtual void notifyStop() {
@@ -247,7 +253,6 @@ class Processor : public Connectable, public ConfigurableComponent, public state
   mutable std::mutex mutex_;
   std::atomic<std::chrono::time_point<std::chrono::system_clock>> yield_expiration_{};
 
- private:
   static std::mutex& getGraphMutex() {
     static std::mutex mutex{};
     return mutex;

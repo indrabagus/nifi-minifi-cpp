@@ -149,6 +149,13 @@ const core::Relationship InvokeHTTP::RelFailure("failure",
     "The original FlowFile will be routed on any type of connection failure, "
     "timeout or general exception. It will have new attributes detailing the request.");
 
+
+const core::OutputAttribute InvokeHTTP::StatusCode{STATUS_CODE, { Success, RelResponse, RelRetry, RelNoRetry }, "The status code that is returned"};
+const core::OutputAttribute InvokeHTTP::StatusMessage{STATUS_MESSAGE, { Success, RelResponse, RelRetry, RelNoRetry }, "The status message that is returned"};
+const core::OutputAttribute InvokeHTTP::RequestUrl{REQUEST_URL, { Success, RelResponse, RelRetry, RelNoRetry }, "The original request URL"};
+const core::OutputAttribute InvokeHTTP::TxId{TRANSACTION_ID, { Success, RelResponse, RelRetry, RelNoRetry }, "The transaction ID that is returned after reading the response"};
+
+
 void InvokeHTTP::initialize() {
   logger_->log_trace("Initializing InvokeHTTP");
   setSupportedProperties(properties());
@@ -263,7 +270,15 @@ void InvokeHTTP::onSchedule(const std::shared_ptr<core::ProcessContext>& context
   gsl_Expects(context);
 
   setupMembersFromProperties(*context);
-  client_queue_ = utils::ResourceQueue<extensions::curl::HTTPClient>::create(getMaxConcurrentTasks(), logger_);
+  std::weak_ptr<core::ProcessContext> weak_context = context;
+  auto create_client = [this, weak_context]() -> std::unique_ptr<minifi::extensions::curl::HTTPClient> {
+    if (auto context = weak_context.lock())
+      return createHTTPClientFromPropertiesAndMembers(*context);
+    else
+      return nullptr;
+  };
+
+  client_queue_ = utils::ResourceQueue<extensions::curl::HTTPClient>::create(create_client, getMaxConcurrentTasks(), std::nullopt, logger_);
 }
 
 bool InvokeHTTP::shouldEmitFlowFile(minifi::extensions::curl::HTTPClient& client) {
@@ -306,11 +321,8 @@ bool InvokeHTTP::appendHeaders(const core::FlowFile& flow_file, /*std::invocable
 
 void InvokeHTTP::onTrigger(const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSession>& session) {
   gsl_Expects(session && context && client_queue_);
-  auto create_client = [&]() -> std::unique_ptr<minifi::extensions::curl::HTTPClient> {
-    return createHTTPClientFromPropertiesAndMembers(*context);
-  };
 
-  auto client = client_queue_->getResource(create_client);
+  auto client = client_queue_->getResource();
 
   onTriggerWithClient(context, session, *client);
 }
@@ -357,6 +369,7 @@ void InvokeHTTP::onTriggerWithClient(const std::shared_ptr<core::ProcessContext>
         client.setRequestHeader("Content-Length", "0");
       } else if (!use_chunked_encoding_) {
         client.setRequestHeader("Content-Length", std::to_string(flow_file->getSize()));
+        client.setPostSize(flow_file->getSize());
       }
     } else {
       logger_->log_error("InvokeHTTP -- no resource claim");

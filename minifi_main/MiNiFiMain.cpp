@@ -55,6 +55,8 @@
 #include "core/ConfigurationFactory.h"
 #include "core/RepositoryFactory.h"
 #include "core/extension/ExtensionManager.h"
+#include "core/repository/VolatileContentRepository.h"
+#include "core/repository/VolatileFlowFileRepository.h"
 #include "DiskSpaceWatchdog.h"
 #include "properties/Decryptor.h"
 #include "utils/file/PathUtils.h"
@@ -64,6 +66,10 @@
 #include "AgentDocs.h"
 #include "MainHelper.h"
 #include "agent/JsonSchema.h"
+#include "core/state/nodes/ResponseNodeLoader.h"
+#include "c2/C2Agent.h"
+#include "core/state/MetricsPublisherFactory.h"
+#include "core/state/MetricsPublisherStore.h"
 
 namespace minifi = org::apache::nifi::minifi;
 namespace core = minifi::core;
@@ -133,9 +139,9 @@ int main(int argc, char **argv) {
 #ifdef WIN32
   RunAsServiceIfNeeded();
 
-  bool isStartedByService = false;
-  HANDLE terminationEventHandler = GetTerminationEventHandle(&isStartedByService);
-  if (terminationEventHandler == nullptr) {
+  auto [isStartedByService, terminationEventHandler] = GetTerminationEventHandle();
+  if (isStartedByService && !terminationEventHandler) {
+    std::cerr << "Fatal error: started by service, but could not create the termination event handler\n";
     return -1;
   }
 
@@ -150,9 +156,10 @@ int main(int argc, char **argv) {
 #ifdef WIN32
   if (isStartedByService) {
     if (!CreateServiceTerminationThread(logger, terminationEventHandler)) {
+      logger->log_error("Fatal error: started by service, but could not create the service termination thread");
       return -1;
     }
-  } else {
+  } else if (terminationEventHandler) {
     CloseHandle(terminationEventHandler);
   }
 #endif
@@ -224,17 +231,16 @@ int main(int argc, char **argv) {
       return -1;
     }
 
-    uint16_t stop_wait_time = STOP_WAIT_TIME_MS;
-
     std::string graceful_shutdown_seconds;
     std::string prov_repo_class = "provenancerepository";
     std::string flow_repo_class = "flowfilerepository";
-    std::string nifi_configuration_class_name = "yamlconfiguration";
+    std::string nifi_configuration_class_name = "adaptiveconfiguration";
     std::string content_repo_class = "filesystemrepository";
 
     auto log_properties = std::make_shared<core::logging::LoggerProperties>();
     log_properties->setHome(minifiHome);
-    log_properties->loadConfigureFile(DEFAULT_LOG_PROPERTIES_FILE);
+    log_properties->loadConfigureFile(DEFAULT_LOG_PROPERTIES_FILE, "nifi.log.");
+
     core::logging::LoggerConfiguration::getConfiguration().initialize(log_properties);
 
     std::shared_ptr<minifi::Properties> uid_properties = std::make_shared<minifi::Properties>("UID properties");
@@ -258,7 +264,12 @@ int main(int argc, char **argv) {
 
     minifi::core::extension::ExtensionManager::get().initialize(configure);
 
-    if (argc >= 3 && std::string("docs") == argv[1]) {
+    if (argc >= 2 && std::string("docs") == argv[1]) {
+      if (argc < 3 || argc > 4) {
+        std::cerr << "Usage: <minifiexe> docs <directory where to write individual doc files> [file where to write PROCESSORS.md]\n";
+        std::cerr << "    If no file name is given for PROCESSORS.md, it will be printed to stdout.\n";
+        exit(1);
+      }
       if (utils::file::create_dir(argv[2]) != 0) {
         std::cerr << "Working directory doesn't exist and cannot be created: " << argv[2] << std::endl;
         exit(1);
@@ -296,20 +307,10 @@ int main(int argc, char **argv) {
       std::exit(0);
     }
 
-    if (configure->get(minifi::Configure::nifi_graceful_shutdown_seconds, graceful_shutdown_seconds)) {
-      try {
-        stop_wait_time = std::stoi(graceful_shutdown_seconds);
-      }
-      catch (const std::out_of_range& e) {
-        logger->log_error("%s is out of range. %s", minifi::Configure::nifi_graceful_shutdown_seconds, e.what());
-      }
-      catch (const std::invalid_argument& e) {
-        logger->log_error("%s contains an invalid argument set. %s", minifi::Configure::nifi_graceful_shutdown_seconds, e.what());
-      }
-    } else {
-      logger->log_debug("%s not set, defaulting to %d", minifi::Configure::nifi_graceful_shutdown_seconds,
-          STOP_WAIT_TIME_MS);
-    }
+    std::chrono::milliseconds stop_wait_time = configure->get(minifi::Configure::nifi_graceful_shutdown_seconds)
+        | utils::flatMap(utils::timeutils::StringToDuration<std::chrono::milliseconds>)
+        | utils::valueOrElse([] { return std::chrono::milliseconds(STOP_WAIT_TIME_MS);});
+
 
     configure->get(minifi::Configure::nifi_provenance_repository_class_name, prov_repo_class);
     // Create repos for flow record and provenance
@@ -337,9 +338,15 @@ int main(int argc, char **argv) {
       logger->log_error("Content repository failed to initialize, exiting..");
       exit(1);
     }
+    const bool is_flow_repo_non_persistent = flow_repo->isNoop() || std::dynamic_pointer_cast<core::repository::VolatileFlowFileRepository>(flow_repo) != nullptr;
+    const bool is_content_repo_non_persistent = std::dynamic_pointer_cast<core::repository::VolatileContentRepository>(content_repo) != nullptr;
+    if (is_flow_repo_non_persistent != is_content_repo_non_persistent) {
+      logger->log_error("Both or neither of flowfile and content repositories must be persistent! Exiting..");
+      exit(1);
+    }
 
     std::string content_repo_path;
-    if (configure->get(minifi::Configure::nifi_dbcontent_repository_directory_default, content_repo_path)) {
+    if (configure->get(minifi::Configure::nifi_dbcontent_repository_directory_default, content_repo_path) && !content_repo_path.empty()) {
       core::logging::LOG_INFO(logger) << "setting default dir to " << content_repo_path;
       minifi::setDefaultDirectory(content_repo_path);
     }
@@ -355,9 +362,8 @@ int main(int argc, char **argv) {
         should_encrypt_flow_config,
         utils::crypto::EncryptionProvider::create(minifiHome));
 
-    std::unique_ptr<core::FlowConfiguration> flow_configuration = core::createFlowConfiguration(
+    std::shared_ptr<core::FlowConfiguration> flow_configuration = core::createFlowConfiguration(
         core::ConfigurationContext{
-          .repo = prov_repo,
           .flow_file_repo = flow_repo,
           .content_repo = content_repo,
           .stream_factory = stream_factory,
@@ -365,10 +371,16 @@ int main(int argc, char **argv) {
           .path = configure->get(minifi::Configure::nifi_flow_configuration_file),
           .filesystem = filesystem}, nifi_configuration_class_name);
 
-    const auto controller = std::make_unique<minifi::FlowController>(
-        prov_repo, flow_repo, configure, std::move(flow_configuration), content_repo, filesystem, request_restart);
+    std::vector<std::shared_ptr<core::RepositoryMetricsSource>> repo_metric_sources{prov_repo, flow_repo, content_repo};
+    auto metrics_publisher_store = std::make_unique<minifi::state::MetricsPublisherStore>(configure, repo_metric_sources, flow_configuration);
 
-    const bool disk_space_watchdog_enable = (configure->get(minifi::Configure::minifi_disk_space_watchdog_enable) | utils::map([](const std::string& v) { return v == "true"; })).value_or(true);
+    const auto controller = std::make_unique<minifi::FlowController>(
+      prov_repo, flow_repo, configure, std::move(flow_configuration), content_repo, std::move(metrics_publisher_store), filesystem, request_restart);
+
+    const bool disk_space_watchdog_enable = configure->get(minifi::Configure::minifi_disk_space_watchdog_enable)
+        | utils::flatMap(utils::StringUtils::toBool)
+        | utils::valueOrElse([] { return true; });
+
     std::unique_ptr<utils::CallBackTimer> disk_space_watchdog;
     if (disk_space_watchdog_enable) {
       try {
@@ -399,7 +411,6 @@ int main(int argc, char **argv) {
         disk_space_watchdog = std::make_unique<utils::CallBackTimer>(config.interval, [interval_switch, min_space, repo_paths, logger, &controller]() mutable {
           const auto stop = [&] {
             controller->stop();
-            controller->unload();
           };
           const auto restart = [&] {
             controller->load();
@@ -464,7 +475,6 @@ int main(int argc, char **argv) {
      * Trigger unload -- wait stop_wait_time
      */
     controller->waitUnload(stop_wait_time);
-    controller->stopC2();
     flow_repo = nullptr;
     prov_repo = nullptr;
   } while ([&] {

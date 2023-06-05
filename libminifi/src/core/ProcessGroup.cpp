@@ -33,6 +33,8 @@ using namespace std::literals::chrono_literals;
 
 namespace org::apache::nifi::minifi::core {
 
+constexpr int DEFAULT_ONSCHEDULE_RETRY_INTERVAL_MS = 30000;
+
 std::shared_ptr<utils::IdGenerator> ProcessGroup::id_generator_ = utils::IdGenerator::getIdGenerator();
 
 ProcessGroup::ProcessGroup(ProcessGroupType type, std::string name, const utils::Identifier& uuid)
@@ -54,7 +56,7 @@ ProcessGroup::ProcessGroup(ProcessGroupType type, std::string name, const utils:
   if (parent_process_group_ != nullptr) {
     onschedule_retry_msec_ = parent_process_group_->getOnScheduleRetryPeriod();
   } else {
-    onschedule_retry_msec_ = ONSCHEDULE_RETRY_INTERVAL;
+    onschedule_retry_msec_ = DEFAULT_ONSCHEDULE_RETRY_INTERVAL_MS;
   }
   transmitting_ = false;
   transport_protocol_ = "RAW";
@@ -69,7 +71,7 @@ ProcessGroup::ProcessGroup(ProcessGroupType type, std::string name)
       parent_process_group_(nullptr),
       logger_(logging::LoggerFactory<ProcessGroup>::getLogger()) {
   yield_period_msec_ = 0ms;
-  onschedule_retry_msec_ = ONSCHEDULE_RETRY_INTERVAL;
+  onschedule_retry_msec_ = DEFAULT_ONSCHEDULE_RETRY_INTERVAL_MS;
   transmitting_ = false;
   transport_protocol_ = "RAW";
 
@@ -122,8 +124,8 @@ void ProcessGroup::addProcessGroup(std::unique_ptr<ProcessGroup> child) {
   }
 }
 
-void ProcessGroup::startProcessingProcessors(const std::shared_ptr<TimerDrivenSchedulingAgent>& timeScheduler,
-    const std::shared_ptr<EventDrivenSchedulingAgent> &eventScheduler, const std::shared_ptr<CronDrivenSchedulingAgent> &cronScheduler) {
+void ProcessGroup::startProcessingProcessors(TimerDrivenSchedulingAgent& timeScheduler,
+    EventDrivenSchedulingAgent& eventScheduler, CronDrivenSchedulingAgent& cronScheduler) {
   std::unique_lock<std::recursive_mutex> lock(mutex_);
 
   std::set<Processor*> failed_processors;
@@ -131,24 +133,27 @@ void ProcessGroup::startProcessingProcessors(const std::shared_ptr<TimerDrivenSc
   for (const auto processor : failed_processors_) {
     try {
       logger_->log_debug("Starting %s", processor->getName());
+      processor->setScheduledState(core::ScheduledState::RUNNING);
       switch (processor->getSchedulingStrategy()) {
         case TIMER_DRIVEN:
-          timeScheduler->schedule(processor);
+          timeScheduler.schedule(processor);
           break;
         case EVENT_DRIVEN:
-          eventScheduler->schedule(processor);
+          eventScheduler.schedule(processor);
           break;
         case CRON_DRIVEN:
-          cronScheduler->schedule(processor);
+          cronScheduler.schedule(processor);
           break;
       }
     }
     catch (const std::exception &e) {
       logger_->log_error("Failed to start processor %s (%s): %s", processor->getUUIDStr(), processor->getName(), e.what());
+      processor->setScheduledState(core::ScheduledState::STOPPED);
       failed_processors.insert(processor);
     }
     catch (...) {
       logger_->log_error("Failed to start processor %s (%s)", processor->getUUIDStr(), processor->getName());
+      processor->setScheduledState(core::ScheduledState::STOPPED);
       failed_processors.insert(processor);
     }
   }
@@ -166,8 +171,8 @@ void ProcessGroup::startProcessingProcessors(const std::shared_ptr<TimerDrivenSc
 
   if (!onScheduleTimer_ && !failed_processors_.empty() && onschedule_retry_msec_ > 0) {
     logger_->log_info("Retrying failed processors in %lld msec", onschedule_retry_msec_.load());
-    auto func = [this, eventScheduler, cronScheduler, timeScheduler]() {
-      this->startProcessingProcessors(timeScheduler, eventScheduler, cronScheduler);
+    auto func = [this, eventScheduler = &eventScheduler, cronScheduler = &cronScheduler, timeScheduler = &timeScheduler]() {
+      this->startProcessingProcessors(*timeScheduler, *eventScheduler, *cronScheduler);
     };
     onScheduleTimer_ = std::make_unique<utils::CallBackTimer>(std::chrono::milliseconds(onschedule_retry_msec_), func);
     onScheduleTimer_->start();
@@ -176,8 +181,8 @@ void ProcessGroup::startProcessingProcessors(const std::shared_ptr<TimerDrivenSc
   }
 }
 
-void ProcessGroup::startProcessing(const std::shared_ptr<TimerDrivenSchedulingAgent>& timeScheduler, const std::shared_ptr<EventDrivenSchedulingAgent> &eventScheduler,
-                                   const std::shared_ptr<CronDrivenSchedulingAgent> &cronScheduler) {
+void ProcessGroup::startProcessing(TimerDrivenSchedulingAgent& timeScheduler, EventDrivenSchedulingAgent& eventScheduler,
+                                   CronDrivenSchedulingAgent& cronScheduler) {
   std::lock_guard<std::recursive_mutex> lock(mutex_);
 
   try {
@@ -202,8 +207,8 @@ void ProcessGroup::startProcessing(const std::shared_ptr<TimerDrivenSchedulingAg
   }
 }
 
-void ProcessGroup::stopProcessing(const std::shared_ptr<TimerDrivenSchedulingAgent>& timeScheduler, const std::shared_ptr<EventDrivenSchedulingAgent> &eventScheduler,
-                                  const std::shared_ptr<CronDrivenSchedulingAgent> &cronScheduler, const std::function<bool(const Processor*)>& filter) {
+void ProcessGroup::stopProcessing(TimerDrivenSchedulingAgent& timeScheduler, EventDrivenSchedulingAgent& eventScheduler,
+                                  CronDrivenSchedulingAgent& cronScheduler, const std::function<bool(const Processor*)>& filter) {
   std::lock_guard<std::recursive_mutex> lock(mutex_);
 
   if (onScheduleTimer_) {
@@ -221,13 +226,13 @@ void ProcessGroup::stopProcessing(const std::shared_ptr<TimerDrivenSchedulingAge
       logger_->log_debug("Stopping %s", processor->getName());
       switch (processor->getSchedulingStrategy()) {
         case TIMER_DRIVEN:
-          timeScheduler->unschedule(processor.get());
+          timeScheduler.unschedule(processor.get());
           break;
         case EVENT_DRIVEN:
-          eventScheduler->unschedule(processor.get());
+          eventScheduler.unschedule(processor.get());
           break;
         case CRON_DRIVEN:
-          cronScheduler->unschedule(processor.get());
+          cronScheduler.unschedule(processor.get());
           break;
       }
     }

@@ -16,7 +16,7 @@
 # under the License.
 #
 
-ARG BASE_ALPINE_IMAGE="alpine:3.13"
+ARG BASE_ALPINE_IMAGE="alpine:3.16"
 
 # Build image
 FROM ${BASE_ALPINE_IMAGE} AS build
@@ -36,6 +36,7 @@ ARG DOCKER_SKIP_TESTS=ON
 RUN apk --no-cache add gcc \
   g++ \
   make \
+  bash \
   bison \
   flex \
   flex-dev \
@@ -71,17 +72,16 @@ ENV MINIFI_VERSION ${MINIFI_VERSION}
 RUN addgroup -g ${GID} ${USER} && adduser -u ${UID} -D -G ${USER} -g "" ${USER} && \
     install -d -o ${USER} -g ${USER} ${MINIFI_BASE_DIR}
 COPY --chown=${USER}:${USER} . ${MINIFI_BASE_DIR}
-RUN if [ -d "${MINIFI_BASE_DIR}/.ccache" ]; then mv ${MINIFI_BASE_DIR}/.ccache /home/${USER}/.ccache; fi
 
 USER ${USER}
 
-ENV PATH /usr/lib/ccache/bin:${PATH}
 RUN mkdir ${MINIFI_BASE_DIR}/build
 WORKDIR ${MINIFI_BASE_DIR}/build
-RUN cmake -DSTATIC_BUILD= -DSKIP_TESTS=${DOCKER_SKIP_TESTS} ${MINIFI_OPTIONS} -DAWS_ENABLE_UNITY_BUILD=OFF -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" .. && \
+RUN export PATH=/usr/lib64/ccache/bin${PATH:+:${PATH}} && \
+    export CCACHE_DIR=${MINIFI_BASE_DIR}/.ccache && \
+    cmake -DSTATIC_BUILD= -DSKIP_TESTS=${DOCKER_SKIP_TESTS} ${MINIFI_OPTIONS} -DAWS_ENABLE_UNITY_BUILD=OFF -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" .. && \
     make -j "$(nproc)" package && \
     tar -xzvf "${MINIFI_BASE_DIR}/build/nifi-minifi-cpp-${MINIFI_VERSION}.tar.gz" -C "${MINIFI_BASE_DIR}"
-
 
 # Release image
 FROM ${BASE_ALPINE_IMAGE} AS release
@@ -111,8 +111,8 @@ RUN addgroup -g ${GID} ${USER} && adduser -u ${UID} -D -G ${USER} -g "" ${USER} 
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_PCAP=ON"; then apk add --no-cache libpcap; fi && \
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_USB_CAMERA=ON"; then apk add --no-cache libpng libusb; fi && \
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_OPENCV=ON" || echo "$MINIFI_OPTIONS" | grep -q "ENABLE_BUSTACHE=ON"; then apk add --no-cache boost; fi && \
-    if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_SCRIPTING=ON" && echo "$MINIFI_OPTIONS" | grep -q "ENABLE_LUA_SCRIPTING=ON"; then apk add --no-cache lua; fi && \
-    if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_SCRIPTING=ON" && echo "$MINIFI_OPTIONS" | grep -q "DISABLE_PYTHON_SCRIPTING=OFF"; then apk add --no-cache python3; fi
+    if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_LUA_SCRIPTING=ON"; then apk add --no-cache lua; fi && \
+    if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_PYTHON_SCRIPTING=ON"; then apk add --no-cache python3; fi
 
 # Copy built minifi distribution from builder
 COPY --from=build --chown=${USER}:${USER} ${MINIFI_VERSIONED_HOME} ${MINIFI_HOME}

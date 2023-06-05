@@ -48,6 +48,7 @@ const core::Property ExecuteSQL::SQLSelectQuery(
   ->supportsExpressionLanguage(true)->build());
 
 const core::Relationship ExecuteSQL::Success("success", "Successfully created FlowFile from SQL query result set.");
+const core::Relationship ExecuteSQL::Failure{"failure", "Flow files containing malformed sql statements"};
 
 REGISTER_RESOURCE(ExecuteSQL, Processor);
 
@@ -92,6 +93,10 @@ const core::Property QueryDatabaseTable::WhereClause(
 
 const core::Relationship QueryDatabaseTable::Success("success", "Successfully created FlowFile from SQL query result set.");
 
+const core::DynamicProperty QueryDatabaseTable::InitialMaxValue("initial.maxvalue.<max_value_column>", "Initial maximum value for the specified column",
+    "Specifies an initial max value for max value column(s). Properties should be added in the format `initial.maxvalue.<max_value_column>`. "
+    "This value is only used the first time the table is accessed (when a Maximum Value Column is specified).", true);
+
 REGISTER_RESOURCE(QueryDatabaseTable, Processor);
 
 
@@ -106,7 +111,8 @@ const core::Property PutSQL::SQLStatement(
       "the incoming flow file is expected to contain a valid SQL statement, to be issued by the processor to the database.")
   ->supportsExpressionLanguage(true)->build());
 
-const core::Relationship PutSQL::Success("success", "Database is successfully updated.");
+const core::Relationship PutSQL::Success("success", "After a successful SQL update operation, the incoming FlowFile sent here");
+const core::Relationship PutSQL::Failure{"failure", "Flow files that contain malformed sql statements"};
 
 REGISTER_RESOURCE(PutSQL, Processor);
 

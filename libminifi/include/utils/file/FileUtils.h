@@ -83,9 +83,9 @@ namespace org::apache::nifi::minifi::utils::file {
 
 namespace FileUtils = ::org::apache::nifi::minifi::utils::file;
 
-time_t to_time_t(std::filesystem::file_time_type time);
+std::chrono::system_clock::time_point to_sys(std::filesystem::file_time_type file_time);
 
-std::chrono::system_clock::time_point to_sys(std::filesystem::file_time_type time);
+std::filesystem::file_time_type from_sys(std::chrono::system_clock::time_point sys_time);
 
 inline int64_t delete_dir(const std::filesystem::path& path, bool delete_files_recursively = true) {
   // Empty path is interpreted as the root of the current partition on Windows, which should not be allowed
@@ -124,19 +124,6 @@ inline std::optional<std::filesystem::file_time_type> last_write_time(const std:
     return result;
   }
   return std::nullopt;
-}
-
-inline std::optional<std::string> format_time(const std::filesystem::file_time_type& time, const std::string& format) {
-  auto last_write_time_t = to_time_t(time);
-  std::array<char, 128U> result{};
-  if (std::strftime(result.data(), result.size(), format.c_str(), gmtime(&last_write_time_t)) != 0) {
-    return std::string(result.data());
-  }
-  return std::nullopt;
-}
-
-inline std::optional<std::string> get_last_modified_time_formatted_string(const std::filesystem::path& path, const std::string& format_string) {
-  return utils::file::last_write_time(path) | utils::flatMap([format_string](auto time) { return format_time(time, format_string); });
 }
 
 inline bool set_last_write_time(const std::filesystem::path& path, std::filesystem::file_time_type new_time) {
@@ -204,6 +191,20 @@ inline bool is_directory(const std::filesystem::path &path) {
     return result;
   }
   return false;
+}
+
+inline uint64_t path_size(const std::filesystem::path& path) {
+  uint64_t size = 0;
+  if (std::filesystem::is_regular_file(path)) {
+    return utils::file::file_size(path);
+  } else if (utils::file::is_directory(path)) {
+    for (const std::filesystem::directory_entry& entry : std::filesystem::recursive_directory_iterator(path, std::filesystem::directory_options::skip_permission_denied)) {
+      if (entry.is_regular_file()) {
+        size += entry.file_size();
+      }
+    }
+  }
+  return size;
 }
 
 inline bool exists(const std::filesystem::path &path) {
@@ -479,6 +480,8 @@ inline std::optional<std::string> get_file_owner(const std::filesystem::path& fi
   if (file_handle == INVALID_HANDLE_VALUE) {
     return std::nullopt;
   }
+
+  auto close_file_handle = gsl::finally([&file_handle] { CloseHandle(file_handle); });
 
   // Get the owner SID of the file.
   return_code = GetSecurityInfo(

@@ -18,18 +18,12 @@
 #include "ExecuteSQL.h"
 
 #include <string>
-#include <memory>
+#include <utility>
 
-#include <soci/soci.h>
-
-#include "io/BufferStream.h"
 #include "io/StreamPipe.h"
 #include "core/ProcessContext.h"
 #include "core/ProcessSession.h"
-#include "core/Resource.h"
 #include "Exception.h"
-#include "data/JSONSQLWriter.h"
-#include "data/SQLRowsetProcessor.h"
 
 namespace org::apache::nifi::minifi::processors {
 
@@ -37,7 +31,7 @@ const std::string ExecuteSQL::RESULT_ROW_COUNT = "executesql.row.count";
 const std::string ExecuteSQL::INPUT_FLOW_FILE_UUID = "input.flowfile.uuid";
 
 ExecuteSQL::ExecuteSQL(std::string name, const utils::Identifier& uuid)
-  : SQLProcessor(std::move(name), uuid, core::logging::LoggerFactory<ExecuteSQL>::getLogger()) {
+  : SQLProcessor(std::move(name), uuid, core::logging::LoggerFactory<ExecuteSQL>::getLogger(uuid)) {
 }
 
 void ExecuteSQL::initialize() {
@@ -68,10 +62,22 @@ void ExecuteSQL::processOnTrigger(core::ProcessContext& context, core::ProcessSe
     query = to_string(session.readBuffer(input_flow_file));
   }
   if (query.empty()) {
+    logger_->log_error("Empty sql statement");
+    if (input_flow_file) {
+      session.transfer(input_flow_file, Failure);
+      return;
+    }
     throw Exception(PROCESSOR_EXCEPTION, "Empty SQL statement");
   }
 
-  auto row_set = connection_->prepareStatement(query)->execute(collectArguments(input_flow_file));
+  std::unique_ptr<sql::Rowset> row_set;
+  try {
+    row_set = connection_->prepareStatement(query)->execute(collectArguments(input_flow_file));
+  } catch (const sql::StatementError& ex) {
+    logger_->log_error("Error while executing sql statement: %s", ex.what());
+    session.transfer(input_flow_file, Failure);
+    return;
+  }
 
   sql::JSONSQLWriter json_writer{output_format_ == OutputType::JSONPretty};
   FlowFileGenerator flow_file_creator{session, json_writer};

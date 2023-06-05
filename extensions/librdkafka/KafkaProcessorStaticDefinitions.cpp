@@ -74,7 +74,7 @@ const core::Property KafkaProcessorBase::Password(
 
 const core::Property ConsumeKafka::KafkaBrokers(core::PropertyBuilder::createProperty("Kafka Brokers")
   ->withDescription("A comma-separated list of known Kafka Brokers in the format <host>:<port>.")
-  ->withDefaultValue("localhost:9092", core::StandardValidators::get().NON_BLANK_VALIDATOR)
+  ->withDefaultValue("localhost:9092", core::StandardValidators::NON_BLANK_VALIDATOR)
   ->supportsExpressionLanguage(true)
   ->isRequired(true)
   ->build());
@@ -141,7 +141,7 @@ const core::Property ConsumeKafka::MessageHeaderEncoding(core::PropertyBuilder::
 const core::Property ConsumeKafka::HeadersToAddAsAttributes(core::PropertyBuilder::createProperty("Headers To Add As Attributes")
   ->withDescription("A comma separated list to match against all message headers. Any message header whose name matches an item from the list will be added to the FlowFile "
       "as an Attribute. If not specified, no Header values will be added as FlowFile attributes. The behaviour on when multiple headers of the same name are present is set using "
-      "the DuplicateHeaderHandling attribute.")
+      "the Duplicate Header Handling attribute.")
   ->build());
 
 const core::Property ConsumeKafka::DuplicateHeaderHandling(core::PropertyBuilder::createProperty("Duplicate Header Handling")
@@ -160,10 +160,12 @@ const core::Property ConsumeKafka::MaxPollRecords(core::PropertyBuilder::createP
   ->withDefaultValue<unsigned int>(DEFAULT_MAX_POLL_RECORDS)
   ->build());
 
+constexpr core::ConsumeKafkaMaxPollTimeValidator CONSUME_KAFKA_MAX_POLL_TIME_VALIDATOR;
+
 const core::Property ConsumeKafka::MaxPollTime(core::PropertyBuilder::createProperty("Max Poll Time")
   ->withDescription("Specifies the maximum amount of time the consumer can use for polling data from the brokers. "
       "Polling is a blocking operation, so the upper limit of this value is specified in 4 seconds.")
-  ->withDefaultValue(DEFAULT_MAX_POLL_TIME, std::make_shared<core::ConsumeKafkaMaxPollTimeValidator>(std::string("ConsumeKafkaMaxPollTimeValidator")))
+  ->withDefaultValue(DEFAULT_MAX_POLL_TIME, CONSUME_KAFKA_MAX_POLL_TIME_VALIDATOR)
   ->isRequired(true)
   ->build());
 

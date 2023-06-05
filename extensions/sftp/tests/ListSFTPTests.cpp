@@ -44,7 +44,6 @@
 #include "core/Core.h"
 #include "core/logging/Logger.h"
 #include "core/ProcessGroup.h"
-#include "core/yaml/YamlConfiguration.h"
 #include "FlowController.h"
 #include "properties/Configure.h"
 #include "unit/ProvenanceTestHelper.h"
@@ -417,7 +416,7 @@ TEST_CASE_METHOD(ListSFTPTestsFixture, "ListSFTP Tracking Timestamps one file", 
   REQUIRE(LogTestController::getInstance().contains("key:filename value:tstFile.ext"));
 
   plan->reset();
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
 
   testController.runSession(plan, true);
 
@@ -436,7 +435,7 @@ TEST_CASE_METHOD(ListSFTPTestsFixture, "ListSFTP Tracking Timestamps one file on
   REQUIRE(LogTestController::getInstance().contains("key:filename value:file1.ext"));
 
   plan->reset();
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
 
   createFileWithModificationTimeDiff("nifi_test/file2.ext", "Test content 2", -4min);
 
@@ -457,7 +456,7 @@ TEST_CASE_METHOD(ListSFTPTestsFixture, "ListSFTP Tracking Timestamps one file on
   REQUIRE(LogTestController::getInstance().contains("key:filename value:file1.ext"));
 
   plan->reset();
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
 
   createFileWithModificationTimeDiff("nifi_test/file2.ext", "Test content 2", -6min);
 
@@ -480,7 +479,7 @@ TEST_CASE_METHOD(ListSFTPTestsFixture, "ListSFTP Tracking Timestamps one file an
   REQUIRE(LogTestController::getInstance().contains("key:filename value:file1.ext"));
 
   plan->reset();
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
 
   /* We must sleep to avoid triggering the listing lag. */
   std::this_thread::sleep_for(std::chrono::milliseconds(1500));
@@ -507,7 +506,7 @@ TEST_CASE_METHOD(ListSFTPTestsFixture, "ListSFTP Tracking Timestamps one file ti
   REQUIRE(LogTestController::getInstance().contains("key:filename value:file1.ext"));
 
   plan->reset();
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
 
   REQUIRE(utils::file::set_last_write_time(file, mtime + 1s));
 
@@ -517,7 +516,7 @@ TEST_CASE_METHOD(ListSFTPTestsFixture, "ListSFTP Tracking Timestamps one file ti
   REQUIRE(LogTestController::getInstance().contains("key:filename value:file1.ext"));
 
   plan->reset();
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
 
   /* We must sleep to avoid triggering the listing lag. */
   std::this_thread::sleep_for(std::chrono::milliseconds(1500));
@@ -552,7 +551,7 @@ TEST_CASE_METHOD(PersistentListSFTPTestsFixture, "ListSFTP Tracking Timestamps r
   REQUIRE(list_sftp_uuid);
   createPlan(&list_sftp_uuid, std::make_shared<minifi::Configure>());
   plan->setProperty(list_sftp, "Listing Strategy", "Tracking Timestamps");
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
 
   createFileWithModificationTimeDiff("nifi_test/file2.ext", "Test content 2", -4min);
 
@@ -595,7 +594,7 @@ TEST_CASE_METHOD(PersistentListSFTPTestsFixture, "ListSFTP Tracking Timestamps r
   createPlan(&list_sftp_uuid, std::make_shared<minifi::Configure>());
   plan->setProperty(list_sftp, "Listing Strategy", "Tracking Timestamps");
   plan->setProperty(list_sftp, "Remote Path", "/nifi_test");
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
 
   createFileWithModificationTimeDiff("nifi_test/file2.ext", "Test content 2", -4min);
 
@@ -628,7 +627,7 @@ TEST_CASE_METHOD(ListSFTPTestsFixture, "ListSFTP Tracking Timestamps changed con
   REQUIRE(LogTestController::getInstance().contains("key:filename value:file1.ext"));
 
   plan->reset();
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
   plan->setProperty(list_sftp, "Remote Path", "/nifi_test");
 
   createFileWithModificationTimeDiff("nifi_test/file2.ext", "Test content 2", -4min);
@@ -656,7 +655,7 @@ TEST_CASE_METHOD(ListSFTPTestsFixture, "ListSFTP Tracking Entities one file", "[
   REQUIRE(LogTestController::getInstance().contains("key:filename value:tstFile.ext"));
 
   plan->reset();
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
 
   testController.runSession(plan, true);
 
@@ -675,7 +674,7 @@ TEST_CASE_METHOD(ListSFTPTestsFixture, "ListSFTP Tracking Entities one file one 
   REQUIRE(LogTestController::getInstance().contains("key:filename value:file1.ext"));
 
   plan->reset();
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
 
   createFileWithModificationTimeDiff("nifi_test/file2.ext", "Test content 2", -4min);
 
@@ -696,7 +695,7 @@ TEST_CASE_METHOD(ListSFTPTestsFixture, "ListSFTP Tracking Entities one file one 
   REQUIRE(LogTestController::getInstance().contains("key:filename value:file1.ext"));
 
   plan->reset();
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
 
   createFileWithModificationTimeDiff("nifi_test/file2.ext", "Test content 2", -6min);
 
@@ -719,7 +718,7 @@ TEST_CASE_METHOD(ListSFTPTestsFixture, "ListSFTP Tracking Entities one file one 
   REQUIRE(LogTestController::getInstance().contains("key:filename value:file1.ext"));
 
   plan->reset();
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
 
   createFileWithModificationTimeDiff("nifi_test/file2.ext", "Test content 2", -6h);
 
@@ -742,7 +741,7 @@ TEST_CASE_METHOD(ListSFTPTestsFixture, "ListSFTP Tracking Entities one file anot
   REQUIRE(LogTestController::getInstance().contains("key:filename value:file1.ext"));
 
   plan->reset();
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
 
   createFile("nifi_test/file2.ext", "Test content 2", mtime);
 
@@ -768,7 +767,7 @@ TEST_CASE_METHOD(ListSFTPTestsFixture, "ListSFTP Tracking Entities one file time
   REQUIRE(LogTestController::getInstance().contains("key:filename value:file1.ext"));
 
   plan->reset();
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
 
   REQUIRE(utils::file::set_last_write_time(file, mtime + 1s));
 
@@ -779,7 +778,7 @@ TEST_CASE_METHOD(ListSFTPTestsFixture, "ListSFTP Tracking Entities one file time
   REQUIRE(LogTestController::getInstance().contains("key:filename value:file1.ext"));
 
   plan->reset();
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
 
   testController.runSession(plan, true);
 
@@ -800,7 +799,7 @@ TEST_CASE_METHOD(ListSFTPTestsFixture, "ListSFTP Tracking Entities one file size
   REQUIRE(LogTestController::getInstance().contains("key:filename value:file1.ext"));
 
   plan->reset();
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
 
   createFile("nifi_test/file1.ext", "Longer test content 1", mtime);
 
@@ -811,7 +810,7 @@ TEST_CASE_METHOD(ListSFTPTestsFixture, "ListSFTP Tracking Entities one file size
   REQUIRE(LogTestController::getInstance().contains("key:filename value:file1.ext"));
 
   plan->reset();
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
 
   testController.runSession(plan, true);
 
@@ -833,7 +832,7 @@ TEST_CASE_METHOD(PersistentListSFTPTestsFixture, "ListSFTP Tracking Entities res
   REQUIRE(list_sftp_uuid);
   createPlan(&list_sftp_uuid, std::make_shared<minifi::Configure>());
   plan->setProperty(list_sftp, "Listing Strategy", "Tracking Entities");
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
 
   std::unordered_map<std::string, std::string> state;
   REQUIRE(plan->getProcessContextForProcessor(list_sftp)->getStateManager()->get(state));
@@ -894,7 +893,7 @@ TEST_CASE_METHOD(PersistentListSFTPTestsFixture, "ListSFTP Tracking Entities res
   createPlan(&list_sftp_uuid, std::make_shared<minifi::Configure>());
   plan->setProperty(list_sftp, "Listing Strategy", "Tracking Entities");
   plan->setProperty(list_sftp, "Remote Path", "/nifi_test");
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
 
   createFileWithModificationTimeDiff("nifi_test/file2.ext", "Test content 2", -4min);
 
@@ -927,7 +926,7 @@ TEST_CASE_METHOD(ListSFTPTestsFixture, "ListSFTP Tracking Entities changed confi
   REQUIRE(LogTestController::getInstance().contains("key:filename value:file1.ext"));
 
   plan->reset();
-  LogTestController::getInstance().resetStream(LogTestController::getInstance().log_output);
+  LogTestController::getInstance().clear();
   plan->setProperty(list_sftp, "Remote Path", "/nifi_test");
 
   createFileWithModificationTimeDiff("nifi_test/file2.ext", "Test content 2", -4min);

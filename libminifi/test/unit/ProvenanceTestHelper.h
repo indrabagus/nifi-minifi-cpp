@@ -28,6 +28,7 @@
 #include <utility>
 #include <vector>
 #include "core/repository/VolatileContentRepository.h"
+#include "core/repository/VolatileFlowFileRepository.h"
 #include "core/Processor.h"
 #include "core/ThreadedRepository.h"
 #include "Connection.h"
@@ -35,23 +36,21 @@
 #include "properties/Configure.h"
 #include "provenance/Provenance.h"
 #include "SwapManager.h"
+#include "io/BufferStream.h"
 
 using namespace std::literals::chrono_literals;
+
+const int64_t TEST_MAX_REPOSITORY_STORAGE_SIZE = 100;
 
 template <typename T_BaseRepository>
 class TestRepositoryBase : public T_BaseRepository {
  public:
   TestRepositoryBase()
-      : org::apache::nifi::minifi::core::SerializableComponent("repo_name"),
-        T_BaseRepository("repo_name", "./dir", 1s, 100, 0ms) {
+    : T_BaseRepository("repo_name", "./dir", 1s, TEST_MAX_REPOSITORY_STORAGE_SIZE, 0ms) {
   }
 
   bool initialize(const std::shared_ptr<org::apache::nifi::minifi::Configure> &) override {
     return true;
-  }
-
-  void setFull() {
-    T_BaseRepository::repo_full_ = true;
   }
 
   bool isNoop() const override {
@@ -74,10 +73,6 @@ class TestRepositoryBase : public T_BaseRepository {
     return true;
   }
 
-  bool Serialize(const std::string &key, const uint8_t *buffer, const size_t bufferSize) override {
-    return Put(key, buffer, bufferSize);
-  }
-
   bool Delete(const std::string& key) override {
     std::lock_guard<std::mutex> lock{repository_results_mutex_};
     repository_results_.erase(key);
@@ -95,11 +90,7 @@ class TestRepositoryBase : public T_BaseRepository {
     }
   }
 
-  bool Serialize(std::vector<std::shared_ptr<org::apache::nifi::minifi::core::SerializableComponent>>& /*store*/, size_t /*max_size*/) override {
-    return false;
-  }
-
-  bool DeSerialize(std::vector<std::shared_ptr<org::apache::nifi::minifi::core::SerializableComponent>> &store, size_t &max_size) override {
+  bool getElements(std::vector<std::shared_ptr<org::apache::nifi::minifi::core::SerializableComponent>> &store, size_t &max_size) override {
     std::lock_guard<std::mutex> lock{repository_results_mutex_};
     max_size = 0;
     for (const auto &entry : repository_results_) {
@@ -107,25 +98,11 @@ class TestRepositoryBase : public T_BaseRepository {
         break;
       }
       const auto eventRead = store.at(max_size);
-      eventRead->DeSerialize(gsl::make_span(entry.second).template as_span<const std::byte>());
+      org::apache::nifi::minifi::io::BufferStream stream(gsl::make_span(entry.second).template as_span<const std::byte>());
+      eventRead->deserialize(stream);
       ++max_size;
     }
     return true;
-  }
-
-  bool Serialize(const std::shared_ptr<org::apache::nifi::minifi::core::SerializableComponent>& /*store*/) override {
-    return false;
-  }
-
-  bool DeSerialize(const std::shared_ptr<org::apache::nifi::minifi::core::SerializableComponent> &store) override {
-    std::string value;
-    Get(store->getUUIDStr(), value);
-    store->DeSerialize(gsl::make_span(value).as_span<const std::byte>());
-    return true;
-  }
-
-  bool DeSerialize(gsl::span<const std::byte>) override {
-    return false;
   }
 
   std::map<std::string, std::string> getRepoMap() const {
@@ -140,10 +117,6 @@ class TestRepositoryBase : public T_BaseRepository {
 
 class TestRepository : public TestRepositoryBase<org::apache::nifi::minifi::core::Repository> {
  public:
-  TestRepository()
-    : org::apache::nifi::minifi::core::SerializableComponent("repo_name") {
-  }
-
   bool start() override {
     return true;
   }
@@ -151,14 +124,34 @@ class TestRepository : public TestRepositoryBase<org::apache::nifi::minifi::core
   bool stop() override {
     return true;
   }
+
+  uint64_t getRepositorySize() const override {
+    return 0;
+  }
+
+  uint64_t getRepositoryEntryCount() const override {
+    return 0;
+  }
+};
+
+class TestVolatileRepository : public TestRepositoryBase<org::apache::nifi::minifi::core::repository::VolatileFlowFileRepository> {
+ public:
+  bool start() override {
+    return true;
+  }
+
+  bool stop() override {
+    return true;
+  }
+
+  void setFull() {
+    repo_data_.current_size = repo_data_.max_size;
+    repo_data_.current_entry_count = repo_data_.max_count;
+  }
 };
 
 class TestThreadedRepository : public TestRepositoryBase<org::apache::nifi::minifi::core::ThreadedRepository> {
  public:
-  TestThreadedRepository()
-    : org::apache::nifi::minifi::core::SerializableComponent("repo_name") {
-  }
-
   ~TestThreadedRepository() override {
     stop();
   }
@@ -172,14 +165,21 @@ class TestThreadedRepository : public TestRepositoryBase<org::apache::nifi::mini
     return thread_;
   }
 
+  uint64_t getRepositorySize() const override {
+    return 0;
+  }
+
+  uint64_t getRepositoryEntryCount() const override {
+    return 0;
+  }
+
   std::thread thread_;
 };
 
 class TestFlowRepository : public org::apache::nifi::minifi::core::ThreadedRepository {
  public:
   TestFlowRepository()
-      : org::apache::nifi::minifi::core::SerializableComponent("ff"),
-        org::apache::nifi::minifi::core::ThreadedRepository("ff", "./dir", 1s, 100, 0ms) {
+    : org::apache::nifi::minifi::core::ThreadedRepository("ff", "./dir", 1s, TEST_MAX_REPOSITORY_STORAGE_SIZE, 0ms) {
   }
 
   bool initialize(const std::shared_ptr<org::apache::nifi::minifi::Configure> &) override {
@@ -209,7 +209,12 @@ class TestFlowRepository : public org::apache::nifi::minifi::core::ThreadedRepos
     }
   }
 
-  void loadComponent(const std::shared_ptr<org::apache::nifi::minifi::core::ContentRepository>& /*content_repo*/) override {
+  uint64_t getRepositorySize() const override {
+    return 0;
+  }
+
+  uint64_t getRepositoryEntryCount() const override {
+    return 0;
   }
 
  private:
@@ -232,25 +237,23 @@ class TestFlowController : public org::apache::nifi::minifi::FlowController {
   TestFlowController(std::shared_ptr<org::apache::nifi::minifi::core::Repository> repo, std::shared_ptr<org::apache::nifi::minifi::core::Repository> flow_file_repo,
       const std::shared_ptr<org::apache::nifi::minifi::core::ContentRepository>& /*content_repo*/)
       :org::apache::nifi::minifi::FlowController(repo, flow_file_repo, std::make_shared<org::apache::nifi::minifi::Configure>(), nullptr,
-          std::make_shared<org::apache::nifi::minifi::core::repository::VolatileContentRepository>(), "",
-          std::make_shared<org::apache::nifi::minifi::utils::file::FileSystem>(), []{}) {
+          std::make_shared<org::apache::nifi::minifi::core::repository::VolatileContentRepository>()) {
   }
 
   ~TestFlowController() override = default;
 
-  void load(std::unique_ptr<org::apache::nifi::minifi::core::ProcessGroup> /*root*/ = nullptr, bool /*reload*/ = false) override {
+  void load(bool /*reload*/ = false) override {
   }
 
   int16_t start() override {
-    running_.store(true);
     return 0;
   }
 
   int16_t stop() override {
-    running_.store(false);
     return 0;
   }
-  void waitUnload(const uint64_t /*timeToWaitMs*/) override {
+
+  void waitUnload(const std::chrono::milliseconds /*time_to_wait*/) override {
     stop();
   }
 
@@ -262,11 +265,7 @@ class TestFlowController : public org::apache::nifi::minifi::FlowController {
     return -1;
   }
 
-  void unload() override {
-    stop();
-  }
-
-  bool isRunning() override {
+  bool isRunning() const override {
     return true;
   }
 

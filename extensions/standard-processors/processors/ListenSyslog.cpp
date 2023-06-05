@@ -22,6 +22,7 @@
 #include "core/PropertyBuilder.h"
 #include "core/Resource.h"
 #include "controllers/SSLContextService.h"
+#include "utils/net/Ssl.h"
 
 namespace org::apache::nifi::minifi::processors {
 
@@ -29,7 +30,7 @@ const core::Property ListenSyslog::Port(
     core::PropertyBuilder::createProperty("Listening Port")
         ->withDescription("The port for Syslog communication. (Well-known ports (0-1023) require root access)")
         ->isRequired(true)
-        ->withDefaultValue<int>(514, core::StandardValidators::get().LISTEN_PORT_VALIDATOR)->build());
+        ->withDefaultValue<int>(514, core::StandardValidators::LISTEN_PORT_VALIDATOR)->build());
 
 const core::Property ListenSyslog::ProtocolProperty(
     core::PropertyBuilder::createProperty("Protocol")
@@ -67,14 +68,29 @@ const core::Property ListenSyslog::SSLContextService(
 const core::Property ListenSyslog::ClientAuth(
     core::PropertyBuilder::createProperty("Client Auth")
       ->withDescription("The client authentication policy to use for the SSL Context. Only used if an SSL Context Service is provided.")
-      ->withDefaultValue<std::string>(toString(utils::net::SslServer::ClientAuthOption::NONE))
-      ->withAllowableValues<std::string>(utils::net::SslServer::ClientAuthOption::values())
+      ->withDefaultValue<std::string>(toString(utils::net::ClientAuthOption::NONE))
+      ->withAllowableValues<std::string>(utils::net::ClientAuthOption::values())
       ->build());
 
 const core::Relationship ListenSyslog::Success("success", "Incoming messages that match the expected format when parsing will be sent to this relationship. "
                                                           "When Parse Messages is set to false, all incoming message will be sent to this relationship.");
 const core::Relationship ListenSyslog::Invalid("invalid", "Incoming messages that do not match the expected format when parsing will be sent to this relationship.");
 
+const core::OutputAttribute ListenSyslog::Protocol{"syslog.protocol", {}, "The protocol over which the Syslog message was received."};
+const core::OutputAttribute ListenSyslog::PortOutputAttribute{"syslog.port", {}, "The port over which the Syslog message was received."};
+const core::OutputAttribute ListenSyslog::Sender{"syslog.sender", {}, "The hostname of the Syslog server that sent the message."};
+const core::OutputAttribute ListenSyslog::Valid{"syslog.valid", {}, "An indicator of whether this message matched the expected formats. (requirement: parsing enabled)"};
+const core::OutputAttribute ListenSyslog::Priority{"syslog.priority", {}, "The priority of the Syslog message. (requirement: parsed RFC5424/RFC3164)"};
+const core::OutputAttribute ListenSyslog::Severity{"syslog.severity", {}, "The severity of the Syslog message. (requirement: parsed RFC5424/RFC3164)"};
+const core::OutputAttribute ListenSyslog::Facility{"syslog.facility", {}, "The facility of the Syslog message. (requirement: parsed RFC5424/RFC3164)"};
+const core::OutputAttribute ListenSyslog::Timestamp{"syslog.timestamp", {}, "The timestamp of the Syslog message. (requirement: parsed RFC5424/RFC3164)"};
+const core::OutputAttribute ListenSyslog::Hostname{"syslog.hostname", {}, "The hostname of the Syslog message. (requirement: parsed RFC5424/RFC3164)"};
+const core::OutputAttribute ListenSyslog::Msg{"syslog.msg", {}, "The free-form message of the Syslog message. (requirement: parsed RFC5424/RFC3164)"};
+const core::OutputAttribute ListenSyslog::Version{"syslog.version", {}, "The version of the Syslog message. (requirement: parsed RFC5424)"};
+const core::OutputAttribute ListenSyslog::AppName{"syslog.app_name", {}, "The app name of the Syslog message. (requirement: parsed RFC5424)"};
+const core::OutputAttribute ListenSyslog::ProcId{"syslog.proc_id", {}, "The proc id of the Syslog message. (requirement: parsed RFC5424)"};
+const core::OutputAttribute ListenSyslog::MsgId{"syslog.msg_id", {}, "The message id of the Syslog message. (requirement: parsed RFC5424)"};
+const core::OutputAttribute ListenSyslog::StructuredData{"syslog.structured_data", {}, "The structured data of the Syslog message. (requirement: parsed RFC5424)"};
 
 const std::regex ListenSyslog::rfc5424_pattern_(
     R"(^<(?:(\d|\d{2}|1[1-8]\d|19[01]))>)"                                                                    // priority

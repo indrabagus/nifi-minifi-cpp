@@ -48,6 +48,7 @@ constexpr const char *AP_NORTHEAST_3 = "ap-northeast-3";
 constexpr const char *AP_SOUTH_1 = "ap-south-1";
 constexpr const char *AP_SOUTHEAST_1 = "ap-southeast-1";
 constexpr const char *AP_SOUTHEAST_2 = "ap-southeast-2";
+constexpr const char *AP_SOUTHEAST_3 = "ap-southeast-3";
 constexpr const char *CA_CENTRAL_1 = "ca-central-1";
 constexpr const char *CN_NORTH_1 = "cn-north-1";
 constexpr const char *CN_NORTHWEST_1 = "cn-northwest-1";
@@ -57,12 +58,16 @@ constexpr const char *EU_SOUTH_1 = "eu-south-1";
 constexpr const char *EU_WEST_1 = "eu-west-1";
 constexpr const char *EU_WEST_2 = "eu-west-2";
 constexpr const char *EU_WEST_3 = "eu-west-3";
+constexpr const char *ME_CENTRAL_1 = "me-central-1";
 constexpr const char *ME_SOUTH_1 = "me-south-1";
 constexpr const char *SA_EAST_1 = "sa-east-1";
 constexpr const char *US_EAST_1 = "us-east-1";
 constexpr const char *US_EAST_2 = "us-east-2";
 constexpr const char *US_GOV_EAST_1 = "us-gov-east-1";
 constexpr const char *US_GOV_WEST_1 = "us-gov-west-1";
+constexpr const char *US_ISO_EAST_1 = "us-iso-east-1";
+constexpr const char *US_ISOB_EAST_1 = "us-isob-east-1";
+constexpr const char *US_ISO_WEST_1 = "us-iso-west-1";
 constexpr const char *US_WEST_1 = "us-west-1";
 constexpr const char *US_WEST_2 = "us-west-2";
 
@@ -116,7 +121,7 @@ class S3Processor : public core::Processor {
   void onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &sessionFactory) override;
 
  protected:
-  explicit S3Processor(const std::string& name, const minifi::utils::Identifier& uuid, std::shared_ptr<core::logging::Logger> logger, std::unique_ptr<aws::s3::S3RequestSender> s3_request_sender);
+  explicit S3Processor(std::string name, const minifi::utils::Identifier& uuid, std::shared_ptr<core::logging::Logger> logger, std::unique_ptr<aws::s3::S3RequestSender> s3_request_sender);
 
   std::optional<Aws::Auth::AWSCredentials> getAWSCredentialsFromControllerService(const std::shared_ptr<core::ProcessContext> &context) const;
   std::optional<Aws::Auth::AWSCredentials> getAWSCredentials(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::FlowFile> &flow_file);

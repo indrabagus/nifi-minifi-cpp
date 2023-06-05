@@ -23,19 +23,15 @@
 
 #include "S3RequestSender.h"
 
-namespace org {
-namespace apache {
-namespace nifi {
-namespace minifi {
-namespace aws {
-namespace s3 {
+namespace org::apache::nifi::minifi::aws::s3 {
 
 class S3ClientRequestSender : public S3RequestSender {
  public:
   std::optional<Aws::S3::Model::PutObjectResult> sendPutObjectRequest(
     const Aws::S3::Model::PutObjectRequest& request,
     const Aws::Auth::AWSCredentials& credentials,
-    const Aws::Client::ClientConfiguration& client_config) override;
+    const Aws::Client::ClientConfiguration& client_config,
+    bool use_virtual_addressing) override;
   bool sendDeleteObjectRequest(
     const Aws::S3::Model::DeleteObjectRequest& request,
     const Aws::Auth::AWSCredentials& credentials,
@@ -62,9 +58,4 @@ class S3ClientRequestSender : public S3RequestSender {
     const Aws::Client::ClientConfiguration& client_config) override;
 };
 
-}  // namespace s3
-}  // namespace aws
-}  // namespace minifi
-}  // namespace nifi
-}  // namespace apache
-}  // namespace org
+}  // namespace org::apache::nifi::minifi::aws::s3

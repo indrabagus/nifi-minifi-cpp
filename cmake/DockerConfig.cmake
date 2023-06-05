@@ -26,7 +26,11 @@ add_custom_target(
         -c DOCKER_BASE_IMAGE=${DOCKER_BASE_IMAGE}
         -c DOCKER_CCACHE_DUMP_LOCATION=${DOCKER_CCACHE_DUMP_LOCATION}
         -c DOCKER_SKIP_TESTS=${DOCKER_SKIP_TESTS}
+        -c CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         -c BUILD_NUMBER=${BUILD_NUMBER}
+        -c DOCKER_PLATFORMS=${DOCKER_PLATFORMS}
+        -c DOCKER_PUSH=${DOCKER_PUSH}
+        -c DOCKER_TAGS=${DOCKER_TAGS}
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/docker/)
 
 # Create minimal docker image
@@ -35,19 +39,26 @@ add_custom_target(
     COMMAND ${CMAKE_SOURCE_DIR}/docker/DockerBuild.sh
         -u 1000
         -g 1000
-        -t minimal
+        -p minimal
         -v ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}
-        -o \"-DENABLE_PYTHON=OFF
-             -DENABLE_LIBRDKAFKA=ON
+        -o \"-DENABLE_LIBRDKAFKA=ON
              -DENABLE_AWS=ON
              -DENABLE_AZURE=ON
              -DDISABLE_CONTROLLER=ON
-             -DENABLE_SCRIPTING=OFF
-             -DDISABLE_PYTHON_SCRIPTING=ON
+             -DENABLE_PROMETHEUS=ON
+             -DENABLE_MQTT=OFF
+             -DENABLE_ELASTICSEARCH=OFF
+             -DENABLE_LUA_SCRIPTING=OFF
+             -DENABLE_PYTHON_SCRIPTING=OFF
+             -DENABLE_OPC=OFF
              -DENABLE_ENCRYPT_CONFIG=OFF \"
         -c DOCKER_BASE_IMAGE=${DOCKER_BASE_IMAGE}
         -c DOCKER_SKIP_TESTS=${DOCKER_SKIP_TESTS}
         -c BUILD_NUMBER=${BUILD_NUMBER}
+        -c CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        -c DOCKER_PLATFORMS=${DOCKER_PLATFORMS}
+        -c DOCKER_PUSH=${DOCKER_PUSH}
+        -c DOCKER_TAGS=${DOCKER_TAGS}
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/docker/)
 
 add_custom_target(
@@ -62,6 +73,26 @@ add_custom_target(
         -c BUILD_NUMBER=${BUILD_NUMBER}
         -c DOCKER_CCACHE_DUMP_LOCATION=${DOCKER_CCACHE_DUMP_LOCATION}
         -c DOCKER_SKIP_TESTS=${DOCKER_SKIP_TESTS}
+        -c CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        -c DOCKER_PLATFORMS=${DOCKER_PLATFORMS}
+        -c DOCKER_PUSH=${DOCKER_PUSH}
+        -c DOCKER_TAGS=${DOCKER_TAGS}
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/docker/)
+
+add_custom_target(
+    centos-test
+    COMMAND ${CMAKE_SOURCE_DIR}/docker/DockerBuild.sh
+        -u 1000
+        -g 1000
+        -v ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}
+        -o ${MINIFI_DOCKER_OPTIONS_STR}
+        -d centos
+        -c BUILD_NUMBER=${BUILD_NUMBER}
+        -c DOCKER_CCACHE_DUMP_LOCATION=${DOCKER_CCACHE_DUMP_LOCATION}
+        -c DOCKER_SKIP_TESTS=OFF
+        -c DOCKER_PLATFORMS=${DOCKER_PLATFORMS}
+        -c DOCKER_PUSH=${DOCKER_PUSH}
+        -c DOCKER_TAGS=${DOCKER_TAGS}
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/docker/)
 
 add_custom_target(
@@ -74,6 +105,10 @@ add_custom_target(
         -l ${CMAKE_BINARY_DIR}
         -d fedora
         -c BUILD_NUMBER=${BUILD_NUMBER}
+        -c CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        -c DOCKER_PLATFORMS=${DOCKER_PLATFORMS}
+        -c DOCKER_PUSH=${DOCKER_PUSH}
+        -c DOCKER_TAGS=${DOCKER_TAGS}
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/docker/)
 
 add_custom_target(
@@ -86,6 +121,10 @@ add_custom_target(
         -l ${CMAKE_BINARY_DIR}
         -d bionic
         -c BUILD_NUMBER=${BUILD_NUMBER}
+        -c CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        -c DOCKER_PLATFORMS=${DOCKER_PLATFORMS}
+        -c DOCKER_PUSH=${DOCKER_PUSH}
+        -c DOCKER_TAGS=${DOCKER_TAGS}
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/docker/)
 
 add_custom_target(
@@ -98,6 +137,28 @@ add_custom_target(
         -l ${CMAKE_BINARY_DIR}
         -d focal
         -c BUILD_NUMBER=${BUILD_NUMBER}
+        -c CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        -c DOCKER_PLATFORMS=${DOCKER_PLATFORMS}
+        -c DOCKER_PUSH=${DOCKER_PUSH}
+        -c DOCKER_TAGS=${DOCKER_TAGS}
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/docker/)
+
+add_custom_target(
+    rockylinux
+    COMMAND ${CMAKE_SOURCE_DIR}/docker/DockerBuild.sh
+        -u 1000
+        -g 1000
+        -v ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}
+        -o ${MINIFI_DOCKER_OPTIONS_STR}
+        -l ${CMAKE_BINARY_DIR}
+        -d rockylinux
+        -c BUILD_NUMBER=${BUILD_NUMBER}
+        -c DOCKER_CCACHE_DUMP_LOCATION=${DOCKER_CCACHE_DUMP_LOCATION}
+        -c DOCKER_SKIP_TESTS=${DOCKER_SKIP_TESTS}
+        -c CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        -c DOCKER_PLATFORMS=${DOCKER_PLATFORMS}
+        -c DOCKER_PUSH=${DOCKER_PUSH}
+        -c DOCKER_TAGS=${DOCKER_TAGS}
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/docker/)
 
 if (EXISTS ${CMAKE_SOURCE_DIR}/docker/test/integration/features)
@@ -105,9 +166,27 @@ if (EXISTS ${CMAKE_SOURCE_DIR}/docker/test/integration/features)
 
     add_custom_target(
         docker-verify-all
-        COMMAND ${CMAKE_SOURCE_DIR}/docker/DockerVerify.sh ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH} ${ALL_BEHAVE_TESTS})
+        COMMAND ${CMAKE_SOURCE_DIR}/docker/DockerVerify.sh --enable_test_processors ON ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH} ${ALL_BEHAVE_TESTS})
 
     add_custom_target(
         docker-verify
-        COMMAND ${CMAKE_SOURCE_DIR}/docker/DockerVerify.sh ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH} ${ENABLED_BEHAVE_TESTS})
+        COMMAND ${CMAKE_SOURCE_DIR}/docker/DockerVerify.sh --enable_test_processors ${ENABLE_TEST_PROCESSORS} ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH} ${ENABLED_BEHAVE_TESTS})
+
+    add_custom_target(
+        docker-verify-q1
+        COMMAND ${CMAKE_SOURCE_DIR}/docker/DockerVerify.sh --enable_test_processors ${ENABLE_TEST_PROCESSORS} ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH} ${ENABLED_BEHAVE_TESTS_FIRST_QUADRANT})
+
+    add_custom_target(
+        docker-verify-q2
+        COMMAND ${CMAKE_SOURCE_DIR}/docker/DockerVerify.sh --enable_test_processors ${ENABLE_TEST_PROCESSORS} ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH} ${ENABLED_BEHAVE_TESTS_SECOND_QUADRANT})
+
+    add_custom_target(
+        docker-verify-q3
+        COMMAND ${CMAKE_SOURCE_DIR}/docker/DockerVerify.sh --enable_test_processors ${ENABLE_TEST_PROCESSORS} ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH} ${ENABLED_BEHAVE_TESTS_THIRD_QUADRANT})
+
+    add_custom_target(
+        docker-verify-q4
+        COMMAND ${CMAKE_SOURCE_DIR}/docker/DockerVerify.sh --enable_test_processors ${ENABLE_TEST_PROCESSORS} ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH} ${ENABLED_BEHAVE_TESTS_LAST_QUADRANT})
 endif()
+
+include(VerifyPythonCompatibility)

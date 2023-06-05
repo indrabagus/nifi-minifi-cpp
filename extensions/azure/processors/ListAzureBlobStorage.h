@@ -56,7 +56,7 @@ class ListAzureBlobStorage final : public AzureBlobStorageProcessorBase {
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
   EXTENSIONAPI static constexpr core::annotation::Input InputRequirement = core::annotation::Input::INPUT_FORBIDDEN;
-  EXTENSIONAPI static constexpr bool IsSingleThreaded = false;
+  EXTENSIONAPI static constexpr bool IsSingleThreaded = true;
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
@@ -65,7 +65,7 @@ class ListAzureBlobStorage final : public AzureBlobStorageProcessorBase {
   }
 
   explicit ListAzureBlobStorage(std::string name, std::unique_ptr<storage::BlobStorageClient> blob_storage_client, const minifi::utils::Identifier& uuid = minifi::utils::Identifier())
-    : AzureBlobStorageProcessorBase(std::move(name), uuid, core::logging::LoggerFactory<ListAzureBlobStorage>::getLogger(), std::move(blob_storage_client)) {
+    : AzureBlobStorageProcessorBase(std::move(name), uuid, core::logging::LoggerFactory<ListAzureBlobStorage>::getLogger(uuid), std::move(blob_storage_client)) {
   }
 
   void initialize() override;

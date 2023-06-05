@@ -29,7 +29,7 @@ namespace org::apache::nifi::minifi::processors {
 class ListenTCP : public NetworkListenerProcessor {
  public:
   explicit ListenTCP(std::string name, const utils::Identifier& uuid = {})
-    : NetworkListenerProcessor(std::move(name), uuid, core::logging::LoggerFactory<ListenTCP>::getLogger()) {
+    : NetworkListenerProcessor(std::move(name), uuid, core::logging::LoggerFactory<ListenTCP>::getLogger(uuid)) {
   }
 
   EXTENSIONAPI static constexpr const char* Description = "Listens for incoming TCP connections and reads data from each connection using a line separator as the message demarcator. "
@@ -52,6 +52,10 @@ class ListenTCP : public NetworkListenerProcessor {
 
   EXTENSIONAPI static const core::Relationship Success;
   static auto relationships() { return std::array{Success}; }
+
+  EXTENSIONAPI static const core::OutputAttribute PortOutputAttribute;
+  EXTENSIONAPI static const core::OutputAttribute Sender;
+  static auto outputAttributes() { return std::array{PortOutputAttribute, Sender}; }
 
   void initialize() override;
   void onSchedule(const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSessionFactory>& sessionFactory) override;

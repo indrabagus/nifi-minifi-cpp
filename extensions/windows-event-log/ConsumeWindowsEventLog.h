@@ -42,13 +42,11 @@
 #include "FlowFileRecord.h"
 #include "concurrentqueue.h"
 #include "pugixml.hpp"
+#include "utils/Enum.h"
 #include "utils/Export.h"
+#include "utils/RegexUtils.h"
 
-namespace org {
-namespace apache {
-namespace nifi {
-namespace minifi {
-namespace processors {
+namespace org::apache::nifi::minifi::processors {
 
 struct EventRender {
   std::map<std::string, std::string> matched_fields;
@@ -63,7 +61,7 @@ class ConsumeWindowsEventLog : public core::Processor {
  public:
   explicit ConsumeWindowsEventLog(const std::string& name, const utils::Identifier& uuid = {});
 
-  virtual ~ConsumeWindowsEventLog();
+  ~ConsumeWindowsEventLog() override;
 
   EXTENSIONAPI static constexpr const char* Description = "Windows Event Log Subscribe Callback to receive FlowFiles from Events on Windows.";
 
@@ -76,27 +74,29 @@ class ConsumeWindowsEventLog : public core::Processor {
   EXTENSIONAPI static const core::Property ResolveAsAttributes;
   EXTENSIONAPI static const core::Property EventHeaderDelimiter;
   EXTENSIONAPI static const core::Property EventHeader;
-  EXTENSIONAPI static const core::Property OutputFormat;
-  EXTENSIONAPI static const core::Property JSONFormat;
+  EXTENSIONAPI static const core::Property OutputFormatProperty;
+  EXTENSIONAPI static const core::Property JsonFormatProperty;
   EXTENSIONAPI static const core::Property BatchCommitSize;
   EXTENSIONAPI static const core::Property BookmarkRootDirectory;
   EXTENSIONAPI static const core::Property ProcessOldEvents;
+  EXTENSIONAPI static const core::Property CacheSidLookups;
   static auto properties() {
     return std::array{
-      Channel,
-      Query,
-      MaxBufferSize,
-      InactiveDurationToReconnect,
-      IdentifierMatcher,
-      IdentifierFunction,
-      ResolveAsAttributes,
-      EventHeaderDelimiter,
-      EventHeader,
-      OutputFormat,
-      JSONFormat,
-      BatchCommitSize,
-      BookmarkRootDirectory,
-      ProcessOldEvents
+        Channel,
+        Query,
+        MaxBufferSize,
+        InactiveDurationToReconnect,
+        IdentifierMatcher,
+        IdentifierFunction,
+        ResolveAsAttributes,
+        EventHeaderDelimiter,
+        EventHeader,
+        OutputFormatProperty,
+        JsonFormatProperty,
+        BatchCommitSize,
+        BookmarkRootDirectory,
+        ProcessOldEvents,
+        CacheSidLookups
     };
   }
 
@@ -112,27 +112,21 @@ class ConsumeWindowsEventLog : public core::Processor {
 
   void onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &sessionFactory) override;
   void onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) override;
-  void initialize(void) override;
+  void initialize() override;
   void notifyStop() override;
 
- protected:
+ private:
   void refreshTimeZoneData();
   void putEventRenderFlowFileToSession(const EventRender& eventRender, core::ProcessSession& session) const;
-  wel::WindowsEventLogHandler& getEventLogHandler(const std::string & name);
-  bool insertHeaderName(wel::METADATA_NAMES &header, const std::string &key, const std::string &value) const;
-  void LogWindowsError(std::string error = "Error") const;
-  bool createEventRender(EVT_HANDLE eventHandle, EventRender& eventRender);
+  wel::WindowsEventLogHandler& getEventLogHandler(const std::string& name);
+  static bool insertHeaderName(wel::METADATA_NAMES& header, const std::string& key, const std::string& value);
+  void LogWindowsError(const std::string& error = "Error") const;
+  nonstd::expected<EventRender, std::string> createEventRender(EVT_HANDLE eventHandle);
   void substituteXMLPercentageItems(pugi::xml_document& doc);
+  std::function<std::string(const std::string&)> userIdToUsernameFunction() const;
 
-  static constexpr const char* XML = "XML";
-  static constexpr const char* Both = "Both";
-  static constexpr const char* Plaintext = "Plaintext";
-  static constexpr const char* JSON = "JSON";
-  static constexpr const char* JSONRaw = "Raw";
-  static constexpr const char* JSONSimple = "Simple";
-  static constexpr const char* JSONFlattened = "Flattened";
+  nonstd::expected<std::string, std::string> renderEventAsXml(EVT_HANDLE event_handle);
 
- private:
   struct TimeDiff {
     auto operator()() const {
       return int64_t{ std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - time_).count() };
@@ -140,41 +134,46 @@ class ConsumeWindowsEventLog : public core::Processor {
     const decltype(std::chrono::steady_clock::now()) time_ = std::chrono::steady_clock::now();
   };
 
-  bool commitAndSaveBookmark(const std::wstring &bookmarkXml, const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session);
+  bool commitAndSaveBookmark(const std::wstring& bookmarkXml, const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSession>& session);
 
-  std::tuple<size_t, std::wstring> processEventLogs(const std::shared_ptr<core::ProcessContext> &context,
-    const std::shared_ptr<core::ProcessSession> &session, const EVT_HANDLE& event_query_results);
+  std::tuple<size_t, std::wstring> processEventLogs(const std::shared_ptr<core::ProcessContext>& context,
+                                                    const std::shared_ptr<core::ProcessSession>& session,
+                                                    const EVT_HANDLE& event_query_results);
+
+  void addMatchedFieldsAsAttributes(const EventRender &eventRender, core::ProcessSession &session, const std::shared_ptr<core::FlowFile> &flowFile) const;
 
   std::shared_ptr<core::logging::Logger> logger_;
-  core::CoreComponentStateManager* state_manager_;
+  core::StateManager* state_manager_{nullptr};
   wel::METADATA_NAMES header_names_;
-  std::string header_delimiter_;
+  std::optional<std::string> header_delimiter_;
   std::string channel_;
   std::wstring wstrChannel_;
   std::wstring wstrQuery_;
-  std::string regex_;
+  std::optional<utils::Regex> regex_;
   bool resolve_as_attributes_{false};
   bool apply_identifier_function_{false};
   std::string provenanceUri_;
   std::string computerName_;
-  uint64_t maxBufferSize_{};
-  DWORD lastActivityTimestamp_{};
-  std::map<std::string, wel::WindowsEventLogHandler > providers_;
+  uint64_t max_buffer_size_{};
+  std::map<std::string, wel::WindowsEventLogHandler> providers_;
   uint64_t batch_commit_size_{};
+  bool cache_sid_lookups_ = true;
 
-  enum class JSONType {None, Raw, Simple, Flattened};
+  SMART_ENUM(OutputFormat,
+    (XML, "XML"),
+    (BOTH, "Both"),
+    (PLAINTEXT, "Plaintext"),
+    (JSON, "JSON")
+  )
 
-  struct OutputFormat {
-    bool xml{false};
-    bool plaintext{false};
-    struct JSON {
-      JSONType type{JSONType::None};
+  SMART_ENUM(JsonFormat,
+    (RAW, "Raw"),
+    (SIMPLE, "Simple"),
+    (FLATTENED, "Flattened")
+  )
 
-      explicit operator bool() const noexcept {
-        return type != JSONType::None;
-      }
-    } json;
-  } output_;
+  OutputFormat output_format_;
+  JsonFormat json_format_;
 
   std::unique_ptr<Bookmark> bookmark_;
   std::mutex on_trigger_mutex_;
@@ -185,8 +184,4 @@ class ConsumeWindowsEventLog : public core::Processor {
   std::string timezone_offset_;  // Represented as UTC offset in (+|-)HH:MM format, like +02:00
 };
 
-}  // namespace processors
-}  // namespace minifi
-}  // namespace nifi
-}  // namespace apache
-}  // namespace org
+}  // namespace org::apache::nifi::minifi::processors

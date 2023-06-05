@@ -20,6 +20,8 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
+#include <cinttypes>
 
 #include "encryption/RocksDbEncryptionProvider.h"
 #include "RocksDbStream.h"
@@ -33,13 +35,15 @@ namespace org::apache::nifi::minifi::core::repository {
 
 bool DatabaseContentRepository::initialize(const std::shared_ptr<minifi::Configure> &configuration) {
   std::string value;
-  if (configuration->get(Configure::nifi_dbcontent_repository_directory_default, value)) {
+  if (configuration->get(Configure::nifi_dbcontent_repository_directory_default, value) && !value.empty()) {
     directory_ = value;
   } else {
     directory_ = (configuration->getHome() / "dbcontentrepository").string();
   }
   const auto encrypted_env = createEncryptingEnv(utils::crypto::EncryptionManager{configuration->getHome()}, DbEncryptionOptions{directory_, ENCRYPTION_KEY_NAME});
   logger_->log_info("Using %s DatabaseContentRepository", encrypted_env ? "encrypted" : "plaintext");
+
+  setCompactionPeriod(configuration);
 
   auto set_db_opts = [encrypted_env] (minifi::internal::Writable<rocksdb::DBOptions>& db_opts) {
     db_opts.set(&rocksdb::DBOptions::create_if_missing, true);
@@ -52,10 +56,13 @@ bool DatabaseContentRepository::initialize(const std::shared_ptr<minifi::Configu
       db_opts.set(&rocksdb::DBOptions::env, rocksdb::Env::Default());
     }
   };
-  auto set_cf_opts = [] (rocksdb::ColumnFamilyOptions& cf_opts){
+  auto set_cf_opts = [&configuration] (rocksdb::ColumnFamilyOptions& cf_opts) {
     cf_opts.OptimizeForPointLookup(4);
     cf_opts.merge_operator = std::make_shared<StringAppender>();
     cf_opts.max_successive_merges = 0;
+    if (auto compression_type = minifi::internal::readConfiguredCompressionType(configuration, Configure::nifi_content_repository_rocksdb_compression)) {
+      cf_opts.compression = *compression_type;
+    }
   };
   db_ = minifi::internal::RocksDatabase::create(set_db_opts, set_cf_opts, directory_);
   if (db_->open()) {
@@ -68,14 +75,52 @@ bool DatabaseContentRepository::initialize(const std::shared_ptr<minifi::Configu
   return is_valid_;
 }
 
+void DatabaseContentRepository::setCompactionPeriod(const std::shared_ptr<minifi::Configure> &configuration) {
+  compaction_period_ = DEFAULT_COMPACTION_PERIOD;
+  if (auto compaction_period_str = configuration->get(Configure::nifi_dbcontent_repository_rocksdb_compaction_period)) {
+    if (auto compaction_period = TimePeriodValue::fromString(compaction_period_str.value())) {
+      compaction_period_ = compaction_period->getMilliseconds();
+      if (compaction_period_.count() == 0) {
+        logger_->log_warn("Setting '%s' to 0 disables forced compaction", Configure::nifi_dbcontent_repository_rocksdb_compaction_period);
+      }
+    } else {
+      logger_->log_error("Malformed property '%s', expected time period, using default", Configure::nifi_dbcontent_repository_rocksdb_compaction_period);
+    }
+  } else {
+    logger_->log_debug("Using default compaction period of %" PRId64 " ms", int64_t{compaction_period_.count()});
+  }
+}
+
+void DatabaseContentRepository::runCompaction() {
+  do {
+    if (auto opendb = db_->open()) {
+      auto status = opendb->RunCompaction();
+      logger_->log_trace("Compaction triggered: %s", status.ToString());
+    } else {
+      logger_->log_error("Failed to open database for compaction");
+    }
+  } while (!utils::StoppableThread::waitForStopRequest(compaction_period_));
+}
+
+void DatabaseContentRepository::start() {
+  if (!db_ || !is_valid_) {
+    return;
+  }
+  if (compaction_period_.count() != 0) {
+    compaction_thread_ = std::make_unique<utils::StoppableThread>([this] () {
+      runCompaction();
+    });
+  }
+}
+
 void DatabaseContentRepository::stop() {
   if (db_) {
     auto opendb = db_->open();
     if (opendb) {
       opendb->FlushWAL(true);
     }
+    compaction_thread_.reset();
   }
-  db_.reset();
 }
 
 DatabaseContentRepository::Session::Session(std::shared_ptr<ContentRepository> repository) : BufferedContentSession(std::move(repository)) {}
@@ -152,20 +197,26 @@ bool DatabaseContentRepository::exists(const minifi::ResourceClaim &streamId) {
   }
 }
 
-bool DatabaseContentRepository::remove(const minifi::ResourceClaim &claim) {
-  if (!is_valid_ || !db_)
+bool DatabaseContentRepository::removeKey(const std::string& content_path) {
+  if (!is_valid_ || !db_) {
+    logger_->log_error("DB is not valid, could not delete %s", content_path);
     return false;
+  }
   auto opendb = db_->open();
   if (!opendb) {
+    logger_->log_error("Could not open DB, did not delete %s", content_path);
     return false;
   }
   rocksdb::Status status;
-  status = opendb->Delete(rocksdb::WriteOptions(), claim.getContentFullPath());
+  status = opendb->Delete(rocksdb::WriteOptions(), content_path);
   if (status.ok()) {
-    logger_->log_debug("Deleting resource %s", claim.getContentFullPath());
+    logger_->log_debug("Deleting resource %s", content_path);
+    return true;
+  } else if (status.IsNotFound()) {
+    logger_->log_debug("Resource %s was not found", content_path);
     return true;
   } else {
-    logger_->log_debug("Attempted, but could not delete %s", claim.getContentFullPath());
+    logger_->log_error("Attempted, but could not delete %s", content_path);
     return false;
   }
 }
@@ -177,6 +228,62 @@ std::shared_ptr<io::BaseStream> DatabaseContentRepository::write(const minifi::R
     return nullptr;
   // append is already supported in all modes
   return std::make_shared<io::RocksDbStream>(claim.getContentFullPath(), gsl::make_not_null<minifi::internal::RocksDatabase*>(db_.get()), true, batch);
+}
+
+void DatabaseContentRepository::clearOrphans() {
+  if (!is_valid_ || !db_) {
+    logger_->log_error("Cannot delete orphan content entries, repository is invalid");
+    return;
+  }
+  auto opendb = db_->open();
+  if (!opendb) {
+    logger_->log_error("Cannot delete orphan content entries, could not open repository");
+    return;
+  }
+  std::vector<std::string> keys_to_be_deleted;
+  auto it = opendb->NewIterator(rocksdb::ReadOptions());
+  for (it->SeekToFirst(); it->Valid(); it->Next()) {
+    auto key = it->key().ToString();
+    std::lock_guard<std::mutex> lock(count_map_mutex_);
+    auto claim_it = count_map_.find(key);
+    if (claim_it == count_map_.end() || claim_it->second == 0) {
+      logger_->log_error("Deleting orphan resource %s", key);
+      keys_to_be_deleted.push_back(key);
+    }
+  }
+  auto batch = opendb->createWriteBatch();
+  for (auto& key : keys_to_be_deleted) {
+    batch.Delete(key);
+  }
+
+  rocksdb::Status status = opendb->Write(rocksdb::WriteOptions(), &batch);
+
+  if (!status.ok()) {
+    logger_->log_error("Could not delete orphan contents from rocksdb database: %s", status.ToString());
+    std::lock_guard<std::mutex> lock(purge_list_mutex_);
+    for (const auto& key : keys_to_be_deleted) {
+      purge_list_.push_back(key);
+    }
+  }
+}
+
+uint64_t DatabaseContentRepository::getRepositorySize() const {
+  return (utils::optional_from_ptr(db_.get()) |
+          utils::flatMap([](const auto& db) { return db->open(); }) |
+          utils::flatMap([](const auto& opendb) { return opendb.getApproximateSizes(); })).value_or(0);
+}
+
+uint64_t DatabaseContentRepository::getRepositoryEntryCount() const {
+  return (utils::optional_from_ptr(db_.get()) |
+          utils::flatMap([](const auto& db) { return db->open(); }) |
+          utils::flatMap([](auto&& opendb) -> std::optional<uint64_t> {
+              std::string key_count;
+              opendb.GetProperty("rocksdb.estimate-num-keys", &key_count);
+              if (!key_count.empty()) {
+                return std::stoull(key_count);
+              }
+              return std::nullopt;
+            })).value_or(0);
 }
 
 REGISTER_RESOURCE_AS(DatabaseContentRepository, InternalResource, ("DatabaseContentRepository", "databasecontentrepository"));

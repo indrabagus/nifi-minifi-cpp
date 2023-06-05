@@ -471,9 +471,87 @@ TEST_CASE("FileUtils::get_relative_path", "[TestGetRelativePath]") {
   TestController test_controller;
   const auto base_path = test_controller.createTempDirectory();
   auto path = std::filesystem::path{"/random/non-existent/dir"};
-  REQUIRE(FileUtils::get_relative_path(path.string(), base_path) == std::nullopt);
+  REQUIRE(FileUtils::get_relative_path(path, base_path) == std::nullopt);
   path = std::filesystem::path{base_path} / "subdir" / "file.log";
-  REQUIRE(*FileUtils::get_relative_path(path.string(), base_path) == std::filesystem::path("subdir") / "file.log");
-  REQUIRE(*FileUtils::get_relative_path(path.string(), base_path / "") == std::filesystem::path("subdir") / "file.log");
+  REQUIRE(*FileUtils::get_relative_path(path, base_path) == std::filesystem::path("subdir") / "file.log");
+  REQUIRE(*FileUtils::get_relative_path(path, base_path / "") == std::filesystem::path("subdir") / "file.log");
   REQUIRE(*FileUtils::get_relative_path(base_path, base_path) == ".");
+}
+
+TEST_CASE("FileUtils::path_size", "[TestPathSize]") {
+  auto writeToFile = [](const std::filesystem::path& path) {
+    std::ofstream test_file_stream(path, std::ios::out | std::ios::binary);
+    test_file_stream << "foo\n";
+    test_file_stream.flush();
+  };
+
+  TestController test_controller;
+  REQUIRE(FileUtils::path_size({""}) == 0);
+  REQUIRE(FileUtils::path_size({"/random/non-existent/dir"}) == 0);
+
+  auto dir = test_controller.createTempDirectory();
+  REQUIRE(FileUtils::path_size(dir) == 0);
+
+  auto test_file = dir / "test_file.log";
+  writeToFile(test_file);
+
+  REQUIRE(FileUtils::path_size(test_file) == 4);
+  REQUIRE(FileUtils::path_size(dir) == 4);
+
+  auto subdir = dir / "subdir";
+  REQUIRE(utils::file::create_dir(subdir) == 0);
+
+  REQUIRE(FileUtils::path_size(dir) == 4);
+
+  auto subdir_test_file = subdir / "test_file2.log";
+  writeToFile(subdir_test_file);
+
+  REQUIRE(FileUtils::path_size(dir) == 8);
+
+  auto subsubdir = subdir / "subsubdir";
+  REQUIRE(utils::file::create_dir(subsubdir) == 0);
+
+  auto subsubdir_test_file = subsubdir / "test_file3.log";
+  writeToFile(subsubdir_test_file);
+
+  REQUIRE(FileUtils::path_size(dir) == 12);
+}
+
+TEST_CASE("file_clock to system_clock conversion tests") {
+  using namespace std::chrono;
+
+  static_assert(system_clock::period::num == file_clock::period::num);
+  constexpr auto lowest_den = std::min(file_clock::period::den, system_clock::period::den);
+  using LeastPreciseDurationType = duration<std::common_type_t<system_clock::duration::rep, file_clock::duration::rep>, std::ratio<system_clock::period::num, lowest_den>>;
+
+  {
+    system_clock::time_point system_now = system_clock::now();
+    file_clock::time_point converted_system_now = FileUtils::from_sys(system_now);
+    system_clock::time_point double_converted_system_now = FileUtils::to_sys(converted_system_now);
+
+    CHECK(time_point_cast<LeastPreciseDurationType>(system_now).time_since_epoch().count() == time_point_cast<LeastPreciseDurationType>(double_converted_system_now).time_since_epoch().count());
+  }
+
+  {
+    file_clock::time_point file_now = file_clock ::now();
+    system_clock::time_point converted_file_now = FileUtils::to_sys(file_now);
+    file_clock::time_point double_converted_file_now = FileUtils::from_sys(converted_file_now);
+
+    CHECK(time_point_cast<LeastPreciseDurationType>(file_now).time_since_epoch().count() == time_point_cast<LeastPreciseDurationType>(double_converted_file_now).time_since_epoch().count());
+  }
+
+  {
+    // t0 <= t1
+    auto sys_time_t0 = system_clock::now();
+    auto file_time_t1 = file_clock ::now();
+
+    auto file_time_from_t0 = FileUtils::from_sys(sys_time_t0);
+    auto sys_time_from_t1 = FileUtils::to_sys(file_time_t1);
+
+    CHECK(0ms <= sys_time_from_t1-sys_time_t0);
+    CHECK(sys_time_from_t1-sys_time_t0 < 10ms);
+
+    CHECK(0ms <= file_time_t1-file_time_from_t0);
+    CHECK(file_time_t1-file_time_from_t0 < 10ms);
+  }
 }

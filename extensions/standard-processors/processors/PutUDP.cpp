@@ -49,7 +49,7 @@ const core::Relationship PutUDP::Success{"success", "FlowFiles that are sent to 
 const core::Relationship PutUDP::Failure{"failure", "FlowFiles that encountered IO errors are send out this relationship."};
 
 PutUDP::PutUDP(std::string name, const utils::Identifier& uuid)
-    : Processor(std::move(name), uuid), logger_{core::logging::LoggerFactory<PutUDP>::getLogger()}
+    : Processor(std::move(name), uuid), logger_{core::logging::LoggerFactory<PutUDP>::getLogger(uuid)}
 { }
 
 PutUDP::~PutUDP() = default;
@@ -93,7 +93,7 @@ void PutUDP::onTrigger(core::ProcessContext* context, core::ProcessSession* cons
   }
 
   const auto data = session->readBuffer(flow_file);
-  if (data.status < 0) {
+  if (io::isError(data.status)) {
     session->transfer(flow_file, Failure);
     return;
   }

@@ -25,6 +25,7 @@
 #include "core/ProcessSession.h"
 #include "SQLProcessor.h"
 #include "utils/ArrayUtils.h"
+#include "core/logging/Logger.h"
 
 namespace org::apache::nifi::minifi::processors {
 
@@ -32,7 +33,10 @@ class PutSQL : public SQLProcessor {
  public:
   explicit PutSQL(std::string name, const utils::Identifier& uuid = {});
 
-  EXTENSIONAPI static constexpr const char* Description = "PutSQL to execute SQL command via ODBC.";
+  EXTENSIONAPI static constexpr const char* Description =
+      "Executes a SQL UPDATE or INSERT command. The content of an incoming FlowFile is expected to be the SQL command to execute. "
+      "The SQL command may use the ? character to bind parameters. In this case, the parameters to use must exist as FlowFile attributes with the naming convention "
+      "sql.args.N.type and sql.args.N.value, where N is a positive integer. The content of the FlowFile is expected to be in UTF-8 format.";
 
   EXTENSIONAPI static const core::Property SQLStatement;
   static auto properties() {
@@ -40,7 +44,8 @@ class PutSQL : public SQLProcessor {
   }
 
   EXTENSIONAPI static const core::Relationship Success;
-  static auto relationships() { return std::array{Success}; }
+  EXTENSIONAPI static const core::Relationship Failure;
+  static auto relationships() { return std::array{Success, Failure}; }
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;

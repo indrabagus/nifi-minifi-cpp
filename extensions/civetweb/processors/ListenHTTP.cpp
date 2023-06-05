@@ -44,7 +44,7 @@ const core::Property ListenHTTP::Port(
     core::PropertyBuilder::createProperty("Listening Port")
         ->withDescription("The Port to listen on for incoming connections. 0 means port is going to be selected randomly.")
         ->isRequired(true)
-        ->withDefaultValue<int>(80, core::StandardValidators::get().LISTEN_PORT_VALIDATOR)->build());
+        ->withDefaultValue<int>(80, core::StandardValidators::LISTEN_PORT_VALIDATOR)->build());
 
 const core::Property ListenHTTP::AuthorizedDNPattern("Authorized DN Pattern", "A Regular Expression to apply against the Distinguished Name of incoming"
                                                " connections. If the Pattern does not match the DN, the connection will be refused.",
@@ -262,6 +262,7 @@ bool ListenHTTP::processIncomingFlowFile(core::ProcessSession &session) {
 
 /// @return Whether there was a request processed
 bool ListenHTTP::processRequestBuffer(core::ProcessSession& session) {
+  gsl_Expects(handler_);
   std::size_t flow_file_count = 0;
   for (; batch_size_ == 0 || batch_size_ > flow_file_count; ++flow_file_count) {
     FlowFileBufferPair flow_file_buffer_pair;

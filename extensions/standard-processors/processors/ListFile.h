@@ -67,10 +67,31 @@ class ListFile : public core::Processor {
   EXTENSIONAPI static const core::Relationship Success;
   static auto relationships() { return std::array{Success}; }
 
+  EXTENSIONAPI static const core::OutputAttribute Filename;
+  EXTENSIONAPI static const core::OutputAttribute Path;
+  EXTENSIONAPI static const core::OutputAttribute AbsolutePath;
+  EXTENSIONAPI static const core::OutputAttribute FileOwner;
+  EXTENSIONAPI static const core::OutputAttribute FileGroup;
+  EXTENSIONAPI static const core::OutputAttribute FileSize;
+  EXTENSIONAPI static const core::OutputAttribute FilePermissions;
+  EXTENSIONAPI static const core::OutputAttribute FileLastModifiedTime;
+  static auto outputAttributes() {
+    return std::array{
+        Filename,
+        Path,
+        AbsolutePath,
+        FileOwner,
+        FileGroup,
+        FileSize,
+        FilePermissions,
+        FileLastModifiedTime
+    };
+  }
+
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
   EXTENSIONAPI static constexpr core::annotation::Input InputRequirement = core::annotation::Input::INPUT_FORBIDDEN;
-  EXTENSIONAPI static constexpr bool IsSingleThreaded = false;
+  EXTENSIONAPI static constexpr bool IsSingleThreaded = true;
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
@@ -81,25 +102,21 @@ class ListFile : public core::Processor {
  private:
   struct ListedFile : public utils::ListedObject {
     [[nodiscard]] std::chrono::time_point<std::chrono::system_clock> getLastModified() const override {
-      return std::chrono::time_point_cast<std::chrono::milliseconds>(utils::file::FileUtils::to_sys(last_modified_time));
+      return last_modified_time;
     }
 
     [[nodiscard]] std::string getKey() const override {
-      return absolute_path.string();
+      return full_file_path.string();
     }
 
-    std::filesystem::path filename;
-    std::filesystem::path absolute_path;
-    std::filesystem::file_time_type last_modified_time;
-    std::filesystem::path relative_path;
+    std::chrono::time_point<std::chrono::system_clock> last_modified_time;
     std::filesystem::path full_file_path;
-    uint64_t file_size = 0;
   };
 
   bool fileMatchesFilters(const ListedFile& listed_file);
   std::shared_ptr<core::FlowFile> createFlowFile(core::ProcessSession& session, const ListedFile& listed_file);
 
-  std::shared_ptr<core::logging::Logger> logger_ = core::logging::LoggerFactory<ListFile>::getLogger();
+  std::shared_ptr<core::logging::Logger> logger_ = core::logging::LoggerFactory<ListFile>::getLogger(uuid_);
   std::filesystem::path input_directory_;
   std::unique_ptr<minifi::utils::ListingStateManager> state_manager_;
   bool recurse_subdirectories_ = true;

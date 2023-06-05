@@ -151,7 +151,7 @@ elif [ -f /etc/SUSE-release ]; then
   OS=$(tr '\n' ' ' < /etc/SUSE-release | sed s/VERSION.*//)
 elif [ -f /etc/redhat-release ]; then
   # Older Red Hat, CentOS, etc.
-  ...
+  echo "Unsupported old release!"
 else
   OS=$(uname -s)
   VER=$(uname -r)
@@ -194,11 +194,7 @@ else
   . "${script_directory}/linux.sh"
   if [[ "$OS" = Deb* ]]; then
     . "${script_directory}/debian.sh"
-  elif [[ "$OS" = Rasp* ]]; then
-    . "${script_directory}/aptitude.sh"
-  elif [[ "$OS" = Pop* ]]; then
-    . "${script_directory}/aptitude.sh"
-  elif [[ "$OS" = Ubuntu* ]]; then
+  elif [[ "$OS" = Ubuntu* || "$OS" = Rasp* || "$OS" = Pop* ]]; then
     . "${script_directory}/aptitude.sh"
   elif [[ "$OS" = *SUSE* ]]; then
     . "${script_directory}/suse.sh"
@@ -211,17 +207,11 @@ else
     fi
   elif [[ "$OS" = Red* ]]; then
     . "${script_directory}/rheldistro.sh"
-  elif [[ "$OS" = Amazon* ]]; then
-    . "${script_directory}/centos.sh"
-  elif [[ "$OS" = Rocky* ]]; then
-    . "${script_directory}/centos.sh"
-  elif [[ "$OS" = CentOS* ]]; then
+  elif [[ "$OS" = Amazon* || "$OS" = Alma* || "$OS" = Rocky* || "$OS" = CentOS* ]]; then
     . "${script_directory}/centos.sh"
   elif [[ "$OS" = Fedora* ]]; then
     . "${script_directory}/fedora.sh"
-  elif [[ "$OS" = Manjaro* ]]; then
-    . "${script_directory}/arch.sh"
-  elif [[ "$OS" = Arch* ]]; then
+  elif [[ "$OS" = Arch* || "$OS" = Manjaro* ]]; then
     . "${script_directory}/arch.sh"
   fi
 fi
@@ -273,9 +263,8 @@ add_option HTTP_CURL_ENABLED ${TRUE} "DISABLE_CURL"
 add_option LIBARCHIVE_ENABLED ${TRUE} "DISABLE_LIBARCHIVE"
 add_dependency LIBARCHIVE_ENABLED "libarchive"
 
-add_option EXECUTE_SCRIPT_ENABLED ${FALSE} "ENABLE_SCRIPTING"
-add_dependency EXECUTE_SCRIPT_ENABLED "python"
-add_dependency EXECUTE_SCRIPT_ENABLED "lua"
+add_option PYTHON_SCRIPTING_ENABLED ${FALSE} "ENABLE_PYTHON_SCRIPTING"
+add_option LUA_SCRIPTING_ENABLED ${FALSE} "ENABLE_LUA_SCRIPTING"
 
 add_option EXPRESSION_LANGUAGE_ENABLED ${TRUE} "DISABLE_EXPRESSION_LANGUAGE"
 add_dependency EXPRESSION_LANGUAGE_ENABLED "bison"
@@ -298,9 +287,6 @@ add_option KAFKA_ENABLED ${TRUE} "ENABLE_LIBRDKAFKA"
 add_option KUBERNETES_ENABLED ${FALSE} "ENABLE_KUBERNETES"
 
 add_option MQTT_ENABLED ${FALSE} "ENABLE_MQTT"
-
-add_option PYTHON_ENABLED ${FALSE} "ENABLE_PYTHON"
-add_dependency PYTHON_ENABLED "python"
 
 add_option COAP_ENABLED ${FALSE} "ENABLE_COAP"
 add_dependency COAP_ENABLED "automake"
@@ -339,7 +325,6 @@ if $LINUX; then
 fi
 
 add_option NANOFI_ENABLED ${FALSE} "ENABLE_NANOFI"
-set_dependency PYTHON_ENABLED NANOFI_ENABLED
 
 add_option SPLUNK_ENABLED ${TRUE} "ENABLE_SPLUNK"
 set_dependency SPLUNK_ENABLED HTTP_CURL_ENABLED

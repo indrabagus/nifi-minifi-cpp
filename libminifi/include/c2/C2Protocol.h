@@ -21,6 +21,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "C2Payload.h"
 #include "core/controller/ControllerServiceProvider.h"
@@ -72,10 +73,14 @@ class C2Protocol : public core::Connectable {
    */
   virtual C2Payload consumePayload(const C2Payload &operation, Direction direction = TRANSMIT, bool async = false) = 0;
 
+  virtual C2Payload fetch(const std::string& url, const std::vector<std::string>& /*accepted_formats*/ = {}, bool async = false) {
+    return consumePayload(url, C2Payload(Operation::TRANSFER, true), Direction::RECEIVE, async);
+  }
+
   /**
    * Determines if we are connected and operating
    */
-  virtual bool isRunning() {
+  bool isRunning() const override {
     return running_.load();
   }
 
@@ -85,14 +90,14 @@ class C2Protocol : public core::Connectable {
    */
   void waitForWork(uint64_t timeoutMs);
 
-  virtual void yield() {
+  void yield() override {
   }
 
   /**
    * Determines if work is available by this connectable
    * @return boolean if work is available.
    */
-  virtual bool isWorkAvailable() {
+  bool isWorkAvailable() override {
     return true;
   }
 

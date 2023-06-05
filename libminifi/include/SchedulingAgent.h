@@ -17,8 +17,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef LIBMINIFI_INCLUDE_SCHEDULINGAGENT_H_
-#define LIBMINIFI_INCLUDE_SCHEDULINGAGENT_H_
+
+#pragma once
 
 #include <memory>
 #include <string>
@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <thread>
 #include "utils/CallBackTimer.h"
+#include "utils/expected.h"
 #include "utils/Monitors.h"
 #include "utils/TimeUtil.h"
 #include "utils/ThreadPool.h"
@@ -44,21 +45,13 @@
 #include "core/controller/ControllerServiceProvider.h"
 #include "core/controller/ControllerServiceNode.h"
 
-#define SCHEDULING_WATCHDOG_CHECK_PERIOD_MS 1000  // msec
-#define SCHEDULING_WATCHDOG_DEFAULT_ALERT_PERIOD_MS 5000  // msec
+constexpr std::chrono::milliseconds SCHEDULING_WATCHDOG_CHECK_PERIOD = std::chrono::seconds(1);
+constexpr std::chrono::milliseconds SCHEDULING_WATCHDOG_DEFAULT_ALERT_PERIOD = std::chrono::seconds(5);
 
-namespace org {
-namespace apache {
-namespace nifi {
-namespace minifi {
+namespace org::apache::nifi::minifi {
 
-// SchedulingAgent Class
 class SchedulingAgent {
  public:
-  // Constructor
-  /*!
-   * Create a new scheduling agent.
-   */
   SchedulingAgent(const gsl::not_null<core::controller::ControllerServiceProvider*> controller_service_provider, std::shared_ptr<core::Repository> repo, std::shared_ptr<core::Repository> flow_repo,
                   std::shared_ptr<core::ContentRepository> content_repo, std::shared_ptr<Configure> configuration, utils::ThreadPool<utils::TaskRescheduleInfo> &thread_pool)
       : admin_yield_duration_(),
@@ -67,15 +60,18 @@ class SchedulingAgent {
         content_repo_(content_repo),
         thread_pool_(thread_pool),
         controller_service_provider_(controller_service_provider),
-        logger_(core::logging::LoggerFactory<SchedulingAgent>::getLogger()),
-        alert_time_(configuration->getInt(Configure::nifi_flow_engine_alert_period, SCHEDULING_WATCHDOG_DEFAULT_ALERT_PERIOD_MS)) {
+        logger_(core::logging::LoggerFactory<SchedulingAgent>::getLogger()) {
     running_ = false;
     repo_ = repo;
     flow_repo_ = flow_repo;
 
+    alert_time_ = configuration->get(Configure::nifi_flow_engine_alert_period)
+        | utils::flatMap(utils::timeutils::StringToDuration<std::chrono::milliseconds>)
+        | utils::valueOrElse([] { return SCHEDULING_WATCHDOG_DEFAULT_ALERT_PERIOD; });
+
     if (alert_time_ > std::chrono::milliseconds(0)) {
       std::function<void(void)> f = std::bind(&SchedulingAgent::watchDogFunc, this);
-      watchDogTimer_.reset(new utils::CallBackTimer(std::chrono::milliseconds(SCHEDULING_WATCHDOG_CHECK_PERIOD_MS), f));
+      watchDogTimer_.reset(new utils::CallBackTimer(SCHEDULING_WATCHDOG_CHECK_PERIOD, f));
       watchDogTimer_->start();
     }
 
@@ -90,22 +86,21 @@ class SchedulingAgent {
     logger_->log_trace("Destroying scheduling agent");
   }
 
-  // onTrigger, return whether the yield is need
-  bool onTrigger(core::Processor* processor, const std::shared_ptr<core::ProcessContext> &processContext, const std::shared_ptr<core::ProcessSessionFactory> &sessionFactory);
-  // start
+  nonstd::expected<void, std::exception_ptr> onTrigger(core::Processor* processor,
+      const std::shared_ptr<core::ProcessContext>& process_context,
+      const std::shared_ptr<core::ProcessSessionFactory>& session_factory);
+
   void start() {
     running_ = true;
     thread_pool_.start();
   }
-  // stop
+
   virtual void stop() {
     running_ = false;
   }
 
   void watchDogFunc();
 
-  virtual std::future<utils::TaskRescheduleInfo> enableControllerService(std::shared_ptr<core::controller::ControllerServiceNode> &serviceNode);
-  virtual std::future<utils::TaskRescheduleInfo> disableControllerService(std::shared_ptr<core::controller::ControllerServiceNode> &serviceNode);
   // schedule, overwritten by different DrivenSchedulingAgent
   virtual void schedule(core::Processor* processor) = 0;
   // unschedule, overwritten by different DrivenSchedulingAgent
@@ -115,13 +110,9 @@ class SchedulingAgent {
   SchedulingAgent &operator=(const SchedulingAgent &parent) = delete;
 
  protected:
-  // Mutex for protection
   std::mutex mutex_;
-  // Whether it is running
   std::atomic<bool> running_;
-  // AdministrativeYieldDuration
   std::chrono::milliseconds admin_yield_duration_;
-  // BoredYieldDuration
   std::chrono::milliseconds bored_yield_duration_;
 
   std::shared_ptr<Configure> configure_;
@@ -131,9 +122,7 @@ class SchedulingAgent {
   std::shared_ptr<core::Repository> flow_repo_;
 
   std::shared_ptr<core::ContentRepository> content_repo_;
-  // thread pool for components.
   utils::ThreadPool<utils::TaskRescheduleInfo> &thread_pool_;
-  // controller service provider reference
   gsl::not_null<core::controller::ControllerServiceProvider*> controller_service_provider_;
 
  private:
@@ -153,7 +142,6 @@ class SchedulingAgent {
     }
   };
 
-  // Logger
   std::shared_ptr<core::logging::Logger> logger_;
   mutable std::mutex watchdog_mtx_;  // used to protect the set below
   std::set<SchedulingInfo> scheduled_processors_;  // set was chosen to avoid iterator invalidation
@@ -161,8 +149,4 @@ class SchedulingAgent {
   std::chrono::milliseconds alert_time_;
 };
 
-}  // namespace minifi
-}  // namespace nifi
-}  // namespace apache
-}  // namespace org
-#endif  // LIBMINIFI_INCLUDE_SCHEDULINGAGENT_H_
+}  // namespace org::apache::nifi::minifi

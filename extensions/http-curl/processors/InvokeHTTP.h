@@ -120,6 +120,19 @@ class InvokeHTTP : public core::Processor {
     };
   }
 
+  EXTENSIONAPI static const core::OutputAttribute StatusCode;
+  EXTENSIONAPI static const core::OutputAttribute StatusMessage;
+  EXTENSIONAPI static const core::OutputAttribute RequestUrl;
+  EXTENSIONAPI static const core::OutputAttribute TxId;
+  static auto outputAttributes() {
+    return std::array{
+        StatusCode,
+        StatusMessage,
+        RequestUrl,
+        TxId
+    };
+  }
+
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
   EXTENSIONAPI static constexpr core::annotation::Input InputRequirement = core::annotation::Input::INPUT_ALLOWED;
@@ -160,7 +173,7 @@ class InvokeHTTP : public core::Processor {
 
   InvalidHTTPHeaderFieldHandlingOption invalid_http_header_field_handling_strategy_;
 
-  std::shared_ptr<core::logging::Logger> logger_{core::logging::LoggerFactory<InvokeHTTP>::getLogger()};
+  std::shared_ptr<core::logging::Logger> logger_{core::logging::LoggerFactory<InvokeHTTP>::getLogger(uuid_)};
   std::shared_ptr<utils::ResourceQueue<extensions::curl::HTTPClient>> client_queue_;
 };
 

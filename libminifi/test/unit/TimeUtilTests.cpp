@@ -131,37 +131,37 @@ TEST_CASE("Test string to duration conversion", "[timedurationtests]") {
   CHECK(one_hour.value() == 1h);
   CHECK(one_hour.value() == 3600s);
 
-  REQUIRE(StringToDuration<std::chrono::milliseconds>("1 hour"));
-  REQUIRE(StringToDuration<std::chrono::seconds>("102             hours") == 102h);
-  REQUIRE(StringToDuration<std::chrono::days>("102             hours") == std::chrono::days(4));
-  REQUIRE(StringToDuration<std::chrono::milliseconds>("5 ns") == 0ms);
+  CHECK(StringToDuration<std::chrono::milliseconds>("1 hour"));
+  CHECK(StringToDuration<std::chrono::seconds>("102             hours") == 102h);
+  CHECK(StringToDuration<std::chrono::days>("102             hours") == std::chrono::days(4));
+  CHECK(StringToDuration<std::chrono::milliseconds>("5 ns") == 0ms);
 
-  REQUIRE(StringToDuration<std::chrono::seconds>("1d") == std::chrono::days(1));
-  REQUIRE(StringToDuration<std::chrono::seconds>("10 days") == std::chrono::days(10));
-  REQUIRE(StringToDuration<std::chrono::seconds>("100ms") == 0ms);
-  REQUIRE(StringToDuration<std::chrono::seconds>("20 us") == 0s);
-  REQUIRE(StringToDuration<std::chrono::seconds>("1ns") == 0ns);
-  REQUIRE(StringToDuration<std::chrono::seconds>("1min") == 1min);
-  REQUIRE(StringToDuration<std::chrono::seconds>("1 hour") == 1h);
-  REQUIRE(StringToDuration<std::chrono::seconds>("100 SEC") == 100s);
-  REQUIRE(StringToDuration<std::chrono::seconds>("10 ms") == 0ms);
-  REQUIRE(StringToDuration<std::chrono::seconds>("100 ns") == 0ns);
-  REQUIRE(StringToDuration<std::chrono::seconds>("1 minute") == 1min);
+  CHECK(StringToDuration<std::chrono::seconds>("1d") == std::chrono::days(1));
+  CHECK(StringToDuration<std::chrono::seconds>("10 days") == std::chrono::days(10));
+  CHECK(StringToDuration<std::chrono::seconds>("100ms") == 0ms);
+  CHECK(StringToDuration<std::chrono::seconds>("20 us") == 0s);
+  CHECK(StringToDuration<std::chrono::seconds>("1ns") == 0ns);
+  CHECK(StringToDuration<std::chrono::seconds>("1min") == 1min);
+  CHECK(StringToDuration<std::chrono::seconds>("1 hour") == 1h);
+  CHECK(StringToDuration<std::chrono::seconds>("100 SEC") == 100s);
+  CHECK(StringToDuration<std::chrono::seconds>("10 ms") == 0ms);
+  CHECK(StringToDuration<std::chrono::seconds>("100 ns") == 0ns);
+  CHECK(StringToDuration<std::chrono::seconds>("1 minute") == 1min);
 
-  REQUIRE(StringToDuration<std::chrono::nanoseconds>("1d") == std::chrono::days(1));
-  REQUIRE(StringToDuration<std::chrono::nanoseconds>("10 days") == std::chrono::days(10));
-  REQUIRE(StringToDuration<std::chrono::nanoseconds>("100ms") == 100ms);
-  REQUIRE(StringToDuration<std::chrono::nanoseconds>("20 us") == 20us);
-  REQUIRE(StringToDuration<std::chrono::nanoseconds>("1ns") == 1ns);
-  REQUIRE(StringToDuration<std::chrono::nanoseconds>("1min") == 1min);
-  REQUIRE(StringToDuration<std::chrono::nanoseconds>("1 hour") == 1h);
-  REQUIRE(StringToDuration<std::chrono::nanoseconds>("100 SEC") == 100s);
-  REQUIRE(StringToDuration<std::chrono::nanoseconds>("10 ms") == 10ms);
-  REQUIRE(StringToDuration<std::chrono::nanoseconds>("100 ns") == 100ns);
-  REQUIRE(StringToDuration<std::chrono::nanoseconds>("1 minute") == 1min);
+  CHECK(StringToDuration<std::chrono::nanoseconds>("1d") == std::chrono::days(1));
+  CHECK(StringToDuration<std::chrono::nanoseconds>("10 days") == std::chrono::days(10));
+  CHECK(StringToDuration<std::chrono::nanoseconds>("100ms") == 100ms);
+  CHECK(StringToDuration<std::chrono::nanoseconds>("20 us") == 20us);
+  CHECK(StringToDuration<std::chrono::nanoseconds>("1ns") == 1ns);
+  CHECK(StringToDuration<std::chrono::nanoseconds>("1min") == 1min);
+  CHECK(StringToDuration<std::chrono::nanoseconds>("1 hour") == 1h);
+  CHECK(StringToDuration<std::chrono::nanoseconds>("100 SEC") == 100s);
+  CHECK(StringToDuration<std::chrono::nanoseconds>("10 ms") == 10ms);
+  CHECK(StringToDuration<std::chrono::nanoseconds>("100 ns") == 100ns);
+  CHECK(StringToDuration<std::chrono::nanoseconds>("1 minute") == 1min);
 
-  REQUIRE_FALSE(StringToDuration<std::chrono::seconds>("5 apples") == 1s);
-  REQUIRE_FALSE(StringToDuration<std::chrono::seconds>("1 year") == 1s);
+  CHECK(StringToDuration<std::chrono::seconds>("5 apples") == std::nullopt);
+  CHECK(StringToDuration<std::chrono::seconds>("1 year") == std::nullopt);
 }
 
 namespace {
@@ -253,4 +253,61 @@ TEST_CASE("Test roundToNextSecond", "[roundingTests]") {
   CHECK(parseLocalTimePoint("2022-05-12 23:00:59") == roundToNextSecond(parseLocalTimePoint("2022-05-12 23:00:58")));
   CHECK(parseLocalTimePoint("2022-06-21 11:00:01") == roundToNextSecond(parseLocalTimePoint("2022-06-21 11:00:00")));
   CHECK(parseLocalTimePoint("2022-07-21 12:12:01") == roundToNextSecond(parseLocalTimePoint("2022-07-21 12:12:00")));
+}
+
+TEST_CASE("Parse RFC3339", "[parseRfc3339]") {
+  using date::sys_days;
+  using org::apache::nifi::minifi::utils::timeutils::parseRfc3339;
+  using namespace date::literals;
+  using namespace std::literals::chrono_literals;
+
+  auto expected_second = sys_days(2023_y / 03 / 01) + 19h + 04min + 55s;
+  auto expected_tenth_second = sys_days(2023_y / 03 / 01) + 19h + 04min + 55s + 100ms;
+  auto expected_milli_second = sys_days(2023_y / 03 / 01) + 19h + 04min + 55s + 190ms;
+  auto expected_micro_second = sys_days(2023_y / 03 / 01) + 19h + 04min + 55s + 190999us;
+
+  CHECK(parseRfc3339("2023-03-01T19:04:55Z") == expected_second);
+  CHECK(parseRfc3339("2023-03-01T19:04:55.1Z") == expected_tenth_second);
+  CHECK(parseRfc3339("2023-03-01T19:04:55.19Z") == expected_milli_second);
+  CHECK(parseRfc3339("2023-03-01T19:04:55.190Z") == expected_milli_second);
+  CHECK(parseRfc3339("2023-03-01T19:04:55.190999Z") == expected_micro_second);
+  CHECK(parseRfc3339("2023-03-01t19:04:55z") == expected_second);
+  CHECK(parseRfc3339("2023-03-01t19:04:55.190z") == expected_milli_second);
+  CHECK(parseRfc3339("2023-03-01T20:04:55+01:00") == expected_second);
+  CHECK(parseRfc3339("2023-03-01T20:04:55.190+01:00") == expected_milli_second);
+  CHECK(parseRfc3339("2023-03-01T20:04:55.190999+01:00") == expected_micro_second);
+  CHECK(parseRfc3339("2023-03-01 20:04:55+01:00") == expected_second);
+  CHECK(parseRfc3339("2023-03-01 20:04:55.1+01:00") == expected_tenth_second);
+  CHECK(parseRfc3339("2023-03-01 20:04:55.19+01:00") == expected_milli_second);
+  CHECK(parseRfc3339("2023-03-01 20:04:55.190+01:00") == expected_milli_second);
+  CHECK(parseRfc3339("2023-03-01 20:04:55.190999+01:00") == expected_micro_second);
+  CHECK(parseRfc3339("2023-03-01 19:04:55Z") == expected_second);
+  CHECK(parseRfc3339("2023-03-01_19:04:55Z") == expected_second);
+  CHECK(parseRfc3339("2023-03-01 19:04:55z") == expected_second);
+  CHECK(parseRfc3339("2023-03-01_19:04:55z") == expected_second);
+  CHECK(parseRfc3339("2023-03-01 19:04:55.1Z") == expected_tenth_second);
+  CHECK(parseRfc3339("2023-03-01 19:04:55.19Z") == expected_milli_second);
+  CHECK(parseRfc3339("2023-03-01 19:04:55.190Z") == expected_milli_second);
+  CHECK(parseRfc3339("2023-03-01_19:04:55.190Z") == expected_milli_second);
+  CHECK(parseRfc3339("2023-03-01 19:04:55.190999Z") == expected_micro_second);
+  CHECK(parseRfc3339("2023-03-01_19:04:55.190999Z") == expected_micro_second);
+  CHECK(parseRfc3339("2023-03-01 19:04:55.190z") == expected_milli_second);
+  CHECK(parseRfc3339("2023-03-01_19:04:55.190z") == expected_milli_second);
+  CHECK(parseRfc3339("2023-03-01 19:04:55.190999z") == expected_micro_second);
+  CHECK(parseRfc3339("2023-03-01_19:04:55.190999z") == expected_micro_second);
+  CHECK(parseRfc3339("2023-03-01 19:04:55-00:00") == expected_second);
+  CHECK(parseRfc3339("2023-03-01 19:04:55.190-00:00") == expected_milli_second);
+  CHECK(parseRfc3339("2023-03-01T19:04:55-00:00") == expected_second);
+  CHECK(parseRfc3339("2023-03-01T19:04:55.190-00:00") == expected_milli_second);
+  CHECK(parseRfc3339("2023-03-02T03:49:55+08:45") == expected_second);
+  CHECK(parseRfc3339("2023-03-01T19:04:55+00:00") == expected_second);
+  CHECK(parseRfc3339("2023-03-01T19:04:55.190+00:00") == expected_milli_second);
+  CHECK(parseRfc3339("2023-03-01T18:04:55-01:00") == expected_second);
+
+  CHECK_FALSE(parseRfc3339("2023-03-01T19:04:55Zbanana"));
+  CHECK_FALSE(parseRfc3339("2023-03-01T19:04:55"));
+  CHECK_FALSE(parseRfc3339("2023-03-01T19:04:55T"));
+  CHECK_FALSE(parseRfc3339("2023-03-01T19:04:55Z "));
+  CHECK_FALSE(parseRfc3339(" 2023-03-01T19:04:55Z"));
+  CHECK_FALSE(parseRfc3339("2023-03-01"));
 }

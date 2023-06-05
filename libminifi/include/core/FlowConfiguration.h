@@ -53,7 +53,6 @@ class static_initializers {
 extern static_initializers &get_static_functions();
 
 struct ConfigurationContext {
-  std::shared_ptr<core::Repository> repo;
   std::shared_ptr<core::Repository> flow_file_repo;
   std::shared_ptr<core::ContentRepository> content_repo;
   std::shared_ptr<io::StreamFactory> stream_factory;
@@ -97,6 +96,10 @@ class FlowConfiguration : public CoreComponent {
     return flow_version_;
   }
 
+  virtual std::vector<std::string> getSupportedFormats() const {
+    return {};
+  }
+
   std::shared_ptr<Configure> getConfiguration() {  // cannot be const as getters mutate the underlying map
     return configuration_;
   }
@@ -121,7 +124,7 @@ class FlowConfiguration : public CoreComponent {
     return nullptr;
   }
 
-  std::shared_ptr<core::controller::StandardControllerServiceProvider> &getControllerServiceProvider() {
+  std::shared_ptr<core::controller::StandardControllerServiceProvider> getControllerServiceProvider() const {
     return service_provider_;
   }
 

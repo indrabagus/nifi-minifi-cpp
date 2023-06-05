@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <memory>
 
 #include "core/ProcessSession.h"
@@ -43,7 +44,9 @@ class QueryDatabaseTable: public SQLProcessor, public FlowFileSource {
   EXTENSIONAPI static const std::string MAXVALUE_KEY_PREFIX;
   EXTENSIONAPI static const std::string InitialMaxValueDynamicPropertyPrefix;
 
-  EXTENSIONAPI static constexpr const char* Description = "QueryDatabaseTable to execute SELECT statement via ODBC.";
+  EXTENSIONAPI static constexpr const char* Description =
+      "Fetches all rows of a table, whose values in the specified Maximum-value Columns are larger than the previously-seen maxima. "
+      "If that property is not provided, all rows are returned. The rows are grouped according to the value of Max Rows Per Flow File property and formatted as JSON.";
 
   EXTENSIONAPI static const core::Property TableName;
   EXTENSIONAPI static const core::Property ColumnNames;
@@ -62,6 +65,9 @@ class QueryDatabaseTable: public SQLProcessor, public FlowFileSource {
   static auto relationships() { return std::array{Success}; }
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = true;
+  EXTENSIONAPI static const core::DynamicProperty InitialMaxValue;
+  static auto dynamicProperties() { return std::array{InitialMaxValue}; }
+
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
   EXTENSIONAPI static constexpr core::annotation::Input InputRequirement = core::annotation::Input::INPUT_FORBIDDEN;
   EXTENSIONAPI static constexpr bool IsSingleThreaded = true;
@@ -82,7 +88,7 @@ class QueryDatabaseTable: public SQLProcessor, public FlowFileSource {
 
   bool saveState();
 
-  core::CoreComponentStateManager* state_manager_;
+  core::StateManager* state_manager_{};
   std::string table_name_;
   std::unordered_set<sql::SQLColumnIdentifier> return_columns_;
   std::string queried_columns_;

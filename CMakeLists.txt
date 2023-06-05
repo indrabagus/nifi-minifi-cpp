@@ -20,7 +20,11 @@
 cmake_minimum_required(VERSION 3.17)
 cmake_policy(SET CMP0096 NEW) # policy to preserve the leading zeros in PROJECT_VERSION_{MAJOR,MINOR,PATCH,TWEAK}
 cmake_policy(SET CMP0065 OLD) # default export policy, required for self-dlopen
-project(nifi-minifi-cpp VERSION 0.13.0)
+if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+    cmake_policy(SET CMP0135 NEW) # policy to set the timestamps of extracted contents to the time of extraction
+endif()
+
+project(nifi-minifi-cpp VERSION 0.15.0)
 set(PROJECT_NAME "nifi-minifi-cpp")
 
 # Optional build number for linux distribution targets' tar.gz output
@@ -29,6 +33,8 @@ set(BUILD_NUMBER "" CACHE STRING "Build number")
 # Base Alpine image to be used in the Docker build instead of the default Alpine image
 set(DOCKER_BASE_IMAGE "" CACHE STRING "Docker build Alpine base image")
 set(DOCKER_CCACHE_DUMP_LOCATION "" CACHE STRING "Directory to dump ccache to after docker build for later reuse")
+set(DOCKER_PLATFORMS "" CACHE STRING "Build platforms for docker image build")
+set(DOCKER_TAGS "" CACHE STRING "Comma separated tags to override default docker build image:tag pairs with")
 
 include(CMakeDependentOption)
 include(CheckIncludeFile)
@@ -103,10 +109,6 @@ endif()
 if (WIN32)
     add_compile_definitions(WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS NOMINMAX)
     add_compile_options(/W3 /utf-8)
-endif()
-
-if (WIN32)
-    add_definitions(-DSERVICE_NAME="Apache NiFi MINiFi")
 endif()
 
 if (NOT PORTABLE)
@@ -196,14 +198,32 @@ set(PASSTHROUGH_CMAKE_ARGS -DANDROID_ABI=${ANDROID_ABI}
     -G${CMAKE_GENERATOR}
     )
 
-# jemalloc
+if(CUSTOM_MALLOC)
+    if (CUSTOM_MALLOC STREQUAL jemalloc)
+        include(BundledJemalloc)
+        use_bundled_jemalloc(${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+        set(CUSTOM_MALLOC_LIB JeMalloc::JeMalloc)
+    elseif (CUSTOM_MALLOC STREQUAL mimalloc)
+        include(MiMalloc)
+        set(CUSTOM_MALLOC_LIB mimalloc)
+    elseif (CUSTOM_MALLOC STREQUAL rpmalloc)
+        include(RpMalloc)
+        set(CUSTOM_MALLOC_LIB rpmalloc)
+    else()
+        message(FATAL_ERROR "Invalid CUSTOM_MALLOC")
+    endif()
+else()
+    message(VERBOSE "No custom malloc implementation")
+endif()
+
+if (NOT DISABLE_BZIP2 AND (NOT DISABLE_LIBARCHIVE OR (NOT DISABLE_ROCKSDB AND NOT WIN32)))
+    include(BundledBZip2)
+    use_bundled_bzip2(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR})
+    list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/bzip2/dummy")
+endif()
+
 if(NOT WIN32)
     if (ENABLE_JNI)
-        if (NOT DISABLE_JEMALLOC)
-            include(BundledJemalloc)
-            use_bundled_jemalloc(${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
-            message("jemalloc found at ${JEMALLOC_LIBRARIES}")
-        endif()
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DENABLE_JNI")
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DENABLE_JNI")
     endif()
@@ -270,9 +290,13 @@ target_include_directories(concurrentqueue SYSTEM INTERFACE "${CMAKE_CURRENT_SOU
 # RapidJSON
 add_library(RapidJSON INTERFACE)
 target_include_directories(RapidJSON SYSTEM INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/rapidjson-48fbd8cd202ca54031fe799db2ad44ffa8e77c13/include")
+target_compile_definitions(RapidJSON INTERFACE RAPIDJSON_HAS_STDSTRING)
 
 # cxxopts
 include(CxxOpts)
+
+include(Coroutines)
+enable_coroutines()
 
 # gsl-lite
 include(GslLite)
@@ -358,14 +382,6 @@ if (NOT DISABLE_CURL AND NOT DISABLE_CONTROLLER)
     add_subdirectory(controller)
 endif()
 
-
-if (NOT DISABLE_CURL AND ENABLE_PYTHON AND NOT WIN32)
-    if (ENABLE_NANOFI)
-        add_subdirectory(python/library)
-    else()
-        message(FATAL_ERROR "Nanofi, a dependency of the python extension is disabled, therefore Python extension cannot be enabled.")
-    endif()
-endif()
 
 get_property(selected_extensions GLOBAL PROPERTY EXTENSION-OPTIONS)
 
@@ -513,7 +529,7 @@ if (NOT WIN32)
         DESTINATION conf
         COMPONENT bin)
 
-    install(DIRECTORY extensions/pythonprocessors/
+    install(DIRECTORY extensions/python/pythonprocessors/
         DESTINATION minifi-python
         COMPONENT bin)
 
@@ -616,7 +632,11 @@ if (NOT DISABLE_ROCKSDB AND NOT DISABLE_LIBARCHIVE)
     registerTest("${TEST_DIR}/persistence-tests")
 endif()
 
+registerTest("minifi_main/tests")
+
 registerTest("encrypt-config/tests")
+
+registerTest("controller/tests")
 
 include(BuildDocs)
 
@@ -624,7 +644,7 @@ include(BuildDocs)
 # Create a custom build target that will run the linter.
 # Directories have their separate linter targets to be able to use better parallelization
 get_property(extensions GLOBAL PROPERTY EXTENSION-LINTERS)
-set(root_linted_dirs libminifi/include libminifi/src libminifi/test encrypt-config)
+set(root_linted_dirs libminifi/include libminifi/src libminifi/test encrypt-config controller)
 list(TRANSFORM root_linted_dirs PREPEND ${CMAKE_SOURCE_DIR}/)
 
 set(linted_dir_counter 1)

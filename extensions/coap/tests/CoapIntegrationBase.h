@@ -21,6 +21,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "../tests/TestServer.h"
 #include "CivetServer.h"
@@ -64,16 +65,17 @@ class CoapIntegrationBase : public IntegrationBase {
     std::shared_ptr<core::ContentRepository> content_repo = std::make_shared<core::repository::VolatileContentRepository>();
     content_repo->initialize(configuration);
     std::shared_ptr<minifi::io::StreamFactory> stream_factory = minifi::io::StreamFactory::getInstance(configuration);
-    auto yaml_ptr = std::make_unique<core::YamlConfiguration>(core::ConfigurationContext{test_repo, test_repo, content_repo, stream_factory, configuration, test_file_location});
+    auto yaml_ptr = std::make_shared<core::YamlConfiguration>(core::ConfigurationContext{test_repo, content_repo, stream_factory, configuration, test_file_location});
 
-    core::YamlConfiguration yaml_config({test_repo, test_repo, content_repo, stream_factory, configuration, test_file_location});
+    core::YamlConfiguration yaml_config({test_repo, content_repo, stream_factory, configuration, test_file_location});
 
     std::shared_ptr<core::ProcessGroup> pg{ yaml_config.getRoot() };
 
     queryRootProcessGroup(pg);
 
-    std::shared_ptr<minifi::FlowController> controller = std::make_shared<minifi::FlowController>(test_repo, test_flow_repo, configuration, std::move(yaml_ptr), content_repo, DEFAULT_ROOT_GROUP_NAME,
-      std::make_shared<utils::file::FileSystem>(), []{});
+    std::vector<std::shared_ptr<core::RepositoryMetricsSource>> repo_metric_sources{test_repo, test_flow_repo, content_repo};
+    auto metrics_publisher_store = std::make_unique<minifi::state::MetricsPublisherStore>(configuration, repo_metric_sources, yaml_ptr);
+    auto controller = std::make_unique<minifi::FlowController>(test_repo, test_flow_repo, configuration, std::move(yaml_ptr), content_repo, std::move(metrics_publisher_store));
 
     controller->load();
     controller->start();
@@ -81,8 +83,7 @@ class CoapIntegrationBase : public IntegrationBase {
     runAssertions();
 
     shutdownBeforeFlowController();
-    controller->waitUnload(wait_time_.count());
-    controller->stopC2();
+    controller->waitUnload(wait_time_);
 
     cleanup();
   }
@@ -93,7 +94,7 @@ class CoapIntegrationBase : public IntegrationBase {
 
 void CoapIntegrationBase::setUrl(std::string url, CivetHandler *handler) {
   std::string path;
-  parse_http_components(url, port, scheme, path);
+  minifi::utils::parse_http_components(url, port, scheme, path);
   CivetCallbacks callback{};
   if (url.find("localhost") != std::string::npos) {
     if (server != nullptr) {

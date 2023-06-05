@@ -25,7 +25,6 @@
 #include <tlhelp32.h>
 
 #include "MainHelper.h"
-#include "core/FlowConfiguration.h"
 
 namespace minifi = org::apache::nifi::minifi;
 
@@ -226,7 +225,7 @@ void RunAsServiceIfNeeded() {
         if (!SetServiceStatus(s_statusHandle, &s_serviceStatus)) {
           Log()->log_error("!SetServiceStatus SERVICE_STOPPED lastError %x", GetLastError());
         }
-      } 
+      }
     },
     {0, 0}
   };
@@ -247,18 +246,13 @@ void RunAsServiceIfNeeded() {
   ExitProcess(0);
 }
 
-HANDLE GetTerminationEventHandle(bool* isStartedByService) {
-  *isStartedByService = true;
-  HANDLE hEvent = CreateEvent(0, TRUE, FALSE, SERVICE_TERMINATION_EVENT_NAME);
-  if (!hEvent) {
-    return nullptr;
-  }
+GetTerminationEventHandleReturnType GetTerminationEventHandle() {
+  HANDLE hEvent = CreateEvent(nullptr, TRUE, FALSE, SERVICE_TERMINATION_EVENT_NAME);
 
-  if (GetLastError() != ERROR_ALREADY_EXISTS) {
-    *isStartedByService = false;
-  }
-
-  return hEvent;
+  return {
+    .is_started_by_service = (GetLastError() == ERROR_ALREADY_EXISTS),
+    .termination_event_handler = hEvent
+  };
 }
 
 bool CreateServiceTerminationThread(std::shared_ptr<minifi::core::logging::Logger> logger, HANDLE terminationEventHandle) {

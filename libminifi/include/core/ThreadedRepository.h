@@ -75,11 +75,16 @@ class ThreadedRepository : public core::Repository, public core::TraceableResour
     return true;
   }
 
-  bool isRunning() override {
+  bool isRunning() const override {
     return running_state_.load() == RunningState::Running;
   }
 
   BackTrace getTraces() override {
+    // If the thread is joinable then it is finished, we cannot interrupt and collect its stack traces
+    // It can occur with an empty run() implementation like the NoOpThreadedRepository where the stack trace is unavailable
+    if (getThread().joinable()) {
+      return {};
+    }
     return TraceResolver::getResolver().getBackTrace(getName(), getThread().native_handle());
   }
 

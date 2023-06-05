@@ -32,7 +32,7 @@ namespace org::apache::nifi::minifi::state {
  */
 class ProcessorController : public StateController {
  public:
-  ProcessorController(core::Processor& processor, std::shared_ptr<SchedulingAgent> scheduler);
+  ProcessorController(core::Processor& processor, SchedulingAgent& scheduler);
 
   ~ProcessorController() override;
 
@@ -56,7 +56,7 @@ class ProcessorController : public StateController {
    */
   int16_t stop() override;
 
-  bool isRunning() override;
+  bool isRunning() const override;
 
   int16_t pause() override;
 
@@ -64,7 +64,7 @@ class ProcessorController : public StateController {
 
  protected:
   gsl::not_null<core::Processor*> processor_;
-  std::shared_ptr<SchedulingAgent> scheduler_;
+  gsl::not_null<SchedulingAgent*> scheduler_;
 };
 
 }  // namespace org::apache::nifi::minifi::state

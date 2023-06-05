@@ -35,7 +35,7 @@ class KamikazeErrorHandlingTests : public IntegrationBase {
   void runAssertions() override {
     using org::apache::nifi::minifi::utils::verifyEventHappenedInPollTime;
     assert(verifyEventHappenedInPollTime(wait_time_, [&] {
-      const std::string logs = LogTestController::getInstance().log_output.str();
+      const std::string logs = LogTestController::getInstance().getLogs();
       const auto result = utils::StringUtils::countOccurrences(logs, minifi::processors::KamikazeProcessor::OnScheduleExceptionStr);
       const int occurrences = result.second;
       return 1 < occurrences;
@@ -48,7 +48,7 @@ class KamikazeErrorHandlingTests : public IntegrationBase {
                                                  "[warning] ProcessSession rollback for kamikaze executed"};
 
     const bool test_success = verifyEventHappenedInPollTime(std::chrono::milliseconds(wait_time_), [&] {
-      const std::string logs = LogTestController::getInstance().log_output.str();
+      const std::string logs = LogTestController::getInstance().getLogs();
       const auto result = utils::StringUtils::countOccurrences(logs, minifi::processors::KamikazeProcessor::OnScheduleExceptionStr);
       size_t last_pos = result.first;
       for (const std::string& msg : must_appear_byorder_msgs) {
@@ -61,7 +61,7 @@ class KamikazeErrorHandlingTests : public IntegrationBase {
     });
     assert(test_success);
 
-    assert(LogTestController::getInstance().log_output.str().find(minifi::processors::KamikazeProcessor::OnTriggerLogStr) == std::string::npos);
+    assert(LogTestController::getInstance().getLogs().find(minifi::processors::KamikazeProcessor::OnTriggerLogStr) == std::string::npos);
   }
 
   void testSetup() override {
@@ -78,16 +78,16 @@ class EventDriverScheduleErrorHandlingTests: public IntegrationBase {
   void updateProperties(minifi::FlowController& fc) override {
     /* This tests depends on a configuration that contains only one KamikazeProcessor named kamikaze
      * (See testOnScheduleRetry.yml)
-     * In this case there are two components in the flowcontroller: first is the controller itself,
-     * second is the processor that the test uses.
+     * In this case there are two components in the flowcontroller: first is the processor that the test uses,
+     * second is the controller itself.
      * Added here some assertions to make it clear. In case any of these fail without changing the corresponding yml file,
      * that most probably means a breaking change. */
     size_t controllerVecIdx = 0;
 
     fc.executeOnAllComponents([&controllerVecIdx](org::apache::nifi::minifi::state::StateController& component){
-      if (controllerVecIdx == 0) {
+      if (controllerVecIdx == 1) {
         assert(component.getComponentName() == "FlowController");
-      } else if (controllerVecIdx == 1) {
+      } else if (controllerVecIdx == 0) {
         assert(component.getComponentName() == "kamikaze");
 
         auto process_controller = dynamic_cast<org::apache::nifi::minifi::state::ProcessorController*>(&component);
@@ -104,7 +104,7 @@ class EventDriverScheduleErrorHandlingTests: public IntegrationBase {
   }
 
   void runAssertions() override {
-    std::string logs = LogTestController::getInstance().log_output.str();
+    std::string logs = LogTestController::getInstance().getLogs();
     assert(logs.find("EventDrivenSchedulingAgent cannot schedule processor without incoming connection!") != std::string::npos);
   }
 

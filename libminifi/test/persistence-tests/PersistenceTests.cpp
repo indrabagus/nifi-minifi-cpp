@@ -53,12 +53,6 @@ class TestProcessor : public minifi::core::Processor {
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 };
 
-#ifdef WIN32
-const std::string PERSISTENCETEST_FLOWFILE_CHECKPOINT_DIR = ".\\persistencetest_flowfile_checkpoint";
-#else
-const std::string PERSISTENCETEST_FLOWFILE_CHECKPOINT_DIR = "./persistencetest_flowfile_checkpoint";
-#endif
-
 struct TestFlow{
   TestFlow(const std::shared_ptr<core::Repository>& ff_repository, const std::shared_ptr<core::ContentRepository>& content_repo, const std::shared_ptr<core::Repository>& prov_repo,
         const std::function<std::unique_ptr<core::Processor>(utils::Identifier&)>& processorGenerator, const core::Relationship& relationshipToOutput)
@@ -83,7 +77,7 @@ struct TestFlow{
     auto input = std::make_unique<Connection>(ff_repository, content_repo, "Input", inputConnUUID());
     {
       input_ = input.get();
-      input->setRelationship({"input", "d"});
+      input->addRelationship({"input", "d"});
       input->setDestinationUUID(mainProcUUID());
       input->setSourceUUID(inputProcUUID());
       inputProcessor->addConnection(input.get());
@@ -93,7 +87,7 @@ struct TestFlow{
     auto output = std::make_unique<Connection>(ff_repository, content_repo, "Output", outputConnUUID());
     {
       output_ = output.get();
-      output->setRelationship(relationshipToOutput);
+      output->addRelationship(relationshipToOutput);
       output->setSourceUUID(mainProcUUID());
     }
 
@@ -179,14 +173,13 @@ TEST_CASE("Processors Can Store FlowFiles", "[TestP1]") {
   config->set(minifi::Configure::nifi_flowfile_repository_directory_default, (dir / "flowfile_repository").string());
 
   std::shared_ptr<core::Repository> prov_repo = std::make_shared<TestThreadedRepository>();
-  auto ff_repository = std::make_shared<core::repository::FlowFileRepository>("flowFileRepository", PERSISTENCETEST_FLOWFILE_CHECKPOINT_DIR);
+  auto ff_repository = std::make_shared<core::repository::FlowFileRepository>("flowFileRepository");
   std::shared_ptr<core::ContentRepository> content_repo = std::make_shared<core::repository::FileSystemRepository>();
   ff_repository->initialize(config);
   content_repo->initialize(config);
 
-  auto flowConfig = std::make_unique<core::FlowConfiguration>(core::ConfigurationContext{prov_repo, ff_repository, content_repo, nullptr, config, ""});
-  auto flowController = std::make_shared<minifi::FlowController>(
-      prov_repo, ff_repository, config, std::move(flowConfig), content_repo, "", std::make_shared<utils::file::FileSystem>(), []{});
+  auto flowConfig = std::make_unique<core::FlowConfiguration>(core::ConfigurationContext{ff_repository, content_repo, nullptr, config, ""});
+  auto flowController = std::make_shared<minifi::FlowController>(prov_repo, ff_repository, config, std::move(flowConfig), content_repo);
 
   {
     TestFlow flow(ff_repository, content_repo, prov_repo, setupMergeProcessor, MergeContent::Merge);
@@ -203,7 +196,7 @@ TEST_CASE("Processors Can Store FlowFiles", "[TestP1]") {
     flow.trigger();
 
     ff_repository->stop();
-    flowController->unload();
+    flowController->stop();
 
     // check if the processor has taken ownership
     std::set<std::shared_ptr<core::FlowFile>> expired;
@@ -230,7 +223,7 @@ TEST_CASE("Processors Can Store FlowFiles", "[TestP1]") {
 
     flow.trigger();
     ff_repository->stop();
-    flowController->unload();
+    flowController->stop();
     std::shared_ptr<org::apache::nifi::minifi::core::FlowFile> file = nullptr;
     std::set<std::shared_ptr<core::FlowFile>> expired;
     const auto flowFileArrivedInOutput = [&file, &expired, &flow] {
@@ -277,7 +270,6 @@ TEST_CASE("Persisted flowFiles are updated on modification", "[TestP1]") {
   LogTestController::getInstance().setTrace<minifi::ResourceClaim>();
   LogTestController::getInstance().setTrace<minifi::FlowFileRecord>();
   LogTestController::getInstance().setTrace<core::repository::FlowFileRepository>();
-  LogTestController::getInstance().setTrace<core::repository::VolatileRepository<minifi::ResourceClaim::Path>>();
   LogTestController::getInstance().setTrace<core::repository::DatabaseContentRepository>();
 
   auto dir = testController.createTempDirectory();
@@ -287,7 +279,7 @@ TEST_CASE("Persisted flowFiles are updated on modification", "[TestP1]") {
   config->set(minifi::Configure::nifi_flowfile_repository_directory_default, (dir / "flowfile_repository").string());
 
   std::shared_ptr<core::Repository> prov_repo = std::make_shared<TestThreadedRepository>();
-  std::shared_ptr<core::Repository> ff_repository = std::make_shared<core::repository::FlowFileRepository>("flowFileRepository", PERSISTENCETEST_FLOWFILE_CHECKPOINT_DIR);
+  std::shared_ptr<core::Repository> ff_repository = std::make_shared<core::repository::FlowFileRepository>("flowFileRepository");
   std::shared_ptr<core::ContentRepository> content_repo;
   SECTION("VolatileContentRepository") {
     testController.getLogger()->log_info("Using VolatileContentRepository");
@@ -304,9 +296,8 @@ TEST_CASE("Persisted flowFiles are updated on modification", "[TestP1]") {
   ff_repository->initialize(config);
   content_repo->initialize(config);
 
-  auto flowConfig = std::make_unique<core::FlowConfiguration>(core::ConfigurationContext{prov_repo, ff_repository, content_repo, nullptr, config, ""});
-  auto flowController = std::make_shared<minifi::FlowController>(
-      prov_repo, ff_repository, config, std::move(flowConfig), content_repo, "", std::make_shared<utils::file::FileSystem>(), []{});
+  auto flowConfig = std::make_unique<core::FlowConfiguration>(core::ConfigurationContext{ff_repository, content_repo, nullptr, config, ""});
+  auto flowController = std::make_shared<minifi::FlowController>(prov_repo, ff_repository, config, std::move(flowConfig), content_repo);
 
   {
     TestFlow flow(ff_repository, content_repo, prov_repo, setupContentUpdaterProcessor, {"success", "d"});
@@ -341,7 +332,7 @@ TEST_CASE("Persisted flowFiles are updated on modification", "[TestP1]") {
     REQUIRE(LogTestController::getInstance().countOccurrences("Deleting resource") == 1);
 
     ff_repository->stop();
-    flowController->unload();
+    flowController->stop();
   }
 
   // swap the ProcessGroup and restart the FlowController
@@ -367,7 +358,7 @@ TEST_CASE("Persisted flowFiles are updated on modification", "[TestP1]") {
     REQUIRE(file->getResourceClaim()->getFlowFileRecordOwnedCount() == 2);
 
     ff_repository->stop();
-    flowController->unload();
+    flowController->stop();
   }
 }
 

@@ -18,17 +18,18 @@
 #include "PutSQL.h"
 
 #include <string>
+#include <utility>
 
 #include "io/BufferStream.h"
 #include "core/ProcessContext.h"
 #include "core/ProcessSession.h"
-#include "core/Resource.h"
 #include "Exception.h"
+#include "core/logging/LoggerFactory.h"
 
 namespace org::apache::nifi::minifi::processors {
 
 PutSQL::PutSQL(std::string name, const utils::Identifier& uuid)
-  : SQLProcessor(std::move(name), uuid, core::logging::LoggerFactory<PutSQL>::getLogger()) {
+  : SQLProcessor(std::move(name), uuid, core::logging::LoggerFactory<PutSQL>::getLogger(uuid)) {
 }
 
 void PutSQL::initialize() {
@@ -36,7 +37,11 @@ void PutSQL::initialize() {
   setSupportedRelationships(relationships());
 }
 
-void PutSQL::processOnSchedule(core::ProcessContext& /*context*/) {}
+void PutSQL::processOnSchedule(core::ProcessContext& context) {
+  if (auto sql_statement = context.getProperty(SQLStatement); sql_statement && sql_statement->empty()) {
+    throw Exception(PROCESSOR_EXCEPTION, "Empty SQL statement");
+  }
+}
 
 void PutSQL::processOnTrigger(core::ProcessContext& context, core::ProcessSession& session) {
   auto flow_file = session.get();
@@ -44,18 +49,20 @@ void PutSQL::processOnTrigger(core::ProcessContext& context, core::ProcessSessio
     context.yield();
     return;
   }
-  session.transfer(flow_file, Success);
 
   std::string sql_statement;
   if (!context.getProperty(SQLStatement, sql_statement, flow_file)) {
     logger_->log_debug("Using the contents of the flow file as the SQL statement");
     sql_statement = to_string(session.readBuffer(flow_file));
   }
-  if (sql_statement.empty()) {
-    throw Exception(PROCESSOR_EXCEPTION, "Empty SQL statement");
-  }
 
-  connection_->prepareStatement(sql_statement)->execute(collectArguments(flow_file));
+  try {
+    connection_->prepareStatement(sql_statement)->execute(collectArguments(flow_file));
+    session.transfer(flow_file, Success);
+  } catch (const sql::StatementError& ex) {
+    logger_->log_error("Error while executing SQL statement in flow file: %s", ex.what());
+    session.transfer(flow_file, Failure);
+  }
 }
 
 }  // namespace org::apache::nifi::minifi::processors

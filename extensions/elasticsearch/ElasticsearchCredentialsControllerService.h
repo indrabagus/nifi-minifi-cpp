@@ -57,7 +57,7 @@ class ElasticsearchCredentialsControllerService : public core::controller::Contr
     return false;
   }
 
-  bool isRunning() override {
+  bool isRunning() const override {
     return getState() == core::controller::ControllerServiceState::ENABLED;
   }
 
@@ -68,6 +68,6 @@ class ElasticsearchCredentialsControllerService : public core::controller::Contr
  private:
   std::optional<std::pair<std::string, std::string>> username_password_;
   std::optional<std::string> api_key_;
-  std::shared_ptr<core::logging::Logger> logger_ = core::logging::LoggerFactory<ElasticsearchCredentialsControllerService>::getLogger();
+  std::shared_ptr<core::logging::Logger> logger_ = core::logging::LoggerFactory<ElasticsearchCredentialsControllerService>::getLogger(uuid_);
 };
 }  //  namespace org::apache::nifi::minifi::extensions::elasticsearch

@@ -23,17 +23,17 @@
 #include <Windows.h>
 #include <winevt.h>
 #include <codecvt>
-
+#include <functional>
 #include <map>
 #include <sstream>
 #include <string>
 #include <vector>
 #include <optional>
+#include <utility>
 
 #include "core/Core.h"
 #include "core/Processor.h"
 #include "core/ProcessSession.h"
-#include "utils/OsUtils.h"
 #include "FlowFileRecord.h"
 #include "WindowsEventLog.h"
 
@@ -41,11 +41,7 @@
 #include "pugixml.hpp"
 #include "utils/RegexUtils.h"
 
-namespace org {
-namespace apache {
-namespace nifi {
-namespace minifi {
-namespace wel {
+namespace org::apache::nifi::minifi::wel {
 
 /**
  * Defines a tree walker for the XML input
@@ -53,12 +49,14 @@ namespace wel {
  */
 class MetadataWalker : public pugi::xml_tree_walker {
  public:
-  MetadataWalker(const WindowsEventLogMetadata& windows_event_log_metadata, const std::string &log_name, bool update_xml, bool resolve, const std::string &regex = "")
+  MetadataWalker(const WindowsEventLogMetadata& windows_event_log_metadata, std::string log_name, bool update_xml, bool resolve, utils::Regex const* regex,
+      std::function<std::string(std::string)> user_id_to_username_fn)
       : windows_event_log_metadata_(windows_event_log_metadata),
-        log_name_(log_name),
-        regex_(regex.empty() ? std::nullopt : std::make_optional(regex)),
+        log_name_(std::move(log_name)),
+        regex_(regex),
         update_xml_(update_xml),
-        resolve_(resolve) {
+        resolve_(resolve),
+        user_id_to_username_fn_(std::move(user_id_to_username_fn)) {
   }
 
   /**
@@ -67,16 +65,14 @@ class MetadataWalker : public pugi::xml_tree_walker {
    */
   bool for_each(pugi::xml_node &node) override;
 
-  static std::string updateXmlMetadata(const std::string &xml, EVT_HANDLE metadata_ptr, EVT_HANDLE event_ptr, bool update_xml, bool resolve, const std::string &regex = "");
+  [[nodiscard]] std::map<std::string, std::string> getFieldValues() const;
 
-  std::map<std::string, std::string> getFieldValues() const;
+  [[nodiscard]] std::map<std::string, std::string> getIdentifiers() const;
 
-  std::map<std::string, std::string> getIdentifiers() const;
-
-  std::string getMetadata(METADATA metadata) const;
+  [[nodiscard]] std::string getMetadata(METADATA metadata) const;
 
  private:
-  std::vector<std::string> getIdentifiers(const std::string &text) const;
+  static std::vector<std::string> getIdentifiers(const std::string &text);
 
   static std::string getString(const std::map<std::string, std::string> &map, const std::string &field) {
     auto srch = map.find(field);
@@ -94,17 +90,14 @@ class MetadataWalker : public pugi::xml_tree_walker {
   void updateText(pugi::xml_node &node, const std::string &field_name, std::function<std::string(const std::string &)> &&fn);
 
   const WindowsEventLogMetadata& windows_event_log_metadata_;
-  std::string log_name_;
-  std::optional<utils::Regex> regex_;
-  bool update_xml_;
-  bool resolve_;
+  const std::string log_name_;
+  utils::Regex const * const regex_;
+  const bool update_xml_;
+  const bool resolve_;
+  std::function<std::string(const std::string&)> user_id_to_username_fn_;
   std::map<std::string, std::string> metadata_;
   std::map<std::string, std::string> fields_values_;
   std::map<std::string, std::string> replaced_identifiers_;
 };
 
-} /* namespace wel */
-} /* namespace minifi */
-} /* namespace nifi */
-} /* namespace apache */
-} /* namespace org */
+}  // namespace org::apache::nifi::minifi::wel

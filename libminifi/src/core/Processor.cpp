@@ -43,7 +43,7 @@ namespace org::apache::nifi::minifi::core {
 
 Processor::Processor(std::string name, std::shared_ptr<ProcessorMetrics> metrics)
     : Connectable(std::move(name)),
-      logger_(logging::LoggerFactory<Processor>::getLogger()),
+      logger_(logging::LoggerFactory<Processor>::getLogger(uuid_)),
       metrics_(metrics ? std::move(metrics) : std::make_shared<ProcessorMetrics>(*this)) {
   has_work_.store(false);
   // Setup the default values
@@ -62,7 +62,7 @@ Processor::Processor(std::string name, std::shared_ptr<ProcessorMetrics> metrics
 
 Processor::Processor(std::string name, const utils::Identifier& uuid, std::shared_ptr<ProcessorMetrics> metrics)
     : Connectable(std::move(name), uuid),
-      logger_(logging::LoggerFactory<Processor>::getLogger()),
+      logger_(logging::LoggerFactory<Processor>::getLogger(uuid_)),
       metrics_(metrics ? std::move(metrics) : std::make_shared<ProcessorMetrics>(*this)) {
   has_work_.store(false);
   // Setup the default values
@@ -83,7 +83,7 @@ Processor::~Processor() {
   logger_->log_debug("Destroying processor %s with uuid %s", name_, getUUIDStr());
 }
 
-bool Processor::isRunning() {
+bool Processor::isRunning() const {
   return (state_ == RUNNING && active_tasks_ > 0);
 }
 
@@ -172,7 +172,7 @@ bool Processor::flowFilesOutGoingFull() const {
     std::set<Connectable*> existedConnection = connection_pair.second;
     const bool has_full_connection = std::any_of(begin(existedConnection), end(existedConnection), [](const Connectable* conn) {
       auto connection = dynamic_cast<const Connection*>(conn);
-      return connection && connection->isFull();
+      return connection && connection->backpressureThresholdReached();
     });
     if (has_full_connection) { return true; }
   }
@@ -187,10 +187,12 @@ void Processor::onTrigger(ProcessContext *context, ProcessSessionFactory *sessio
 
   try {
     // Call the virtual trigger function
-    const auto start = std::chrono::steady_clock::now();
+    auto start = std::chrono::steady_clock::now();
     onTrigger(context, session.get());
     metrics_->addLastOnTriggerRuntime(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start));
+    start = std::chrono::steady_clock::now();
     session->commit();
+    metrics_->addLastSessionCommitRuntime(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start));
   } catch (const std::exception& exception) {
     logger_->log_warn("Caught \"%s\" (%s) during Processor::onTrigger of processor: %s (%s)",
         exception.what(), typeid(exception).name(), getUUIDStr(), getName());
@@ -210,10 +212,12 @@ void Processor::onTrigger(const std::shared_ptr<ProcessContext> &context, const 
 
   try {
     // Call the virtual trigger function
-    const auto start = std::chrono::steady_clock::now();
+    auto start = std::chrono::steady_clock::now();
     onTrigger(context, session);
     metrics_->addLastOnTriggerRuntime(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start));
+    start = std::chrono::steady_clock::now();
     session->commit();
+    metrics_->addLastSessionCommitRuntime(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start));
   } catch (std::exception &exception) {
     logger_->log_warn("Caught \"%s\" (%s) during Processor::onTrigger of processor: %s (%s)",
         exception.what(), typeid(exception).name(), getUUIDStr(), getName());
@@ -308,12 +312,12 @@ bool Processor::isThrottledByBackpressure() const {
   bool isThrottledByOutgoing = ranges::any_of(outgoing_connections_, [](auto& name_connection_set_pair) {
     return ranges::any_of(name_connection_set_pair.second, [](auto& connectable) {
       auto connection = dynamic_cast<Connection*>(connectable);
-      return connection && connection->isFull();
+      return connection && connection->backpressureThresholdReached();
     });
   });
   bool isForcedByIncomingCycle = ranges::any_of(incoming_connections_, [](auto& connectable) {
     auto connection = dynamic_cast<Connection*>(connectable);
-    return connection && partOfCycle(connection) && connection->isFull();
+    return connection && partOfCycle(connection) && connection->backpressureThresholdReached();
   });
   return isThrottledByOutgoing && !isForcedByIncomingCycle;
 }
@@ -329,7 +333,7 @@ Connectable* Processor::pickIncomingConnection() {
     if (!connection) {
       continue;
     }
-    if (partOfCycle(connection) && connection->isFull()) {
+    if (partOfCycle(connection) && connection->backpressureThresholdReached()) {
       return inConn;
     }
   } while (incoming_connections_Iter != beginIt);

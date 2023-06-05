@@ -44,7 +44,10 @@ class PutS3Object : public S3Processor {
   static const std::set<std::string> STORAGE_CLASSES;
   static const std::set<std::string> SERVER_SIDE_ENCRYPTIONS;
 
-  EXTENSIONAPI static constexpr const char* Description = "This Processor puts FlowFiles to an Amazon S3 Bucket.";
+  EXTENSIONAPI static constexpr const char* Description = "Puts FlowFiles to an Amazon S3 Bucket. The upload uses the PutS3Object method. "
+      "The PutS3Object method send the file in a single synchronous call, but it has a 5GB size limit. Larger files sent using the multipart upload methods are currently not supported. "
+      "The AWS libraries select an endpoint URL based on the AWS region, but this can be overridden with the 'Endpoint Override URL' property for use with other S3-compatible endpoints. "
+      "The S3 API specifies that the maximum file size for a PutS3Object upload is 5GB.";
 
   static const core::Property ObjectKey;
   static const core::Property ContentType;
@@ -55,6 +58,7 @@ class PutS3Object : public S3Processor {
   static const core::Property ReadACLUserList;
   static const core::Property WriteACLUserList;
   static const core::Property CannedACL;
+  static const core::Property UsePathStyleAccess;
   static auto properties() {
     return minifi::utils::array_cat(S3Processor::properties(), std::array{
       ObjectKey,
@@ -65,7 +69,8 @@ class PutS3Object : public S3Processor {
       ReadPermissionUserList,
       ReadACLUserList,
       WriteACLUserList,
-      CannedACL
+      CannedACL,
+      UsePathStyleAccess
     });
   }
 
@@ -81,7 +86,7 @@ class PutS3Object : public S3Processor {
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
   explicit PutS3Object(std::string name, const minifi::utils::Identifier& uuid = minifi::utils::Identifier())
-    : S3Processor(std::move(name), uuid, core::logging::LoggerFactory<PutS3Object>::getLogger()) {
+    : S3Processor(std::move(name), uuid, core::logging::LoggerFactory<PutS3Object>::getLogger(uuid)) {
   }
 
   ~PutS3Object() override = default;
@@ -137,7 +142,7 @@ class PutS3Object : public S3Processor {
   friend class ::S3TestsFixture<PutS3Object>;
 
   explicit PutS3Object(const std::string& name, const minifi::utils::Identifier& uuid, std::unique_ptr<aws::s3::S3RequestSender> s3_request_sender)
-    : S3Processor(name, uuid, core::logging::LoggerFactory<PutS3Object>::getLogger(), std::move(s3_request_sender)) {
+    : S3Processor(name, uuid, core::logging::LoggerFactory<PutS3Object>::getLogger(uuid), std::move(s3_request_sender)) {
   }
 
   void fillUserMetadata(const std::shared_ptr<core::ProcessContext> &context);
@@ -158,6 +163,7 @@ class PutS3Object : public S3Processor {
   std::map<std::string, std::string> user_metadata_map_;
   std::string storage_class_;
   std::string server_side_encryption_;
+  bool use_virtual_addressing_ = true;
 };
 
 }  // namespace org::apache::nifi::minifi::aws::processors

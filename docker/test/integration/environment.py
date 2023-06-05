@@ -19,13 +19,14 @@ import datetime
 import sys
 import uuid
 import os
+import platform
 sys.path.append('../minifi')
 
 from MiNiFi_integration_test_driver import MiNiFi_integration_test  # noqa: E402
 from minifi import *  # noqa
-from minifi.core.ImageStore import ImageStore # noqa
-from minifi.core.DockerTestDirectoryBindings import DockerTestDirectoryBindings # noqa
-from minifi.core.KubernetesProxy import KubernetesProxy # noqa
+from cluster.ImageStore import ImageStore # noqa
+from cluster.DockerTestDirectoryBindings import DockerTestDirectoryBindings # noqa
+from cluster.KubernetesProxy import KubernetesProxy # noqa
 
 
 def before_scenario(context, scenario):
@@ -33,12 +34,16 @@ def before_scenario(context, scenario):
         scenario.skip("Marked with @skip")
         return
 
+    if "requires_test_processors" in scenario.effective_tags and context.config.userdata.get('test_processors') != "ON":
+        scenario.skip("Test processors are not available, skipping test scenario")
+        return
+
     logging.info("Integration test setup at {time:%H:%M:%S.%f}".format(time=datetime.datetime.now()))
     context.test = MiNiFi_integration_test(context)
 
 
 def after_scenario(context, scenario):
-    if "skip" in scenario.effective_tags:
+    if scenario.status == "skipped":
         logging.info("Scenario was skipped, no need for clean up.")
         return
 
@@ -69,3 +74,10 @@ def after_tag(context, tag):
     if tag == "requires.kubernetes.cluster" and context.kubernetes_proxy:
         context.kubernetes_proxy.cleanup()
         context.kubernetes_proxy = None
+
+
+def before_feature(context, feature):
+    if "x86_x64_only" in feature.tags:
+        is_x86 = platform.machine() in ("i386", "AMD64", "x86_64")
+        if not is_x86:
+            feature.skip("This feature is only x86/x64 compatible")

@@ -46,7 +46,6 @@
 #include "core/Core.h"
 #include "core/logging/Logger.h"
 #include "core/ProcessGroup.h"
-#include "core/yaml/YamlConfiguration.h"
 #include "FlowController.h"
 #include "properties/Configure.h"
 #include "unit/ProvenanceTestHelper.h"
@@ -500,7 +499,7 @@ TEST_CASE_METHOD(PutSFTPTestsFixture, "PutSFTP set mtime", "[PutSFTP]") {
   testFile("nifi_test/tstFile1.ext", "content 1");
   using namespace std::chrono;  // NOLINT(build/namespaces)
   system_clock::time_point modification_time = date::sys_days(date::January / 24 / 2065) + 5h + 20min;
-  testModificationTime("nifi_test/tstFile1.ext", file_clock::from_sys(modification_time));
+  testModificationTime("nifi_test/tstFile1.ext", utils::file::from_sys(modification_time));
 }
 
 #ifndef WIN32

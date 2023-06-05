@@ -133,14 +133,14 @@ int main(int argc, char **argv) {
   std::shared_ptr<core::ContentRepository> content_repo = std::make_shared<core::repository::VolatileContentRepository>();
   content_repo->initialize(configuration);
 
-  std::unique_ptr<core::FlowConfiguration> yaml_ptr = std::make_unique<core::YamlConfiguration>(
-      core::ConfigurationContext{test_repo, test_repo, content_repo, stream_factory, configuration, args.test_file});
+  auto yaml_ptr = std::make_shared<core::YamlConfiguration>(core::ConfigurationContext{test_repo, content_repo, stream_factory, configuration, args.test_file});
 
-  std::shared_ptr<minifi::FlowController> controller = std::make_shared<minifi::FlowController>(
-      test_repo, test_flow_repo, configuration, std::move(yaml_ptr), content_repo, DEFAULT_ROOT_GROUP_NAME,
-      std::make_shared<utils::file::FileSystem>(), []{});
+  std::vector<std::shared_ptr<core::RepositoryMetricsSource>> repo_metric_sources{test_repo, test_flow_repo, content_repo};
+  auto metrics_publisher_store = std::make_unique<minifi::state::MetricsPublisherStore>(configuration, repo_metric_sources, yaml_ptr);
+  std::shared_ptr<minifi::FlowController> controller = std::make_shared<minifi::FlowController>(test_repo, test_flow_repo, configuration,
+      std::move(yaml_ptr), content_repo, std::move(metrics_publisher_store));
 
-  core::YamlConfiguration yaml_config({test_repo, test_repo, content_repo, stream_factory, configuration, args.test_file});
+  core::YamlConfiguration yaml_config({test_repo, content_repo, stream_factory, configuration, args.test_file});
 
   auto root = yaml_config.getRoot();
   const auto proc = root->findProcessorByName("invoke");
@@ -154,7 +154,7 @@ int main(int argc, char **argv) {
   std::string scheme;
   std::string path;
   std::unique_ptr<TestServer> server;
-  parse_http_components(url, port, scheme, path);
+  minifi::utils::parse_http_components(url, port, scheme, path);
   server = std::make_unique<TestServer>(port, path, &responder);
 
   harness.setUrl(args.url, &responder);
