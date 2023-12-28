@@ -27,13 +27,7 @@
 #include "core/TypedValues.h"
 #include "core/Core.h"
 
-namespace org {
-namespace apache {
-namespace nifi {
-namespace minifi {
-namespace core {
-namespace logging {
-namespace internal {
+namespace org::apache::nifi::minifi::core::logging::internal {
 
 std::shared_ptr<LogCompressorSink> CompressionManager::initialize(
     const std::shared_ptr<LoggerProperties>& properties, const std::shared_ptr<Logger>& error_logger, const LoggerFactory& logger_factory) {
@@ -45,7 +39,7 @@ std::shared_ptr<LogCompressorSink> CompressionManager::initialize(
       return value;
     }
     if (error_logger) {
-      error_logger->log_error("Invalid format for %s", property_name);
+      error_logger->log_error("Invalid format for {}", property_name);
     }
     return std::nullopt;
   };
@@ -57,19 +51,14 @@ std::shared_ptr<LogCompressorSink> CompressionManager::initialize(
     return sink_;
   }
   // do not create new sink if all relevant parameters match
-  if (!sink_ || sink_->getMaxCacheSize() != cached_log_max_size || sink_->getMaxCompressedSize() != compressed_log_max_size) {
+  if (!sink_ || sink_->getMaxCacheSize() != cached_log_max_size || sink_->getMaxCompressedSize() != compressed_log_max_size ||
+      sink_->getMaxCacheSegmentSize() != cache_segment_size || sink_->getMaxCompressedSegmentSize() != compressed_segment_size) {
     sink_ = std::make_shared<internal::LogCompressorSink>(
         LogQueueSize{cached_log_max_size, cache_segment_size},
         LogQueueSize{compressed_log_max_size, compressed_segment_size},
-        logger_factory(getClassName<LogCompressorSink>()));
+        logger_factory(std::string(className<LogCompressorSink>())));
   }
   return sink_;
 }
 
-}  // namespace internal
-}  // namespace logging
-}  // namespace core
-}  // namespace minifi
-}  // namespace nifi
-}  // namespace apache
-}  // namespace org
+}  // namespace org::apache::nifi::minifi::core::logging::internal

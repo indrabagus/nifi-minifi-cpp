@@ -53,7 +53,7 @@ namespace org::apache::nifi::minifi {
 class SchedulingAgent {
  public:
   SchedulingAgent(const gsl::not_null<core::controller::ControllerServiceProvider*> controller_service_provider, std::shared_ptr<core::Repository> repo, std::shared_ptr<core::Repository> flow_repo,
-                  std::shared_ptr<core::ContentRepository> content_repo, std::shared_ptr<Configure> configuration, utils::ThreadPool<utils::TaskRescheduleInfo> &thread_pool)
+                  std::shared_ptr<core::ContentRepository> content_repo, std::shared_ptr<Configure> configuration, utils::ThreadPool& thread_pool)
       : admin_yield_duration_(),
         bored_yield_duration_(0),
         configure_(configuration),
@@ -66,7 +66,7 @@ class SchedulingAgent {
     flow_repo_ = flow_repo;
 
     alert_time_ = configuration->get(Configure::nifi_flow_engine_alert_period)
-        | utils::flatMap(utils::timeutils::StringToDuration<std::chrono::milliseconds>)
+        | utils::andThen(utils::timeutils::StringToDuration<std::chrono::milliseconds>)
         | utils::valueOrElse([] { return SCHEDULING_WATCHDOG_DEFAULT_ALERT_PERIOD; });
 
     if (alert_time_ > std::chrono::milliseconds(0)) {
@@ -109,6 +109,8 @@ class SchedulingAgent {
   SchedulingAgent(const SchedulingAgent &parent) = delete;
   SchedulingAgent &operator=(const SchedulingAgent &parent) = delete;
 
+  std::chrono::milliseconds getAdminYieldDuration() const { return admin_yield_duration_; }
+
  protected:
   std::mutex mutex_;
   std::atomic<bool> running_;
@@ -122,7 +124,7 @@ class SchedulingAgent {
   std::shared_ptr<core::Repository> flow_repo_;
 
   std::shared_ptr<core::ContentRepository> content_repo_;
-  utils::ThreadPool<utils::TaskRescheduleInfo> &thread_pool_;
+  utils::ThreadPool& thread_pool_;
   gsl::not_null<core::controller::ControllerServiceProvider*> controller_service_provider_;
 
  private:

@@ -27,10 +27,12 @@
 
 #include "concurrentqueue.h"
 #include "core/Processor.h"
-
+#include "core/PropertyDefinition.h"
+#include "core/PropertyDefinitionBuilder.h"
+#include "core/PropertyType.h"
+#include "core/RelationshipDefinition.h"
 #include "PythonScriptEngine.h"
 #include "PythonScriptEngine.h"
-#include "core/PropertyBuilder.h"
 
 #if defined(__GNUC__) || defined(__GNUG__)
 #pragma GCC visibility push(hidden)
@@ -40,8 +42,8 @@ namespace org::apache::nifi::minifi::extensions::python::processors {
 
 class ExecutePythonProcessor : public core::Processor {
  public:
-  explicit ExecutePythonProcessor(std::string name, const utils::Identifier &uuid = {})
-      : Processor(std::move(name), uuid),
+  explicit ExecutePythonProcessor(std::string_view name, const utils::Identifier &uuid = {})
+      : Processor(name, uuid),
         processor_initialized_(false),
         python_dynamic_(false),
         reload_on_script_change_(true) {
@@ -54,22 +56,32 @@ class ExecutePythonProcessor : public core::Processor {
       "if they wish, although there will be a script context per concurrent task of the processor. In order to, e.g., compute an arithmetic sum based on incoming flow file information, set the "
       "concurrent tasks to 1. The python script files are expected to contain `describe(procesor)` and `onTrigger(context, session)`.";
 
-  EXTENSIONAPI static const core::Property ScriptFile;
-  EXTENSIONAPI static const core::Property ScriptBody;
-  EXTENSIONAPI static const core::Property ModuleDirectory;
-  EXTENSIONAPI static const core::Property ReloadOnScriptChange;
-  static auto properties() {
-    return std::array{
+  EXTENSIONAPI static constexpr auto ScriptFile = core::PropertyDefinitionBuilder<>::createProperty("Script File")
+      .withDescription("Path to script file to execute. Only one of Script File or Script Body may be used")
+      .build();
+  EXTENSIONAPI static constexpr auto ScriptBody = core::PropertyDefinitionBuilder<>::createProperty("Script Body")
+      .withDescription("Script to execute. Only one of Script File or Script Body may be used")
+      .build();
+  EXTENSIONAPI static constexpr auto ModuleDirectory = core::PropertyDefinitionBuilder<>::createProperty("Module Directory")
+      .withDescription("Comma-separated list of paths to files and/or directories which contain modules required by the script")
+      .build();
+  EXTENSIONAPI static constexpr auto ReloadOnScriptChange = core::PropertyDefinitionBuilder<>::createProperty("Reload on Script Change")
+      .withDescription("If true and Script File property is used, then script file will be reloaded if it has changed, otherwise the first loaded version will be used at all times.")
+      .isRequired(true)
+      .withPropertyType(core::StandardPropertyTypes::BOOLEAN_TYPE)
+      .withDefaultValue("true")
+      .build();
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 4>{
       ScriptFile,
       ScriptBody,
       ModuleDirectory,
       ReloadOnScriptChange
-    };
-  }
+  };
 
-  EXTENSIONAPI static const core::Relationship Success;
-  EXTENSIONAPI static const core::Relationship Failure;
-  static auto relationships() { return std::array{Success, Failure}; }
+
+  EXTENSIONAPI static constexpr auto Success = core::RelationshipDefinition{"success", "Script succeeds"};
+  EXTENSIONAPI static constexpr auto Failure = core::RelationshipDefinition{"failure", "Script fails"};
+  EXTENSIONAPI static constexpr auto Relationships = std::array{Success, Failure};
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
@@ -78,8 +90,8 @@ class ExecutePythonProcessor : public core::Processor {
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
   void initialize() override;
-  void onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &sessionFactory) override;
-  void onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) override;
+  void onScheduleSharedPtr(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &sessionFactory) override;
+  void onTriggerSharedPtr(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) override;
 
   void setSupportsDynamicProperties() {
     python_dynamic_ = true;
@@ -87,7 +99,7 @@ class ExecutePythonProcessor : public core::Processor {
 
   void addProperty(const std::string &name, const std::string &description, const std::string &defaultvalue, bool required, bool el) {
     python_properties_.emplace_back(
-        core::PropertyBuilder::createProperty(name)->withDefaultValue(defaultvalue)->withDescription(description)->isRequired(required)->supportsExpressionLanguage(el)->build());
+        core::PropertyDefinitionBuilder<>::createProperty(name).withDefaultValue(defaultvalue).withDescription(description).isRequired(required).supportsExpressionLanguage(el).build());
   }
 
   const std::vector<core::Property> &getPythonProperties() const {
@@ -118,7 +130,7 @@ class ExecutePythonProcessor : public core::Processor {
 
   std::string script_to_exec_;
   bool reload_on_script_change_;
-  std::optional<std::filesystem::file_time_type> last_script_write_time_;
+  std::optional<std::chrono::file_clock::time_point> last_script_write_time_;
   std::string script_file_path_;
   std::shared_ptr<core::logging::Logger> python_logger_;
   std::unique_ptr<PythonScriptEngine> python_script_engine_;

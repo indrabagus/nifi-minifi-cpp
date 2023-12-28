@@ -28,6 +28,9 @@
 #include "core/Processor.h"
 #include "core/ProcessSession.h"
 #include "core/Property.h"
+#include "core/PropertyDefinitionBuilder.h"
+#include "core/PropertyType.h"
+#include "core/RelationshipDefinition.h"
 #include "controllers/SSLContextService.h"
 #include "core/logging/LoggerConfiguration.h"
 #include "utils/ArrayUtils.h"
@@ -38,31 +41,50 @@ namespace org::apache::nifi::minifi::processors {
 
 class FetchOPCProcessor : public BaseOPCProcessor {
  public:
-  explicit FetchOPCProcessor(std::string name, const utils::Identifier& uuid = {})
-      : BaseOPCProcessor(std::move(name), uuid) {
+  explicit FetchOPCProcessor(std::string_view name, const utils::Identifier& uuid = {})
+      : BaseOPCProcessor(name, uuid) {
     logger_ = core::logging::LoggerFactory<FetchOPCProcessor>::getLogger(uuid_);
   }
 
   EXTENSIONAPI static constexpr const char* Description = "Fetches OPC-UA node";
 
-  EXTENSIONAPI static const core::Property NodeIDType;
-  EXTENSIONAPI static const core::Property NodeID;
-  EXTENSIONAPI static const core::Property NameSpaceIndex;
-  EXTENSIONAPI static const core::Property MaxDepth;
-  EXTENSIONAPI static const core::Property Lazy;
-  static auto properties() {
-    return utils::array_cat(BaseOPCProcessor::properties(), std::array{
+  EXTENSIONAPI static constexpr auto NodeIDType = core::PropertyDefinitionBuilder<3>::createProperty("Node ID type")
+      .withDescription("Specifies the type of the provided node ID")
+      .isRequired(true)
+      .withAllowedValues({"Path", "Int", "String"})
+      .build();
+  EXTENSIONAPI static constexpr auto NodeID = core::PropertyDefinitionBuilder<>::createProperty("Node ID")
+      .withDescription("Specifies the ID of the root node to traverse")
+      .isRequired(true)
+      .build();
+  EXTENSIONAPI static constexpr auto NameSpaceIndex = core::PropertyDefinitionBuilder<>::createProperty("Namespace index")
+      .withDescription("The index of the namespace. Used only if node ID type is not path.")
+      .withPropertyType(core::StandardPropertyTypes::INTEGER_TYPE)
+      .withDefaultValue("0")
+      .build();
+  EXTENSIONAPI static constexpr auto MaxDepth = core::PropertyDefinitionBuilder<>::createProperty("Max depth")
+      .withDescription("Specifiec the max depth of browsing. 0 means unlimited.")
+      .withPropertyType(core::StandardPropertyTypes::UNSIGNED_LONG_TYPE)
+      .withDefaultValue("0")
+      .build();
+  EXTENSIONAPI static constexpr auto Lazy = core::PropertyDefinitionBuilder<2>::createProperty("Lazy mode")
+      .withDescription("Only creates flowfiles from nodes with new timestamp from the server.")
+      .withDefaultValue("Off")
+      .isRequired(true)
+      .withAllowedValues({"On", "Off"})
+      .build();
+  EXTENSIONAPI static constexpr auto Properties = utils::array_cat(BaseOPCProcessor::Properties, std::array<core::PropertyReference, 5>{
       NodeIDType,
       NodeID,
       NameSpaceIndex,
       MaxDepth,
       Lazy
-    });
-  }
+  });
 
-  EXTENSIONAPI static const core::Relationship Success;
-  EXTENSIONAPI static const core::Relationship Failure;
-  static auto relationships() { return std::array{Success, Failure}; }
+
+  EXTENSIONAPI static constexpr auto Success = core::RelationshipDefinition{"success", "Successfully retrieved OPC-UA nodes"};
+  EXTENSIONAPI static constexpr auto Failure = core::RelationshipDefinition{"failure", "Retrieved OPC-UA nodes where value cannot be extracted (only if enabled)"};
+  EXTENSIONAPI static constexpr auto Relationships = std::array{Success, Failure};
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
@@ -71,15 +93,15 @@ class FetchOPCProcessor : public BaseOPCProcessor {
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  void onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &factory) override;
-  void onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) override;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& factory) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
   void initialize() override;
 
  protected:
   bool nodeFoundCallBack(opc::Client& client, const UA_ReferenceDescription *ref, const std::string& path,
-                         const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session);
+                         core::ProcessContext& context, core::ProcessSession& session);
 
-  void OPCData2FlowFile(const opc::NodeData& opcnode, const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session);
+  void OPCData2FlowFile(const opc::NodeData& opcnode, core::ProcessContext& context, core::ProcessSession& session);
 
   std::string nodeID_;
   int32_t nameSpaceIdx_ = 0;

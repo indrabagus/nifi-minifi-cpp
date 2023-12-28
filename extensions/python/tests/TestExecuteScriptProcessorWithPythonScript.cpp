@@ -35,8 +35,8 @@ TEST_CASE("Script engine is not set", "[executescriptMisconfiguration]") {
 
   auto execute_script = plan->addProcessor("ExecuteScript", "executeScript");
 
-  plan->setProperty(execute_script, ExecuteScript::ScriptEngine.getName(), "");
-  plan->setProperty(execute_script, ExecuteScript::ScriptFile.getName(), "/path/to/script.py");
+  plan->setProperty(execute_script, ExecuteScript::ScriptEngine, "");
+  plan->setProperty(execute_script, ExecuteScript::ScriptFile, "/path/to/script.py");
 
   REQUIRE_THROWS_AS(test_controller.runSession(plan, true), minifi::Exception);
 }
@@ -47,7 +47,7 @@ TEST_CASE("Neither script body nor script file is set", "[executescriptMisconfig
 
   auto execute_script = plan->addProcessor("ExecuteScript", "executeScript");
 
-  plan->setProperty(execute_script, ExecuteScript::ScriptEngine.getName(), "python");
+  plan->setProperty(execute_script, ExecuteScript::ScriptEngine, "python");
 
   REQUIRE_THROWS_AS(test_controller.runSession(plan, true), minifi::Exception);
 }
@@ -58,9 +58,9 @@ TEST_CASE("Test both script body and script file set", "[executescriptMisconfigu
 
   auto execute_script = plan->addProcessor("ExecuteScript", "executeScript");
 
-  plan->setProperty(execute_script, ExecuteScript::ScriptEngine.getName(), "python");
-  plan->setProperty(execute_script, ExecuteScript::ScriptFile.getName(), "/path/to/script.py");
-  plan->setProperty(execute_script, ExecuteScript::ScriptBody.getName(), R"(
+  plan->setProperty(execute_script, ExecuteScript::ScriptEngine, "python");
+  plan->setProperty(execute_script, ExecuteScript::ScriptFile, "/path/to/script.py");
+  plan->setProperty(execute_script, ExecuteScript::ScriptBody, R"(
     def onTrigger(context, session):
       log.info('hello from python')
   )");
@@ -221,8 +221,7 @@ TEST_CASE("Python: Test Module Directory property", "[executescriptPythonModuleD
   minifi::test::SingleProcessorTestController controller{execute_script};
   LogTestController::getInstance().setTrace<ExecuteScript>();
 
-  const auto script_files_directory = std::filesystem::path(__FILE__).parent_path() / "test_python_scripts";
-
+  const auto script_files_directory =  minifi::utils::file::FileUtils::get_executable_dir() / "resources" / "test_python_scripts";
 
   execute_script->setProperty(ExecuteScript::ScriptEngine, "python");
   execute_script->setProperty(ExecuteScript::ScriptFile, (script_files_directory / "foo_bar_processor.py").string());
@@ -268,7 +267,7 @@ TEST_CASE("Python can store states in StateManager", "[ExecuteScript]") {
   minifi::test::SingleProcessorTestController controller{execute_script};
   LogTestController::getInstance().setTrace<minifi::processors::ExecuteScript>();
   execute_script->setProperty(ExecuteScript::ScriptEngine, "python");
-  execute_script->setProperty(ExecuteScript::ScriptBody.getName(),
+  execute_script->setProperty(ExecuteScript::ScriptBody,
       R"(
 def onTrigger(context, session):
   state_manager = context.getStateManager()

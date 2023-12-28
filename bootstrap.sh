@@ -19,7 +19,7 @@
 script_directory="$(cd "$(dirname "$0")" && pwd)"
 
 CMAKE_GLOBAL_MIN_VERSION_MAJOR=3
-CMAKE_GLOBAL_MIN_VERSION_MINOR=17
+CMAKE_GLOBAL_MIN_VERSION_MINOR=24
 CMAKE_GLOBAL_MIN_VERSION_REVISION=0
 
 export RED='\033[0;101m'
@@ -169,25 +169,6 @@ else
   LINUX=false
 fi
 
-### Verify the compiler version
-
-COMPILER_VERSION="0.0.0"
-
-COMPILER_COMMAND=""
-
-if [ -x "$(command -v g++)" ]; then
-  COMPILER_COMMAND="g++"
-  COMPILER_VERSION=$(${COMPILER_COMMAND} -dumpversion)
-fi
-
-COMPILER_MAJOR=$(echo "$COMPILER_VERSION" | cut -d. -f1)
-export COMPILER_MAJOR
-COMPILER_MINOR=$(echo "$COMPILER_VERSION" | cut -d. -f2)
-export COMPILER_MINOR
-COMPILER_REVISION=$(echo "$COMPILER_VERSION" | cut -d. -f3)
-export COMPILER_REVISION
-
-
 if [[ "$OS" = "Darwin" ]]; then
   . "${script_directory}/darwin.sh"
 else
@@ -215,10 +196,31 @@ else
     . "${script_directory}/arch.sh"
   fi
 fi
+
+### Verify the compiler version
+COMPILER_VERSION="0.0.0"
+COMPILER_COMMAND="${CXX:-g++}"
+
+if [ -z "$(command -v "$COMPILER_COMMAND")" ]; then
+  echo "Couldn't find compiler, attempting to install GCC"
+  bootstrap_compiler
+fi
+if [ -x "$(command -v "${COMPILER_COMMAND}")" ]; then
+  COMPILER_VERSION=$(${COMPILER_COMMAND} -dumpversion)
+else
+  echo "Couldn't find compiler, please install one, or set CXX appropriately" 1>&2
+  exit 1
+fi
+
+COMPILER_MAJOR=$(echo "$COMPILER_VERSION" | cut -d. -f1)
+export COMPILER_MAJOR
+COMPILER_MINOR=$(echo "$COMPILER_VERSION" | cut -d. -f2)
+export COMPILER_MINOR
+COMPILER_REVISION=$(echo "$COMPILER_VERSION" | cut -d. -f3)
+export COMPILER_REVISION
+
 ### verify the cmake version
-
 CMAKE_COMMAND=""
-
 if [ -x "$(command -v cmake3)" ]; then
   CMAKE_COMMAND="cmake3"
 elif [ -x "$(command -v cmake)" ]; then
@@ -251,6 +253,7 @@ if [ "$CMAKE_MAJOR" -lt "$CMAKE_GLOBAL_MIN_VERSION_MAJOR" ] ||
   exit
 fi
 
+
 add_cmake_option PORTABLE_BUILD ${TRUE}
 add_cmake_option DEBUG_SYMBOLS ${FALSE}
 add_cmake_option BUILD_ROCKSDB ${TRUE}
@@ -263,8 +266,10 @@ add_option HTTP_CURL_ENABLED ${TRUE} "DISABLE_CURL"
 add_option LIBARCHIVE_ENABLED ${TRUE} "DISABLE_LIBARCHIVE"
 add_dependency LIBARCHIVE_ENABLED "libarchive"
 
-add_option PYTHON_SCRIPTING_ENABLED ${FALSE} "ENABLE_PYTHON_SCRIPTING"
-add_option LUA_SCRIPTING_ENABLED ${FALSE} "ENABLE_LUA_SCRIPTING"
+add_option PYTHON_SCRIPTING_ENABLED ${TRUE} "ENABLE_PYTHON_SCRIPTING"
+add_dependency PYTHON_SCRIPTING_ENABLED "python"
+add_option LUA_SCRIPTING_ENABLED ${TRUE} "ENABLE_LUA_SCRIPTING"
+add_dependency LUA_SCRIPTING_ENABLED "lua"
 
 add_option EXPRESSION_LANGUAGE_ENABLED ${TRUE} "DISABLE_EXPRESSION_LANGUAGE"
 add_dependency EXPRESSION_LANGUAGE_ENABLED "bison"
@@ -284,9 +289,9 @@ add_option AWS_ENABLED ${TRUE} "ENABLE_AWS"
 
 add_option KAFKA_ENABLED ${TRUE} "ENABLE_LIBRDKAFKA"
 
-add_option KUBERNETES_ENABLED ${FALSE} "ENABLE_KUBERNETES"
+add_option KUBERNETES_ENABLED ${TRUE} "ENABLE_KUBERNETES"
 
-add_option MQTT_ENABLED ${FALSE} "ENABLE_MQTT"
+add_option MQTT_ENABLED ${TRUE} "ENABLE_MQTT"
 
 add_option COAP_ENABLED ${FALSE} "ENABLE_COAP"
 add_dependency COAP_ENABLED "automake"
@@ -295,8 +300,6 @@ add_dependency COAP_ENABLED "libtool"
 
 add_option JNI_ENABLED ${FALSE} "ENABLE_JNI"
 add_dependency JNI_ENABLED "jnibuild"
-
-add_option OPENCV_ENABLED ${FALSE} "ENABLE_OPENCV"
 
 add_option OPENCV_ENABLED ${FALSE} "ENABLE_OPENCV"
 
@@ -309,13 +312,8 @@ add_option OPENWSMAN_ENABLED ${FALSE} "ENABLE_OPENWSMAN"
 
 # Since the following extensions have limitations on
 add_option BUSTACHE_ENABLED ${FALSE} "ENABLE_BUSTACHE" "2.6" ${TRUE}
-add_dependency BUSTACHE_ENABLED "boost"
 
-## currently need to limit on certain platforms
-add_option TENSORFLOW_ENABLED ${FALSE} "ENABLE_TENSORFLOW" "2.6" ${TRUE}
-add_dependency TENSORFLOW_ENABLED "tensorflow"
-
-add_option OPC_ENABLED ${FALSE} "ENABLE_OPC"
+add_option OPC_ENABLED ${TRUE} "ENABLE_OPC"
 add_dependency OPC_ENABLED "mbedtls"
 
 add_option AZURE_ENABLED ${TRUE} "ENABLE_AZURE"
@@ -331,12 +329,15 @@ set_dependency SPLUNK_ENABLED HTTP_CURL_ENABLED
 
 add_option GCP_ENABLED ${TRUE} "ENABLE_GCP"
 
-add_option ELASTIC_ENABLED ${FALSE} "ENABLE_ELASTICSEARCH"
+add_option ELASTIC_ENABLED ${TRUE} "ENABLE_ELASTICSEARCH"
 set_dependency ELASTIC_ENABLED HTTP_CURL_ENABLED
 
 add_option PROCFS_ENABLED ${TRUE} "ENABLE_PROCFS"
 
-add_option PROMETHEUS_ENABLED ${FALSE} "ENABLE_PROMETHEUS"
+add_option PROMETHEUS_ENABLED ${TRUE} "ENABLE_PROMETHEUS"
+
+add_option OPENSSL_ENABLED ${TRUE} "OPENSSL_OFF"
+add_dependency OPENSSL_ENABLED "opensslbuild"
 
 USE_SHARED_LIBS=${TRUE}
 ASAN_ENABLED=${FALSE}
@@ -440,7 +441,7 @@ build_cmake_command(){
     if [ "$FOUND" = "1" ]; then
       set_value=OFF
       option_value="${!option}"
-      if { [[ "$option_value" = "${FALSE}" ]] && [[ "$FOUND_VALUE" == "DISABLE"* ]]; } || \
+      if { [[ "$option_value" = "${FALSE}" ]] && { [[ "$FOUND_VALUE" == "DISABLE"* ]] || [[ "$FOUND_VALUE" == *"OFF" ]]; }; } || \
          { [[ "$option_value" = "${TRUE}" ]] && [[ "$FOUND_VALUE" == "ENABLE"* ]]; }; then
         set_value=ON
       fi

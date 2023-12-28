@@ -62,6 +62,7 @@
 #include "utils/file/PathUtils.h"
 #include "utils/file/FileUtils.h"
 #include "utils/Environment.h"
+#include "utils/FileMutex.h"
 #include "FlowController.h"
 #include "AgentDocs.h"
 #include "MainHelper.h"
@@ -70,14 +71,15 @@
 #include "c2/C2Agent.h"
 #include "core/state/MetricsPublisherFactory.h"
 #include "core/state/MetricsPublisherStore.h"
+#include "argparse/argparse.hpp"
+#include "agent/agent_version.h"
 
 namespace minifi = org::apache::nifi::minifi;
 namespace core = minifi::core;
 namespace utils = minifi::utils;
 
- // Variables that allow us to avoid a timed wait.
-static sem_t *flow_controller_running;
-static sem_t *process_running;
+static std::atomic_flag flow_controller_running;
+static std::atomic_flag process_running;
 
 /**
  * Removed the stop command from the signal handler so that we could trigger
@@ -91,31 +93,30 @@ static sem_t *process_running;
 
 #ifdef WIN32
 BOOL WINAPI consoleSignalHandler(DWORD signal) {
-  if (!process_running) { exit(0); return TRUE; }
+  if (!process_running.test()) { exit(0); return TRUE; }
   if (signal == CTRL_C_EVENT || signal == CTRL_BREAK_EVENT) {
-    int ret = ETIMEDOUT;
-    while (ret == ETIMEDOUT) {
-      if (flow_controller_running) { sem_post(flow_controller_running); }
-      const struct timespec timeout_100ms { .tv_sec = 0, .tv_nsec = 100000000};
-      ret = sem_timedwait(process_running, &timeout_100ms);
-    }
+    flow_controller_running.clear();
+    flow_controller_running.notify_all();
+    process_running.wait(true);
     return TRUE;
   }
   return FALSE;
 }
 
 void SignalExitProcess() {
-  sem_post(flow_controller_running);
+  flow_controller_running.clear();
+  flow_controller_running.notify_all();
 }
 #endif
 
 void sigHandler(int signal) {
   if (signal == SIGINT || signal == SIGTERM) {
-    sem_post(flow_controller_running);
+    flow_controller_running.clear();
+    flow_controller_running.notify_all();
   }
 }
 
-void dumpDocs(const std::shared_ptr<minifi::Configure> &configuration, const std::string &dir, std::ostream &out) {
+void dumpDocs(const std::shared_ptr<minifi::Configure> &configuration, const std::string &dir) {
   auto pythoncreator = core::ClassLoader::getDefaultClassLoader().instantiate("PythonCreator", "PythonCreator");
   if (nullptr != pythoncreator) {
     pythoncreator->configure(configuration);
@@ -123,7 +124,7 @@ void dumpDocs(const std::shared_ptr<minifi::Configure> &configuration, const std
 
   minifi::docs::AgentDocs docsCreator;
 
-  docsCreator.generate(dir, out);
+  docsCreator.generate(dir);
 }
 
 void writeJsonSchema(const std::shared_ptr<minifi::Configure> &configuration, std::ostream& out) {
@@ -135,7 +136,79 @@ void writeJsonSchema(const std::shared_ptr<minifi::Configure> &configuration, st
   out << minifi::docs::generateJsonSchema();
 }
 
+void overridePropertiesFromCommandLine(const argparse::ArgumentParser& parser, const std::shared_ptr<minifi::Configure>& configure) {
+  const auto& properties = parser.get<std::vector<std::string>>("--property");
+  for (const auto& property : properties) {
+    auto property_key_and_value = utils::StringUtils::splitAndTrimRemovingEmpty(property, "=");
+    if (property_key_and_value.size() != 2) {
+      std::cerr << "Command line property must be defined in <key>=<value> format, invalid property: " << property << std::endl;
+      std::cerr << parser;
+      std::exit(1);
+    }
+    configure->set(property_key_and_value[0], property_key_and_value[1]);
+  }
+}
+
+void dumpDocsIfRequested(const argparse::ArgumentParser& parser, const std::shared_ptr<minifi::Configure>& configure) {
+  if (!parser.is_used("--docs")) {
+    return;
+  }
+  const auto& docs_params = parser.get<std::vector<std::string>>("--docs");
+  if (utils::file::create_dir(docs_params[0]) != 0) {
+    std::cerr << "Working directory doesn't exist and cannot be created: " << docs_params[0] << std::endl;
+    std::exit(1);
+  }
+
+  std::cout << "Dumping docs to " << docs_params[0] << std::endl;
+  dumpDocs(configure, docs_params[0]);
+  std::exit(0);
+}
+
+void writeSchemaIfRequested(const argparse::ArgumentParser& parser, const std::shared_ptr<minifi::Configure>& configure) {
+  if (!parser.is_used("--schema")) {
+    return;
+  }
+  const auto& schema_path = parser.get("--schema");
+  if (std::filesystem::exists(schema_path) && !std::filesystem::is_regular_file(schema_path)) {
+    std::cerr << "JSON schema target path already exists, but it is not a regular file: " << schema_path << std::endl;
+    std::exit(1);
+  }
+
+  auto parent_dir = std::filesystem::path(schema_path).parent_path();
+  if (utils::file::create_dir(parent_dir) != 0) {
+    std::cerr << "JSON schema parent directory doesn't exist and cannot be created: " << parent_dir << std::endl;
+    std::exit(1);
+  }
+  std::cout << "Writing json schema to " << schema_path << std::endl;
+  {
+    std::ofstream schema_file{schema_path};
+    writeJsonSchema(configure, schema_file);
+  }
+  std::exit(0);
+}
+
 int main(int argc, char **argv) {
+  argparse::ArgumentParser argument_parser("Apache MiNiFi C++", minifi::AgentBuild::VERSION);
+  argument_parser.add_argument("-p", "--property")
+    .append()
+    .metavar("KEY=VALUE")
+    .help("Override a property read from minifi.properties file in key=value format");
+  argument_parser.add_argument("-d", "--docs")
+    .nargs(1)
+    .metavar("DIRECTORY")
+    .help("Generate documentation in the specified directory");
+  argument_parser.add_argument("-s", "--schema")
+    .metavar("PATH")
+    .help("Generate JSON schema to the specified path");
+
+  try {
+    argument_parser.parse_args(argc, argv);
+  } catch (const std::runtime_error& err) {
+    std::cerr << err.what() << std::endl;
+    std::cerr << argument_parser;
+    std::exit(1);
+  }
+
 #ifdef WIN32
   RunAsServiceIfNeeded();
 
@@ -197,39 +270,36 @@ int main(int argc, char **argv) {
     // determineMinifiHome already logged everything we need
     return -1;
   }
+  utils::FileMutex minifi_home_mtx(minifiHome / "LOCK");
+  std::unique_lock minifi_home_lock(minifi_home_mtx, std::defer_lock);
+  try {
+    minifi_home_lock.lock();
+  } catch (const std::exception& ex) {
+    logger->log_error("Could not acquire LOCK for minifi home '{}', maybe another minifi instance is running: {}", minifiHome, ex.what());
+    std::exit(1);
+  }
   // chdir to MINIFI_HOME
   std::error_code current_path_error;
   std::filesystem::current_path(minifiHome, current_path_error);
   if (current_path_error) {
-    logger->log_error("Failed to change working directory to MINIFI_HOME (%s)", minifiHome.string());
+    logger->log_error("Failed to change working directory to MINIFI_HOME ({})", minifiHome);
     return -1;
   }
-  const auto flow_controller_semaphore_path = "/MiNiFiMain";
-  const auto process_semaphore_path = "/MiNiFiProc";
 
-  process_running = sem_open(process_semaphore_path, O_CREAT, 0644, 0);
-  if (process_running == SEM_FAILED) {
-    logger->log_error("could not initialize process semaphore");
-    perror("sem_open");
-    return -1;
-  }
+  process_running.test_and_set();
 
   std::atomic<bool> restart_token{false};
   const auto request_restart = [&] {
     if (!restart_token.exchange(true)) {
-      // only do sem_post if a restart is not already in progress (the flag was unset before the exchange)
-      sem_post(flow_controller_running);
+      // only trigger if a restart is not already in progress (the flag was unset before the exchange)
+      flow_controller_running.clear();
+      flow_controller_running.notify_all();
       logger->log_info("Initiating restart...");
     }
   };
 
   do {
-    flow_controller_running = sem_open(flow_controller_semaphore_path, O_CREAT, 0644, 0);
-    if (flow_controller_running == SEM_FAILED) {
-      logger->log_error("could not initialize flow controller semaphore");
-      perror("sem_open");
-      return -1;
-    }
+    flow_controller_running.test_and_set();
 
     std::string graceful_shutdown_seconds;
     std::string prov_repo_class = "provenancerepository";
@@ -249,7 +319,7 @@ int main(int argc, char **argv) {
     utils::IdGenerator::getIdGenerator()->initialize(uid_properties);
 
     // Make a record of minifi home in the configured log file.
-    logger->log_info("MINIFI_HOME=%s", minifiHome.string());
+    logger->log_info("MINIFI_HOME={}", minifiHome);
 
     auto decryptor = minifi::Decryptor::create(minifiHome);
     if (decryptor) {
@@ -261,56 +331,16 @@ int main(int argc, char **argv) {
     const std::shared_ptr<minifi::Configure> configure = std::make_shared<minifi::Configure>(std::move(decryptor), std::move(log_properties));
     configure->setHome(minifiHome);
     configure->loadConfigureFile(DEFAULT_NIFI_PROPERTIES_FILE);
+    overridePropertiesFromCommandLine(argument_parser, configure);
 
     minifi::core::extension::ExtensionManager::get().initialize(configure);
 
-    if (argc >= 2 && std::string("docs") == argv[1]) {
-      if (argc < 3 || argc > 4) {
-        std::cerr << "Usage: <minifiexe> docs <directory where to write individual doc files> [file where to write PROCESSORS.md]\n";
-        std::cerr << "    If no file name is given for PROCESSORS.md, it will be printed to stdout.\n";
-        exit(1);
-      }
-      if (utils::file::create_dir(argv[2]) != 0) {
-        std::cerr << "Working directory doesn't exist and cannot be created: " << argv[2] << std::endl;
-        exit(1);
-      }
-
-      std::cout << "Dumping docs to " << argv[2] << std::endl;
-      if (argc == 4) {
-        auto path = std::filesystem::path(argv[3]);
-        auto dir = path.parent_path();
-        auto filename = path.filename();
-        if (dir == argv[2]) {
-          std::cerr << "Target file should be out of the working directory: " << dir << std::endl;
-          exit(1);
-        }
-        std::ofstream outref(argv[3]);
-        dumpDocs(configure, argv[2], outref);
-      } else {
-        dumpDocs(configure, argv[2], std::cout);
-      }
-      exit(0);
-    }
-
-    if (argc >= 2 && std::string("schema") == argv[1]) {
-      if (argc != 3) {
-        std::cerr << "Malformed schema command, expected '<minifiexe> schema <output-file>'" << std::endl;
-        std::exit(1);
-      }
-
-      std::cout << "Writing json schema to " << argv[2] << std::endl;
-
-      {
-        std::ofstream schema_file{argv[2]};
-        writeJsonSchema(configure, schema_file);
-      }
-      std::exit(0);
-    }
+    dumpDocsIfRequested(argument_parser, configure);
+    writeSchemaIfRequested(argument_parser, configure);
 
     std::chrono::milliseconds stop_wait_time = configure->get(minifi::Configure::nifi_graceful_shutdown_seconds)
-        | utils::flatMap(utils::timeutils::StringToDuration<std::chrono::milliseconds>)
+        | utils::andThen(utils::timeutils::StringToDuration<std::chrono::milliseconds>)
         | utils::valueOrElse([] { return std::chrono::milliseconds(STOP_WAIT_TIME_MS);});
-
 
     configure->get(minifi::Configure::nifi_provenance_repository_class_name, prov_repo_class);
     // Create repos for flow record and provenance
@@ -318,7 +348,7 @@ int main(int argc, char **argv) {
 
     if (!prov_repo || !prov_repo->initialize(configure)) {
       logger->log_error("Provenance repository failed to initialize, exiting..");
-      exit(1);
+      std::exit(1);
     }
 
     configure->get(minifi::Configure::nifi_flow_repository_class_name, flow_repo_class);
@@ -327,7 +357,7 @@ int main(int argc, char **argv) {
 
     if (!flow_repo || !flow_repo->initialize(configure)) {
       logger->log_error("Flow file repository failed to initialize, exiting..");
-      exit(1);
+      std::exit(1);
     }
 
     configure->get(minifi::Configure::nifi_content_repository_class_name, content_repo_class);
@@ -336,27 +366,25 @@ int main(int argc, char **argv) {
 
     if (!content_repo->initialize(configure)) {
       logger->log_error("Content repository failed to initialize, exiting..");
-      exit(1);
+      std::exit(1);
     }
     const bool is_flow_repo_non_persistent = flow_repo->isNoop() || std::dynamic_pointer_cast<core::repository::VolatileFlowFileRepository>(flow_repo) != nullptr;
     const bool is_content_repo_non_persistent = std::dynamic_pointer_cast<core::repository::VolatileContentRepository>(content_repo) != nullptr;
     if (is_flow_repo_non_persistent != is_content_repo_non_persistent) {
       logger->log_error("Both or neither of flowfile and content repositories must be persistent! Exiting..");
-      exit(1);
+      std::exit(1);
     }
 
     std::string content_repo_path;
     if (configure->get(minifi::Configure::nifi_dbcontent_repository_directory_default, content_repo_path) && !content_repo_path.empty()) {
-      core::logging::LOG_INFO(logger) << "setting default dir to " << content_repo_path;
+      logger->log_info("setting default dir to {}", content_repo_path);
       minifi::setDefaultDirectory(content_repo_path);
     }
 
     configure->get(minifi::Configure::nifi_configuration_class_name, nifi_configuration_class_name);
 
-    std::shared_ptr<minifi::io::StreamFactory> stream_factory = minifi::io::StreamFactory::getInstance(configure);
-
     bool should_encrypt_flow_config = (configure->get(minifi::Configure::nifi_flow_configuration_encrypt)
-        | utils::flatMap(utils::StringUtils::toBool)).value_or(false);
+        | utils::andThen(utils::StringUtils::toBool)).value_or(false);
 
     auto filesystem = std::make_shared<utils::file::FileSystem>(
         should_encrypt_flow_config,
@@ -366,7 +394,6 @@ int main(int argc, char **argv) {
         core::ConfigurationContext{
           .flow_file_repo = flow_repo,
           .content_repo = content_repo,
-          .stream_factory = stream_factory,
           .configuration = configure,
           .path = configure->get(minifi::Configure::nifi_flow_configuration_file),
           .filesystem = filesystem}, nifi_configuration_class_name);
@@ -378,7 +405,7 @@ int main(int argc, char **argv) {
       prov_repo, flow_repo, configure, std::move(flow_configuration), content_repo, std::move(metrics_publisher_store), filesystem, request_restart);
 
     const bool disk_space_watchdog_enable = configure->get(minifi::Configure::minifi_disk_space_watchdog_enable)
-        | utils::flatMap(utils::StringUtils::toBool)
+        | utils::andThen(utils::StringUtils::toBool)
         | utils::valueOrElse([] { return true; });
 
     std::unique_ptr<utils::CallBackTimer> disk_space_watchdog;
@@ -426,7 +453,7 @@ int main(int argc, char **argv) {
           }
         });
       } catch (const std::runtime_error& error) {
-        logger->log_error(error.what());
+        logger->log_error("{}", error.what());
         return -1;
       }
     }
@@ -438,7 +465,7 @@ int main(int argc, char **argv) {
       controller->load();
     }
     catch (std::exception& e) {
-      logger->log_error("Failed to load configuration due to exception: %s", e.what());
+      logger->log_error("Failed to load configuration due to exception: {}", e.what());
       return -1;
     }
     catch (...) {
@@ -453,21 +480,7 @@ int main(int argc, char **argv) {
 
     logger->log_info("MiNiFi started");
 
-    /**
-     * Sem wait provides us the ability to have a controlled
-     * yield without the need for a more complex construct and
-     * a spin lock
-     */
-    int ret_val;
-    while ((ret_val = sem_wait(flow_controller_running)) == -1 && errno == EINTR) {}
-    if (ret_val == -1) perror("sem_wait");
-
-    while ((ret_val = sem_close(flow_controller_running)) == -1 && errno == EINTR) {}
-    if (ret_val == -1) perror("sem_close");
-    flow_controller_running = nullptr;
-
-    while ((ret_val = sem_unlink(flow_controller_semaphore_path)) == -1 && errno == EINTR) {}
-    if (ret_val == -1) perror("sem_unlink");
+    flow_controller_running.wait(true);
 
     disk_space_watchdog = nullptr;
 
@@ -485,7 +498,8 @@ int main(int argc, char **argv) {
     return restart_token_temp;
   }());
 
-  if (process_running) { sem_post(process_running); }
+  process_running.clear();
+  process_running.notify_all();
   logger->log_info("MiNiFi exit");
   return 0;
 }

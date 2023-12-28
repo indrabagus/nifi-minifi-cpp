@@ -16,6 +16,7 @@
  */
 #pragma once
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -44,6 +45,7 @@
 #include <sys/utime.h>  // _utime64
 #include <tchar.h>  // _tcscpy,_tcscat,_tcscmp
 #include <windows.h>  // winapi
+#include <io.h>
 
 #ifndef WIN32_LEAN_AND_MEAN
   #define WIN32_LEAN_AND_MEAN
@@ -71,6 +73,7 @@
 
 #include "core/logging/LoggerFactory.h"
 #include "utils/StringUtils.h"
+#include "utils/expected.h"
 #include "utils/file/PathUtils.h"
 #include "utils/gsl.h"
 
@@ -83,9 +86,9 @@ namespace org::apache::nifi::minifi::utils::file {
 
 namespace FileUtils = ::org::apache::nifi::minifi::utils::file;
 
-std::chrono::system_clock::time_point to_sys(std::filesystem::file_time_type file_time);
+std::chrono::system_clock::time_point to_sys(std::chrono::file_clock::time_point file_time);
 
-std::filesystem::file_time_type from_sys(std::chrono::system_clock::time_point sys_time);
+std::chrono::file_clock::time_point from_sys(std::chrono::system_clock::time_point sys_time);
 
 inline int64_t delete_dir(const std::filesystem::path& path, bool delete_files_recursively = true) {
   // Empty path is interpreted as the root of the current partition on Windows, which should not be allowed
@@ -117,7 +120,7 @@ inline std::chrono::time_point<std::chrono::file_clock,
   return std::chrono::time_point<std::chrono::file_clock, std::chrono::seconds>{};
 }
 
-inline std::optional<std::filesystem::file_time_type> last_write_time(const std::filesystem::path& path) {
+inline std::optional<std::chrono::file_clock::time_point> last_write_time(const std::filesystem::path& path) {
   std::error_code ec;
   auto result = std::filesystem::last_write_time(path, ec);
   if (ec.value() == 0) {
@@ -126,10 +129,12 @@ inline std::optional<std::filesystem::file_time_type> last_write_time(const std:
   return std::nullopt;
 }
 
-inline bool set_last_write_time(const std::filesystem::path& path, std::filesystem::file_time_type new_time) {
+inline nonstd::expected<void, std::error_code> set_last_write_time(const std::filesystem::path& path, std::chrono::file_clock::time_point new_time) {
   std::error_code ec;
   std::filesystem::last_write_time(path, new_time, ec);
-  return ec.value() == 0;
+  if (ec)
+    return nonstd::make_unexpected(ec);
+  return {};
 }
 
 inline uint64_t file_size(const std::filesystem::path& path) {
@@ -243,13 +248,13 @@ inline void addFilesMatchingExtension(const std::shared_ptr<core::logging::Logge
                                       const std::filesystem::path& extension,
                                       std::vector<std::filesystem::path>& accruedFiles) {
   if (!utils::file::exists(originalPath)) {
-    logger->log_warn("Failed to open directory: %s", originalPath.string());
+    logger->log_warn("Failed to open directory: {}", originalPath);
     return;
   }
 
   if (utils::file::is_directory(originalPath)) {
     // only perform a listing while we are not empty
-    logger->log_debug("Looking for files with %s extension in %s", extension.string(), originalPath.string());
+    logger->log_debug("Looking for files with {} extension in {}", extension, originalPath);
 
     for (const auto& entry: std::filesystem::directory_iterator(originalPath,
                                                                 std::filesystem::directory_options::skip_permission_denied)) {
@@ -257,18 +262,18 @@ inline void addFilesMatchingExtension(const std::shared_ptr<core::logging::Logge
         addFilesMatchingExtension(logger, entry.path(), extension, accruedFiles);
       } else {
         if (entry.path().extension() == extension) {
-          logger->log_info("Adding %s to paths", entry.path().string());
+          logger->log_info("Adding {} to paths", entry.path());
           accruedFiles.push_back(entry.path());
         }
       }
     }
   } else if (std::filesystem::is_regular_file(originalPath)) {
     if (originalPath.extension() == extension) {
-      logger->log_info("Adding %s to paths", originalPath.string());
+      logger->log_info("Adding {} to paths", originalPath);
       accruedFiles.push_back(originalPath);
     }
   } else {
-    logger->log_error("Could not access %s", originalPath.string());
+    logger->log_error("Could not access {}", originalPath);
   }
 }
 
@@ -285,9 +290,9 @@ inline void list_dir(const std::filesystem::path& dir,
                      const std::function<bool(const std::filesystem::path&, const std::filesystem::path&)>& callback,
                      const std::shared_ptr<core::logging::Logger> &logger,
                      const std::function<bool(const std::filesystem::path&)>& dir_callback) {
-  logger->log_debug("Performing file listing against %s", dir.string());
+  logger->log_debug("Performing file listing against {}", dir);
   if (!utils::file::exists(dir)) {
-    logger->log_warn("Failed to open directory: %s", dir.string());
+    logger->log_warn("Failed to open directory: {}", dir);
     return;
   }
 
@@ -417,14 +422,6 @@ inline std::filesystem::path get_executable_dir() {
     return "";
   }
   return executable_path.parent_path();
-}
-
-inline int close(int file_descriptor) {
-#ifdef WIN32
-  return _close(file_descriptor);
-#else
-  return ::close(file_descriptor);
-#endif
 }
 
 uint64_t computeChecksum(const std::filesystem::path& file_name, uint64_t up_to_position);
@@ -576,5 +573,20 @@ inline std::optional<std::filesystem::path> get_relative_path(const std::filesys
 
   return std::filesystem::relative(path, base_path);
 }
+
+inline size_t countNumberOfFiles(const std::filesystem::path& path) {
+  using std::filesystem::directory_iterator;
+  return std::count_if(directory_iterator(path), directory_iterator(), [](const auto& entry) { return entry.is_regular_file(); });
+}
+
+#ifdef WIN32
+struct WindowsFileTimes {
+  std::chrono::file_clock::time_point creation_time;
+  std::chrono::file_clock::time_point last_access_time;
+  std::chrono::file_clock::time_point last_write_time;
+};
+
+nonstd::expected<WindowsFileTimes, std::error_code> getWindowsFileTimes(const std::filesystem::path& path);
+#endif
 
 }  // namespace org::apache::nifi::minifi::utils::file

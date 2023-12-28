@@ -21,15 +21,11 @@
 #include <set>
 #include <cinttypes>
 #include "core/Repository.h"
-#include "core/logging/LoggerConfiguration.h"
 #include "utils/Id.h"
 #include "core/FlowFile.h"
 #include "utils/requirements/Container.h"
 
-namespace org {
-namespace apache {
-namespace nifi {
-namespace minifi {
+namespace org::apache::nifi::minifi {
 namespace core {
 
 std::shared_ptr<utils::IdGenerator> FlowFile::id_generator_ = utils::IdGenerator::getIdGenerator();
@@ -40,16 +36,14 @@ FlowFile::FlowFile()
     : CoreComponent("FlowFile"),
       stored(false),
       marked_delete_(false),
+      entry_date_(std::chrono::system_clock::now()),
+      event_time_(entry_date_),
+      lineage_start_date_(entry_date_),
       last_queue_date_(0),
       size_(0),
-      id_(0),
+      id_(numeric_id_generator_->generateId()),
       offset_(0),
-      to_be_processed_after_(std::chrono::steady_clock::now()),
-      claim_(nullptr) {
-  id_ = numeric_id_generator_->generateId();
-  entry_date_ = std::chrono::system_clock::now();
-  event_time_ = entry_date_;
-  lineage_start_date_ = entry_date_;
+      to_be_processed_after_(std::chrono::steady_clock::now()) {
 }
 
 FlowFile& FlowFile::operator=(const FlowFile& other) {
@@ -109,7 +103,7 @@ std::shared_ptr<ResourceClaim> FlowFile::getStashClaim(const std::string& key) {
 
 void FlowFile::setStashClaim(const std::string& key, const std::shared_ptr<ResourceClaim>& claim) {
   if (hasStashClaim(key)) {
-    logger_->log_warn("Stashing content of record %s to existing key %s; "
+    logger_->log_warn("Stashing content of record {} to existing key {}; "
                       "existing content will be overwritten",
                       getUUIDStr(), key.c_str());
   }
@@ -145,7 +139,7 @@ std::vector<utils::Identifier> &FlowFile::getlineageIdentifiers() {
   return lineage_Identifiers_;
 }
 
-bool FlowFile::getAttribute(const std::string& key, std::string& value) const {
+bool FlowFile::getAttribute(std::string_view key, std::string& value) const {
   const auto attribute = getAttribute(key);
   if (!attribute) {
     return false;
@@ -154,7 +148,7 @@ bool FlowFile::getAttribute(const std::string& key, std::string& value) const {
   return true;
 }
 
-std::optional<std::string> FlowFile::getAttribute(const std::string& key) const {
+std::optional<std::string> FlowFile::getAttribute(std::string_view key) const {
   auto it = attributes_.find(key);
   if (it != attributes_.end()) {
     return it->second;
@@ -171,7 +165,7 @@ uint64_t FlowFile::getOffset() const {
   return offset_;
 }
 
-bool FlowFile::removeAttribute(const std::string key) {
+bool FlowFile::removeAttribute(std::string_view key) {
   auto it = attributes_.find(key);
   if (it != attributes_.end()) {
     attributes_.erase(it);
@@ -181,7 +175,7 @@ bool FlowFile::removeAttribute(const std::string key) {
   }
 }
 
-bool FlowFile::updateAttribute(const std::string key, const std::string value) {
+bool FlowFile::updateAttribute(std::string_view key, const std::string& value) {
   auto it = attributes_.find(key);
   if (it != attributes_.end()) {
     it->second = value;
@@ -191,7 +185,7 @@ bool FlowFile::updateAttribute(const std::string key, const std::string value) {
   }
 }
 
-bool FlowFile::addAttribute(const std::string& key, const std::string& value) {
+bool FlowFile::addAttribute(std::string_view key, const std::string& value) {
   auto it = attributes_.find(key);
   if (it != attributes_.end()) {
     // attribute already there in the map
@@ -222,23 +216,10 @@ core::Connectable* FlowFile::getConnection() const {
   return connection_;
 }
 
-const std::string SpecialFlowAttribute::PATH = "path";
-const std::string SpecialFlowAttribute::ABSOLUTE_PATH = "absolute.path";
-const std::string SpecialFlowAttribute::FILENAME = "filename";
-const std::string SpecialFlowAttribute::UUID = "uuid";
-const std::string SpecialFlowAttribute::priority = "priority";
-const std::string SpecialFlowAttribute::MIME_TYPE = "mime.type";
-const std::string SpecialFlowAttribute::DISCARD_REASON = "discard.reason";
-const std::string SpecialFlowAttribute::ALTERNATE_IDENTIFIER = "alternate.identifier";
-const std::string SpecialFlowAttribute::FLOW_ID = "flow.id";
-
 } /* namespace core */
 
 namespace utils {
 template struct assert_container<core::FlowFile::AttributeMap>;
 } /* namespace utils */
 
-} /* namespace minifi */
-} /* namespace nifi */
-} /* namespace apache */
-} /* namespace org */
+}  // namespace org::apache::nifi::minifi

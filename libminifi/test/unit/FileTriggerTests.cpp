@@ -22,7 +22,6 @@
 #include "c2/triggers/FileUpdateTrigger.h"
 #include "../TestBase.h"
 #include "../Catch.h"
-#include "io/ClientSocket.h"
 #include "core/Processor.h"
 #include "core/ClassLoader.h"
 
@@ -32,7 +31,7 @@ TEST_CASE("Empty file", "[t1]") {
   trigger.initialize(configuration);
 
   REQUIRE(false == trigger.triggered());
-  REQUIRE(minifi::c2::Operation::HEARTBEAT == trigger.getAction().getOperation());
+  REQUIRE(minifi::c2::Operation::heartbeat == trigger.getAction().getOperation());
 }
 
 TEST_CASE("invalidfile file", "[t2]") {
@@ -42,7 +41,7 @@ TEST_CASE("invalidfile file", "[t2]") {
   trigger.initialize(configuration);
 
   REQUIRE(false == trigger.triggered());
-  REQUIRE(minifi::c2::Operation::HEARTBEAT == trigger.getAction().getOperation());
+  REQUIRE(minifi::c2::Operation::heartbeat == trigger.getAction().getOperation());
 }
 
 TEST_CASE("test valid  file no update", "[t3]") {
@@ -60,7 +59,7 @@ TEST_CASE("test valid  file no update", "[t3]") {
   trigger.initialize(configuration);
 
   REQUIRE(false == trigger.triggered());
-  REQUIRE(minifi::c2::Operation::HEARTBEAT == trigger.getAction().getOperation());
+  REQUIRE(minifi::c2::Operation::heartbeat == trigger.getAction().getOperation());
 }
 
 TEST_CASE("test valid file update", "[t4]") {
@@ -84,5 +83,5 @@ TEST_CASE("test valid file update", "[t4]") {
 
   REQUIRE(true == trigger.triggered());
 
-  REQUIRE(minifi::c2::Operation::UPDATE == trigger.getAction().getOperation());
+  REQUIRE(minifi::c2::Operation::update == trigger.getAction().getOperation());
 }

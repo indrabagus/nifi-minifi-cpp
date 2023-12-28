@@ -32,6 +32,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -68,7 +69,7 @@ class HTTPClient : public utils::BaseHTTPClient, public core::Connectable {
  public:
   HTTPClient();
 
-  HTTPClient(std::string name, const utils::Identifier& uuid);
+  HTTPClient(std::string_view name, const utils::Identifier& uuid);
 
   HTTPClient(const HTTPClient&) = delete;
   HTTPClient& operator=(const HTTPClient&) = delete;
@@ -77,7 +78,7 @@ class HTTPClient : public utils::BaseHTTPClient, public core::Connectable {
 
   ~HTTPClient() override;
 
-  static auto properties() { return std::array<core::Property, 0>{}; }
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 0>{};
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
 
@@ -89,7 +90,7 @@ class HTTPClient : public utils::BaseHTTPClient, public core::Connectable {
 
   void forceClose();
 
-  void initialize(std::string method, std::string url, std::shared_ptr<minifi::controllers::SSLContextService> ssl_context_service) override;
+  void initialize(utils::HttpRequestMethod method, std::string url, std::shared_ptr<minifi::controllers::SSLContextService> ssl_context_service) override;
 
   void setConnectionTimeout(std::chrono::milliseconds timeout) override;
 
@@ -118,8 +119,7 @@ class HTTPClient : public utils::BaseHTTPClient, public core::Connectable {
 
   const std::vector<char>& getResponseBody() override;
 
-  void set_request_method(std::string method) override;
-  std::string& getRequestMethod() { return method_; }
+  void set_request_method(utils::HttpRequestMethod method) override;
 
   void setPeerVerification(bool peer_verification) override;
   void setHostVerification(bool host_verification) override;
@@ -149,6 +149,9 @@ class HTTPClient : public utils::BaseHTTPClient, public core::Connectable {
 
   void setFollowRedirects(bool follow);
 
+  // Limit connection throughput in bytes per second
+  void setMaximumUploadSpeed(uint64_t max_bytes_per_second);
+  void setMaximumDownloadSpeed(uint64_t max_bytes_per_second);
 
   /**
    * Locates the header value ignoring case. This is different than returning a mapping
@@ -208,8 +211,10 @@ class HTTPClient : public utils::BaseHTTPClient, public core::Connectable {
  protected:
   static CURLcode configure_ssl_context(CURL* /*curl*/, void *ctx, void *param) {
 #ifdef OPENSSL_SUPPORT
-    auto* ssl_context_service = static_cast<minifi::controllers::SSLContextService*>(param);
-    if (!ssl_context_service->configure_ssl_context(static_cast<SSL_CTX*>(ctx))) {
+    gsl_Expects(ctx);
+    gsl_Expects(param);
+    auto& ssl_context_service = *static_cast<minifi::controllers::SSLContextService*>(param);
+    if (!ssl_context_service.configure_ssl_context(static_cast<SSL_CTX*>(ctx))) {
       return CURLE_FAILED_INIT;
     }
     return CURLE_OK;
@@ -226,7 +231,7 @@ class HTTPClient : public utils::BaseHTTPClient, public core::Connectable {
 
   std::shared_ptr<minifi::controllers::SSLContextService> ssl_context_service_;
   std::string url_;
-  std::string method_;
+  std::optional<utils::HttpRequestMethod> method_;
 
   std::chrono::milliseconds connect_timeout_{std::chrono::seconds(30)};
   std::chrono::milliseconds read_timeout_{std::chrono::seconds(30)};

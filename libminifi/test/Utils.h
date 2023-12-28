@@ -27,7 +27,7 @@
 #include "net/Ssl.h"
 #include "utils/IntegrationTestUtils.h"
 
-using namespace std::chrono_literals;
+using namespace std::literals::chrono_literals;
 
 #undef GetObject  // windows.h #defines GetObject = GetObjectA or GetObjectW, which conflicts with rapidjson
 #include "Connection.h"
@@ -60,7 +60,7 @@ void matchJSON(const rapidjson::Value& actual, const rapidjson::Value& expected)
   } else if (expected.IsArray()) {
     REQUIRE(actual.IsArray());
     REQUIRE(actual.Size() == expected.Size());
-    for (size_t idx{0}; idx < expected.Size(); ++idx) {
+    for (rapidjson::SizeType idx{0}; idx < expected.Size(); ++idx) {
       matchJSON(actual[idx], expected[idx]);
     }
   } else {
@@ -81,7 +81,7 @@ void verifyJSON(const std::string& actual_str, const std::string& expected_str, 
 }
 
 template<typename T>
-class ExceptionSubStringMatcher : public Catch::MatcherBase<T> {
+class ExceptionSubStringMatcher : public Catch::Matchers::MatcherBase<T> {
  public:
   explicit ExceptionSubStringMatcher(std::vector<std::string> exception_substr) :
       possible_exception_substrs_(std::move(exception_substr)) {}
@@ -141,8 +141,8 @@ std::error_code sendUdpDatagram(const asio::const_buffer content, const asio::ip
   return err;
 }
 
-std::error_code sendUdpDatagram(const gsl::span<std::byte const> content, const asio::ip::udp::endpoint& remote_endpoint) {
-  return sendUdpDatagram(asio::const_buffer(content.begin(), content.size()), remote_endpoint);
+std::error_code sendUdpDatagram(const std::span<std::byte const> content, const asio::ip::udp::endpoint& remote_endpoint) {
+  return sendUdpDatagram(asio::const_buffer(content.data(), content.size()), remote_endpoint);
 }
 
 std::error_code sendUdpDatagram(const std::string_view content, const asio::ip::udp::endpoint& remote_endpoint) {
@@ -175,7 +175,7 @@ std::error_code sendMessagesViaSSL(const std::vector<std::string_view>& contents
     const asio::ip::tcp::endpoint& remote_endpoint,
     const std::filesystem::path& ca_cert_path,
     const std::optional<minifi::utils::net::SslData>& ssl_data = std::nullopt,
-    asio::ssl::context::method method = asio::ssl::context::tlsv12_client) {
+    asio::ssl::context::method method = asio::ssl::context::tls_client) {
   asio::ssl::context ctx(method);
   ctx.load_verify_file(ca_cert_path.string());
   if (ssl_data) {
@@ -186,6 +186,11 @@ std::error_code sendMessagesViaSSL(const std::vector<std::string_view>& contents
   }
   asio::io_context io_context;
   asio::ssl::stream<asio::ip::tcp::socket> socket(io_context, ctx);
+  auto shutdown_socket = gsl::finally([&] {
+    asio::error_code ec;
+    socket.lowest_layer().cancel(ec);
+    socket.shutdown(ec);
+  });
   asio::error_code err;
   socket.lowest_layer().connect(remote_endpoint, err);
   if (err) {
@@ -221,7 +226,7 @@ inline std::error_code hide_file(const std::filesystem::path& file_name) {
 template<typename T>
 concept NetworkingProcessor = std::derived_from<T, minifi::core::Processor>
     && requires(T x) {
-      {T::Port} -> std::convertible_to<core::Property>;
+      {T::Port} -> std::convertible_to<core::PropertyReference>;
       {x.getPort()} -> std::convertible_to<uint16_t>;
     };  // NOLINT(readability/braces)
 

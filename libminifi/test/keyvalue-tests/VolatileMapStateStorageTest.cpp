@@ -21,6 +21,7 @@
 #include <string>
 #include "../TestBase.h"
 #include "../Catch.h"
+#include "catch2/catch_session.hpp"
 #include "controllers/keyvalue/AutoPersistor.h"
 #include "controllers/keyvalue/KeyValueStateStorage.h"
 #include "core/ProcessGroup.h"
@@ -37,7 +38,7 @@ int main(int argc, char* argv[]) {
   Catch::Session session;
 
   auto cli = session.cli()
-      | Catch::clara::Opt{config_yaml, "config-yaml"}
+      | Catch::Clara::Opt{config_yaml, "config-yaml"}
           ["--config-yaml"]
           ("path to the config.yaml containing the VolatileMapStateStorageTest controller service configuration");
   session.cli(cli);
@@ -77,6 +78,11 @@ class VolatileMapStateStorageTestFixture {
     REQUIRE(controller != nullptr);
   }
 
+  VolatileMapStateStorageTestFixture(VolatileMapStateStorageTestFixture&&) = delete;
+  VolatileMapStateStorageTestFixture(const VolatileMapStateStorageTestFixture&) = delete;
+  VolatileMapStateStorageTestFixture& operator=(VolatileMapStateStorageTestFixture&&) = delete;
+  VolatileMapStateStorageTestFixture& operator=(const VolatileMapStateStorageTestFixture&) = delete;
+
   virtual ~VolatileMapStateStorageTestFixture() {
     std::filesystem::current_path(minifi::utils::file::get_executable_dir());
     LogTestController::getInstance().reset();
@@ -87,10 +93,9 @@ class VolatileMapStateStorageTestFixture {
   std::shared_ptr<core::Repository> test_repo = std::make_shared<TestRepository>();
   std::shared_ptr<core::Repository> test_flow_repo = std::make_shared<TestFlowRepository>();
   std::shared_ptr<core::ContentRepository> content_repo = std::make_shared<core::repository::VolatileContentRepository>();
-  std::shared_ptr<minifi::io::StreamFactory> stream_factory = minifi::io::StreamFactory::getInstance(configuration);
 
   std::unique_ptr<core::YamlConfiguration> yaml_config = std::make_unique<core::YamlConfiguration>(
-      core::ConfigurationContext{test_repo, content_repo, stream_factory, configuration, config_yaml});
+      core::ConfigurationContext{test_repo, content_repo, configuration, config_yaml});
   std::unique_ptr<core::ProcessGroup> process_group;
 
   std::shared_ptr<core::controller::ControllerServiceNode> key_value_store_service_node;

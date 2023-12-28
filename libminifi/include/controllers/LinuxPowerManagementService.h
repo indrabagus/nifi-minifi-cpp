@@ -26,6 +26,9 @@
 #include "io/validation.h"
 #include "core/controller/ControllerService.h"
 #include "core/logging/LoggerFactory.h"
+#include "core/PropertyDefinition.h"
+#include "core/PropertyDefinitionBuilder.h"
+#include "core/PropertyType.h"
 #include "ThreadManagementService.h"
 
 namespace org::apache::nifi::minifi::controllers {
@@ -36,8 +39,8 @@ namespace org::apache::nifi::minifi::controllers {
  */
 class LinuxPowerManagerService : public ThreadManagementService {
  public:
-  explicit LinuxPowerManagerService(std::string name, const utils::Identifier &uuid = {})
-      : ThreadManagementService(std::move(name), uuid),
+  explicit LinuxPowerManagerService(std::string_view name, const utils::Identifier &uuid = {})
+      : ThreadManagementService(name, uuid),
         enabled_(false),
         battery_level_(0),
         wait_period_(0),
@@ -46,8 +49,8 @@ class LinuxPowerManagerService : public ThreadManagementService {
         low_battery_trigger_(0) {
   }
 
-  explicit LinuxPowerManagerService(std::string name, const std::shared_ptr<Configure> &configuration)
-      : LinuxPowerManagerService(std::move(name)) {
+  explicit LinuxPowerManagerService(std::string_view name, const std::shared_ptr<Configure> &configuration)
+      : LinuxPowerManagerService(name) {
     setConfiguration(configuration);
     initialize();
   }
@@ -55,22 +58,48 @@ class LinuxPowerManagerService : public ThreadManagementService {
   MINIFIAPI static constexpr const char* Description = "Linux power management service that enables control of power usage in the agent through Linux power management information. "
       "Use name \"ThreadPoolManager\" to throttle battery consumption";
 
-  MINIFIAPI static const core::Property BatteryCapacityPath;
-  MINIFIAPI static const core::Property BatteryStatusPath;
-  MINIFIAPI static const core::Property BatteryStatusDischargeKeyword;
-  MINIFIAPI static const core::Property TriggerThreshold;
-  MINIFIAPI static const core::Property LowBatteryThreshold;
-  MINIFIAPI static const core::Property WaitPeriod;
-  static auto properties() {
-    return std::array{
+  MINIFIAPI static constexpr auto BatteryCapacityPath = core::PropertyDefinitionBuilder<>::createProperty("Battery Capacity Path")
+      .withDescription("Path to the battery level")
+      .isRequired(true)
+      .withDefaultValue("/sys/class/power_supply/BAT0/capacity")
+      .build();
+  MINIFIAPI static constexpr auto BatteryStatusPath = core::PropertyDefinitionBuilder<>::createProperty("Battery Status Path")
+      .withDescription("Path to the battery status ( Discharging/Battery )")
+      .isRequired(true)
+      .withDefaultValue("/sys/class/power_supply/BAT0/status")
+      .build();
+  MINIFIAPI static constexpr auto BatteryStatusDischargeKeyword = core::PropertyDefinitionBuilder<>::createProperty("Battery Status Discharge")
+      .withDescription("Keyword to identify if battery is discharging")
+      .isRequired(true)
+      .withDefaultValue("Discharging")
+      .build();
+  MINIFIAPI static constexpr auto TriggerThreshold = core::PropertyDefinitionBuilder<>::createProperty("Trigger Threshold")
+      .withDescription("Battery threshold before which we consider a slow reduction. Should be a number from 1-100")
+      .isRequired(true)
+      .withPropertyType(core::StandardPropertyTypes::INTEGER_TYPE)
+      .withDefaultValue("75")
+      .build();
+  MINIFIAPI static constexpr auto LowBatteryThreshold = core::PropertyDefinitionBuilder<>::createProperty("Low Battery Threshold")
+      .withDescription("Battery threshold before which we will aggressively reduce. Should be a number from 1-100")
+      .isRequired(true)
+      .withPropertyType(core::StandardPropertyTypes::INTEGER_TYPE)
+      .withDefaultValue("50")
+      .build();
+  MINIFIAPI static constexpr auto WaitPeriod = core::PropertyDefinitionBuilder<>::createProperty("Wait Period")
+      .withDescription("Decay between checking threshold and determining if a reduction is needed")
+      .isRequired(true)
+      .withPropertyType(core::StandardPropertyTypes::TIME_PERIOD_TYPE)
+      .withDefaultValue("100 ms")
+      .build();
+  MINIFIAPI static constexpr auto Properties = std::array<core::PropertyReference, 6>{
       BatteryCapacityPath,
       BatteryStatusPath,
       BatteryStatusDischargeKeyword,
       TriggerThreshold,
       LowBatteryThreshold,
       WaitPeriod
-    };
-  }
+  };
+
 
   MINIFIAPI static constexpr bool SupportsDynamicProperties = false;
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_CONTROLLER_SERVICES

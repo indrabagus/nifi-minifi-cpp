@@ -23,6 +23,8 @@
 #include "core/Core.h"
 #include "core/Processor.h"
 #include "core/ProcessSession.h"
+#include "core/PropertyDefinition.h"
+#include "core/PropertyDefinitionBuilder.h"
 #include "utils/Enum.h"
 
 #include "services/DatabaseService.h"
@@ -31,12 +33,16 @@ namespace org::apache::nifi::minifi::processors {
 
 class SQLProcessor: public core::Processor {
  public:
-  EXTENSIONAPI static const core::Property DBControllerService;
-  static auto properties() { return std::array{DBControllerService}; }
+  EXTENSIONAPI static constexpr auto DBControllerService = core::PropertyDefinitionBuilder<>::createProperty("DB Controller Service")
+      .withDescription("Database Controller Service.")
+      .isRequired(true)
+      .supportsExpressionLanguage(true)
+      .build();
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 1>{DBControllerService};
 
  protected:
-  SQLProcessor(std::string name, const utils::Identifier& uuid, std::shared_ptr<core::logging::Logger> logger)
-    : core::Processor(std::move(name), uuid), logger_(std::move(logger)) {
+  SQLProcessor(std::string_view name, const utils::Identifier& uuid, std::shared_ptr<core::logging::Logger> logger)
+    : core::Processor(name, uuid), logger_(std::move(logger)) {
   }
 
   static std::vector<std::string> collectArguments(const std::shared_ptr<core::FlowFile>& flow_file);
@@ -44,9 +50,8 @@ class SQLProcessor: public core::Processor {
   virtual void processOnSchedule(core::ProcessContext& context) = 0;
   virtual void processOnTrigger(core::ProcessContext& context, core::ProcessSession& session) = 0;
 
-  void onSchedule(const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSessionFactory>& sessionFactory) override;
-
-  void onTrigger(const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSession>& session) override;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& session_factory) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
 
   void notifyStop() override {
     connection_.reset();

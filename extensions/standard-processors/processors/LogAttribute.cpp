@@ -31,58 +31,27 @@
 #include "utils/StringUtils.h"
 #include "core/ProcessContext.h"
 #include "core/ProcessSession.h"
-#include "core/PropertyBuilder.h"
 #include "core/Resource.h"
 
 namespace org::apache::nifi::minifi::processors {
 
-const core::Property LogAttribute::LogLevel(core::PropertyBuilder::createProperty("Log Level")->withDescription("The Log Level to use when logging the Attributes")->withAllowableValues<std::string>(
-    {"info", "trace", "error", "warn", "debug" })->build());
-
-const core::Property LogAttribute::AttributesToLog(
-    core::PropertyBuilder::createProperty("Attributes to Log")->withDescription("A comma-separated list of Attributes to Log. If not specified, all attributes will be logged.")->build());
-
-const core::Property LogAttribute::FlowFilesToLog(
-    core::PropertyBuilder::createProperty("FlowFiles To Log")->withDescription(
-        "Number of flow files to log. If set to zero all flow files will be logged. Please note that this may block other threads from running if not used judiciously.")->withDefaultValue<uint64_t>(1)
-        ->build());
-
-const core::Property LogAttribute::AttributesToIgnore(
-    core::PropertyBuilder::createProperty("Attributes to Ignore")->withDescription("A comma-separated list of Attributes to ignore. If not specified, no attributes will be ignored.")->build());
-
-const core::Property LogAttribute::LogPayload(core::PropertyBuilder::createProperty("Log Payload")->withDescription("If true, the FlowFile's payload will be logged, in addition to its attributes."
-                                                                                                              "otherwise, just the Attributes will be logged")->withDefaultValue<bool>(false)->build());
-
-const core::Property LogAttribute::HexencodePayload(
-    core::PropertyBuilder::createProperty("Hexencode Payload")->withDescription(
-        "If true, the FlowFile's payload will be logged in a hexencoded format")->withDefaultValue<bool>(false)->build());
-
-const core::Property LogAttribute::MaxPayloadLineLength(
-    core::PropertyBuilder::createProperty("Maximum Payload Line Length")->withDescription(
-        "The logged payload will be broken into lines this long. 0 means no newlines will be added.")->withDefaultValue<uint32_t>(0U)->build());
-
-const core::Property LogAttribute::LogPrefix(
-    core::PropertyBuilder::createProperty("Log Prefix")->withDescription("Log prefix appended to the log lines. It helps to distinguish the output of multiple LogAttribute processors.")->build());
-
-const core::Relationship LogAttribute::Success("success", "success operational on the flow record");
-
 void LogAttribute::initialize() {
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
-void LogAttribute::onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory>& /*factory*/) {
-  context->getProperty(FlowFilesToLog.getName(), flowfiles_to_log_);
-  logger_->log_debug("FlowFiles To Log: %llu", flowfiles_to_log_);
+void LogAttribute::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory&) {
+  context.getProperty(FlowFilesToLog, flowfiles_to_log_);
+  logger_->log_debug("FlowFiles To Log: {}", flowfiles_to_log_);
 
-  context->getProperty(HexencodePayload.getName(), hexencode_);
+  context.getProperty(HexencodePayload, hexencode_);
 
-  context->getProperty(MaxPayloadLineLength.getName(), max_line_length_);
-  logger_->log_debug("Maximum Payload Line Length: %u", max_line_length_);
+  context.getProperty(MaxPayloadLineLength, max_line_length_);
+  logger_->log_debug("Maximum Payload Line Length: {}", max_line_length_);
 }
 // OnTrigger method, implemented by NiFi LogAttribute
-void LogAttribute::onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) {
-  logger_->log_trace("enter log attribute, attempting to retrieve %u flow files", flowfiles_to_log_);
+void LogAttribute::onTrigger(core::ProcessContext& context, core::ProcessSession& session) {
+  logger_->log_trace("enter log attribute, attempting to retrieve {} flow files", flowfiles_to_log_);
   std::string dashLine = "--------------------------------------------------";
   LogAttrLevel level = LogAttrLevelInfo;
   bool logPayload = false;
@@ -90,21 +59,21 @@ void LogAttribute::onTrigger(const std::shared_ptr<core::ProcessContext> &contex
   uint64_t i = 0;
   const auto max = flowfiles_to_log_ == 0 ? UINT64_MAX : flowfiles_to_log_;
   for (; i < max; ++i) {
-    std::shared_ptr<core::FlowFile> flow = session->get();
+    std::shared_ptr<core::FlowFile> flow = session.get();
 
     if (!flow) {
       break;
     }
 
     std::string value;
-    if (context->getProperty(LogLevel.getName(), value)) {
+    if (context.getProperty(LogLevel, value)) {
       logLevelStringToEnum(value, level);
     }
-    if (context->getProperty(LogPrefix.getName(), value)) {
+    if (context.getProperty(LogPrefix, value)) {
       dashLine = "-----" + value + "-----";
     }
 
-    context->getProperty(LogPayload.getName(), logPayload);
+    context.getProperty(LogPayload, logPayload);
 
     std::ostringstream message;
     message << "Logging for flow file " << "\n";
@@ -127,7 +96,7 @@ void LogAttribute::onTrigger(const std::shared_ptr<core::ProcessContext> &contex
     }
     if (logPayload && flow->getSize() <= 1024 * 1024) {
       message << "\n" << "Payload:" << "\n";
-      const auto read_result = session->readBuffer(flow);
+      const auto read_result = session.readBuffer(flow);
 
       std::string printable_payload;
       if (hexencode_) {
@@ -151,26 +120,26 @@ void LogAttribute::onTrigger(const std::shared_ptr<core::ProcessContext> &contex
 
     switch (level) {
       case LogAttrLevelInfo:
-        core::logging::LOG_INFO(logger_) << output;
+        logger_->log_info("{}", output);
         break;
       case LogAttrLevelDebug:
-        core::logging::LOG_DEBUG(logger_) << output;
+        logger_->log_debug("{}", output);
         break;
       case LogAttrLevelError:
-        core::logging::LOG_ERROR(logger_) << output;
+        logger_->log_error("{}", output);
         break;
       case LogAttrLevelTrace:
-        core::logging::LOG_TRACE(logger_) << output;
+        logger_->log_trace("{}", output);
         break;
       case LogAttrLevelWarn:
-        core::logging::LOG_WARN(logger_) << output;
+        logger_->log_warn("{}", output);
         break;
       default:
         break;
     }
-    session->transfer(flow, Success);
+    session.transfer(flow, Success);
   }
-  logger_->log_debug("Logged %d flow files", i);
+  logger_->log_debug("Logged {} flow files", i);
 }
 
 REGISTER_RESOURCE(LogAttribute, Processor);

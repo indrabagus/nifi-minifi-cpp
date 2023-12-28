@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <set>
 #include <unordered_set>
@@ -29,6 +30,7 @@
 #include <condition_variable>
 #include "core/logging/Logger.h"
 #include "Relationship.h"
+#include "RelationshipDefinition.h"
 #include "Scheduling.h"
 #include "core/state/FlowIdentifier.h"
 #include "utils/gsl.h"
@@ -44,9 +46,9 @@ class FlowFile;
  */
 class Connectable : public CoreComponent {
  public:
-  explicit Connectable(std::string name);
+  explicit Connectable(std::string_view name);
 
-  explicit Connectable(std::string name, const utils::Identifier &uuid);
+  explicit Connectable(std::string_view name, const utils::Identifier &uuid);
 
   Connectable(const Connectable &other) = delete;
   Connectable(Connectable &&other) = delete;
@@ -54,13 +56,13 @@ class Connectable : public CoreComponent {
   Connectable& operator=(const Connectable &other) = delete;
   Connectable& operator=(Connectable&& other) = delete;
 
-  void setSupportedRelationships(gsl::span<const core::Relationship> relationships);
+  void setSupportedRelationships(std::span<const core::RelationshipDefinition> relationships);
 
   bool isSupportedRelationship(const Relationship &relationship);
 
   std::vector<Relationship> getSupportedRelationships() const;
 
-  void setAutoTerminatedRelationships(gsl::span<const core::Relationship> relationships);
+  void setAutoTerminatedRelationships(std::span<const core::Relationship> relationships);
 
   bool isAutoTerminated(const Relationship &relationship);
 

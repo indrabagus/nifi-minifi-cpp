@@ -61,6 +61,9 @@ install_bison() {
 bootstrap_cmake(){
     brew install cmake
 }
+bootstrap_compiler() {
+    :
+}
 build_deps(){
 
     COMMAND="brew install cmake"
@@ -88,8 +91,6 @@ build_deps(){
                         INSTALLED+=("flex")
                     elif [ "$FOUND_VALUE" = "python" ]; then
                         INSTALLED+=("python")
-                    elif [ "$FOUND_VALUE" = "boost" ]; then
-                        INSTALLED+=("boost")
                     elif [ "$FOUND_VALUE" = "lua" ]; then
                         INSTALLED+=("lua")
                     elif [ "$FOUND_VALUE" = "jnibuild" ]; then
@@ -106,6 +107,8 @@ build_deps(){
                         INSTALLED+=("bzip2")
                     elif [ "$FOUND_VALUE" = "libssh2" ]; then
                         INSTALLED+=("libssh2")
+                    elif [ "$FOUND_VALUE" = "opensslbuild" ]; then
+                        INSTALLED+=("perl")
                     fi
                 fi
             done

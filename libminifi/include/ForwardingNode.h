@@ -28,21 +28,21 @@ namespace org::apache::nifi::minifi {
 
 class ForwardingNode : public core::Processor {
  public:
-  ForwardingNode(std::string name, const utils::Identifier& uuid, std::shared_ptr<core::logging::Logger> logger) : Processor(std::move(name), uuid), logger_(std::move(logger)) {
+  ForwardingNode(std::string_view name, const utils::Identifier& uuid, std::shared_ptr<core::logging::Logger> logger) : Processor(name, uuid), logger_(std::move(logger)) {
     strategy_ = core::SchedulingStrategy::EVENT_DRIVEN;
   }
-  ForwardingNode(std::string name, std::shared_ptr<core::logging::Logger> logger) : Processor(std::move(name)), logger_(std::move(logger)) {}
+  ForwardingNode(std::string_view name, std::shared_ptr<core::logging::Logger> logger) : Processor(name), logger_(std::move(logger)) {}
 
-  static auto properties() { return std::array<core::Property, 0>{}; }
-  MINIFIAPI static const core::Relationship Success;
-  static auto relationships() { return std::array{Success}; }
+  MINIFIAPI static constexpr auto Properties = std::array<core::PropertyReference, 0>{};
+  MINIFIAPI static constexpr auto Success = core::RelationshipDefinition{"success", "FlowFiles are routed to success relationship"};
+  MINIFIAPI static constexpr auto Relationships = std::array{Success};
   MINIFIAPI static constexpr bool SupportsDynamicProperties = false;
   MINIFIAPI static constexpr bool SupportsDynamicRelationships = false;
   MINIFIAPI static constexpr bool IsSingleThreaded = false;
 
   void initialize() override;
 
-  void onTrigger(const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSession>& session) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
 
  private:
   std::shared_ptr<core::logging::Logger> logger_;

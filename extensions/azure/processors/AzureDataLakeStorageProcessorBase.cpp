@@ -25,10 +25,9 @@
 
 namespace org::apache::nifi::minifi::azure::processors {
 
-void AzureDataLakeStorageProcessorBase::onSchedule(const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSessionFactory>& /*sessionFactory*/) {
-  gsl_Expects(context);
+void AzureDataLakeStorageProcessorBase::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory&) {
   std::optional<storage::AzureStorageCredentials> credentials;
-  std::tie(std::ignore, credentials) = getCredentialsFromControllerService(*context);
+  std::tie(std::ignore, credentials) = getCredentialsFromControllerService(context);
   if (!credentials) {
     throw Exception(PROCESS_SCHEDULE_EXCEPTION, "Azure Storage Credentials Service property missing or invalid");
   }
@@ -45,7 +44,7 @@ bool AzureDataLakeStorageProcessorBase::setCommonParameters(
   params.credentials = credentials_;
 
   if (!context.getProperty(FilesystemName, params.file_system_name, flow_file) || params.file_system_name.empty()) {
-    logger_->log_error("Filesystem Name '%s' is invalid or empty!", params.file_system_name);
+    logger_->log_error("Filesystem Name '{}' is invalid or empty!", params.file_system_name);
     return false;
   }
 

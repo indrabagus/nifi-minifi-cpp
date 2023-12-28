@@ -51,10 +51,10 @@ FlowController::FlowController(std::shared_ptr<core::Repository> provenance_repo
                                std::shared_ptr<Configure> configure, std::shared_ptr<core::FlowConfiguration> flow_configuration,
                                std::shared_ptr<core::ContentRepository> content_repo, std::unique_ptr<state::MetricsPublisherStore> metrics_publisher_store,
                                std::shared_ptr<utils::file::FileSystem> filesystem, std::function<void()> request_restart)
-    : core::controller::ForwardingControllerServiceProvider(core::getClassName<FlowController>()),
+    : core::controller::ForwardingControllerServiceProvider(core::className<FlowController>()),
       running_(false),
       initialized_(false),
-      thread_pool_(5, false, nullptr, "Flowcontroller threadpool"),
+      thread_pool_(5, nullptr, "Flowcontroller threadpool"),
       configuration_(std::move(configure)),
       provenance_repo_(std::move(provenance_repo)),
       flow_file_repo_(std::move(flow_file_repo)),
@@ -73,7 +73,6 @@ FlowController::FlowController(std::shared_ptr<core::Repository> provenance_repo
   if (flow_configuration_) {
     controller_service_provider_impl_ = flow_configuration_->getControllerServiceProvider();
   }
-  protocol_ = std::make_unique<FlowControlProtocol>(this, configuration_);
   if (metrics_publisher_store_) {
     metrics_publisher_store_->initialize(this, this);
   }
@@ -101,7 +100,6 @@ FlowController::~FlowController() {
   }
   stop();
   // TODO(adebreceni): are these here on purpose, so they are destroyed first?
-  protocol_ = nullptr;
   flow_file_repo_ = nullptr;
   provenance_repo_ = nullptr;
   logger_->log_trace("Destroying FlowController");
@@ -112,10 +110,10 @@ bool FlowController::applyConfiguration(const std::string &source, const std::st
   try {
     newRoot = updateFromPayload(source, configurePayload, flow_id);
   } catch (const std::exception& ex) {
-    logger_->log_error("Invalid configuration payload, type: %s, what: %s", typeid(ex).name(), ex.what());
+    logger_->log_error("Invalid configuration payload, type: {}, what: {}", typeid(ex).name(), ex.what());
     return false;
   } catch (...) {
-    logger_->log_error("Invalid configuration payload, type: %s", getCurrentExceptionTypeName());
+    logger_->log_error("Invalid configuration payload, type: {}", getCurrentExceptionTypeName());
     return false;
   }
 
@@ -125,7 +123,7 @@ bool FlowController::applyConfiguration(const std::string &source, const std::st
   if (!isRunning())
     return false;
 
-  logger_->log_info("Starting to reload Flow Controller with flow control name %s, version %d", newRoot->getName(), newRoot->getVersion());
+  logger_->log_info("Starting to reload Flow Controller with flow control name {}, version {}", newRoot->getName(), newRoot->getVersion());
 
   bool started = false;
   {
@@ -139,9 +137,9 @@ bool FlowController::applyConfiguration(const std::string &source, const std::st
       load(true);
       started = start() == 0;
     } catch (const std::exception& ex) {
-      logger_->log_error("Caught exception while starting flow, type %s, what: %s", typeid(ex).name(), ex.what());
+      logger_->log_error("Caught exception while starting flow, type {}, what: {}", typeid(ex).name(), ex.what());
     } catch (...) {
-      logger_->log_error("Caught unknown exception while starting flow, type %s", getCurrentExceptionTypeName());
+      logger_->log_error("Caught unknown exception while starting flow, type {}", getCurrentExceptionTypeName());
     }
     if (!started) {
       logger_->log_error("Failed to start new flow, restarting previous flow");
@@ -156,8 +154,8 @@ bool FlowController::applyConfiguration(const std::string &source, const std::st
   if (started) {
     auto flowVersion = flow_configuration_->getFlowVersion();
     if (flowVersion) {
-      logger_->log_debug("Setting flow id to %s", flowVersion->getFlowId());
-      logger_->log_debug("Setting flow url to %s", flowVersion->getFlowIdentifier()->getRegistryUrl());
+      logger_->log_debug("Setting flow id to {}", flowVersion->getFlowId());
+      logger_->log_debug("Setting flow url to {}", flowVersion->getFlowIdentifier()->getRegistryUrl());
       configuration_->set(Configure::nifi_c2_flow_id, flowVersion->getFlowId());
       configuration_->set(Configure::nifi_c2_flow_url, flowVersion->getFlowIdentifier()->getRegistryUrl());
     } else {
@@ -346,7 +344,6 @@ int16_t FlowController::start() {
 
     core::logging::LoggerConfiguration::getConfiguration().initializeAlertSinks(this, configuration_);
     running_ = true;
-    protocol_->start();
     content_repo_->start();
     provenance_repo_->start();
     flow_file_repo_->start();
@@ -418,7 +415,7 @@ void FlowController::executeOnComponent(const std::string &id_or_name, std::func
   if (auto* component = getComponent(id_or_name); component != nullptr) {
     func(*component);
   } else {
-    logger_->log_error("Could not get execute requested callback for component \"%s\", because component was not found", id_or_name);
+    logger_->log_error("Could not get execute requested callback for component \"{}\", because component was not found", id_or_name);
   }
 }
 
@@ -476,8 +473,10 @@ std::vector<BackTrace> FlowController::getTraces() {
 
 std::map<std::string, std::unique_ptr<io::InputStream>> FlowController::getDebugInfo() {
   std::map<std::string, std::unique_ptr<io::InputStream>> debug_info;
-  if (auto logs = core::logging::LoggerConfiguration::getCompressedLog(true)) {
-    debug_info["minifi.log.gz"] = std::move(logs);
+  auto logs = core::logging::LoggerConfiguration::getCompressedLogs();
+  for (size_t i = 0; i < logs.size(); ++i) {
+    std::string index_str = i == logs.size() - 1 ? "" : "." + std::to_string(logs.size() - 1 - i);
+    debug_info["minifi.log" + index_str + ".gz"] = std::move(logs[i]);
   }
   if (auto opt_flow_path = flow_configuration_->getConfigurationPath()) {
     debug_info["config.yml"] = std::make_unique<io::FileStream>(opt_flow_path.value(), 0, false);

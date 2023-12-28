@@ -29,19 +29,10 @@ FOREACH(testfile ${EXECUTESCRIPT_PYTHON_TESTS})
     add_executable("${testfilename}" "${testfile}")
     target_include_directories(${testfilename} PRIVATE BEFORE "${CMAKE_SOURCE_DIR}/extensions/python")
     target_include_directories(${testfilename} PRIVATE BEFORE "${CMAKE_SOURCE_DIR}/libminifi/test/")
-    target_link_libraries(${testfilename} minifi-python-script-extension minifi-script-extension ${CATCH_MAIN_LIB} Python::Python)
+    target_link_libraries(${testfilename} minifi-python-script-extension minifi-script-extension Catch2WithMain Python::Python)
     createTests("${testfilename}")
     MATH(EXPR EXTENSIONS_TEST_COUNT "${EXTENSIONS_TEST_COUNT}+1")
     add_test(NAME "${testfilename}" COMMAND "${testfilename}" WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-
-    if(EXTENSIONS_TEST_COUNT EQUAL 1)
-        add_custom_command(
-                TARGET "${testfilename}"
-                POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_SOURCE_DIR}/extensions/python/tests/test_python_scripts"
-                "$<TARGET_FILE_DIR:${testfilename}>/test_python_scripts")
-    endif()
 ENDFOREACH()
 
 FOREACH(testfile ${EXECUTEPYTHONPROCESSOR_UNIT_TESTS})
@@ -55,22 +46,12 @@ FOREACH(testfile ${EXECUTEPYTHONPROCESSOR_UNIT_TESTS})
     target_include_directories(${testfilename} PRIVATE BEFORE "${CMAKE_SOURCE_DIR}/extensions/standard-processors")
     target_include_directories(${testfilename} PRIVATE BEFORE "${CMAKE_SOURCE_DIR}/libminifi/test/")
 
-    target_link_libraries(${testfilename} minifi-python-script-extension)
-    target_link_libraries(${testfilename} minifi-standard-processors)
-    target_link_libraries(${testfilename} ${CATCH_MAIN_LIB})
+    target_link_libraries(${testfilename} minifi-python-script-extension minifi-script-extension minifi-standard-processors Catch2WithMain Python::Python)
 
     createTests("${testfilename}")
     MATH(EXPR EXTENSIONS_TEST_COUNT "${EXTENSIONS_TEST_COUNT}+1")
     add_test(NAME "${testfilename}" COMMAND "${testfilename}"  WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-
-    if(EXTENSIONS_TEST_COUNT EQUAL 1)
-        add_custom_command(
-                TARGET "${testfilename}"
-                POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_SOURCE_DIR}/extensions/script/tests/test_python_scripts"
-                "$<TARGET_FILE_DIR:${testfilename}>/test_python_scripts")
-    endif()
 ENDFOREACH()
 
+copyTestResources(${CMAKE_CURRENT_SOURCE_DIR}/test_python_scripts/ ${CMAKE_BINARY_DIR}/bin/resources/test_python_scripts/)
 message("-- Finished building ${EXTENSIONS_TEST_COUNT} tests for minifi-python-script-extension...")

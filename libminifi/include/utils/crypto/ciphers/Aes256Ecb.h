@@ -50,18 +50,16 @@ class Aes256EcbCipher {
   static constexpr size_t KEY_SIZE = 32;
 
   explicit Aes256EcbCipher(Bytes encryption_key);
-  void encrypt(gsl::span<unsigned char /*, BLOCK_SIZE*/> data) const;
-  void decrypt(gsl::span<unsigned char /*, BLOCK_SIZE*/> data) const;
+  void encrypt(std::span<unsigned char, BLOCK_SIZE> data) const;
+  void decrypt(std::span<unsigned char, BLOCK_SIZE> data) const;
 
   static Bytes generateKey();
 
   bool operator==(const Aes256EcbCipher& other) const;
 
  private:
-  template<typename ...Args>
-  static void handleError(const char* format, Args&& ...args) {
-    std::string error_msg = core::logging::format_string(-1, format, core::logging::conditional_stringify(std::forward<Args>(args))...);
-    logger_->log_error("%s", error_msg);
+  static void handleError(const std::string& error_msg) {
+    logger_->log_error("{}", error_msg);
     throw CipherError(error_msg);
   }
 

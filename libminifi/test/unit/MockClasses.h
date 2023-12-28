@@ -24,6 +24,9 @@
 #include "core/Processor.h"
 #include "core/ProcessContext.h"
 #include "core/ProcessSession.h"
+#include "core/PropertyDefinition.h"
+#include "core/PropertyDefinitionBuilder.h"
+#include "core/RelationshipDefinition.h"
 
 namespace minifi = org::apache::nifi::minifi;
 
@@ -32,19 +35,19 @@ std::mutex control_mutex;
 
 class MockControllerService : public minifi::core::controller::ControllerService {
  public:
-  explicit MockControllerService(std::string name, const minifi::utils::Identifier &uuid)
-      : ControllerService(std::move(name), uuid) {
+  explicit MockControllerService(std::string_view name, const minifi::utils::Identifier &uuid)
+      : ControllerService(name, uuid) {
   }
 
-  explicit MockControllerService(std::string name)
-      : ControllerService(std::move(name)) {
+  explicit MockControllerService(std::string_view name)
+      : ControllerService(name) {
   }
   MockControllerService() = default;
 
   ~MockControllerService() override = default;
 
   static constexpr const char* Description = "An example service";
-  static auto properties() { return std::array<minifi::core::Property, 0>{}; }
+  static constexpr auto Properties = std::array<minifi::core::PropertyReference, 0>{};
   static constexpr bool SupportsDynamicProperties = false;
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_CONTROLLER_SERVICES
 
@@ -78,22 +81,22 @@ class MockControllerService : public minifi::core::controller::ControllerService
 
 class MockProcessor : public minifi::core::Processor {
  public:
-  explicit MockProcessor(std::string name, const minifi::utils::Identifier &uuid)
-      : Processor(std::move(name), uuid) {
+  explicit MockProcessor(std::string_view name, const minifi::utils::Identifier &uuid)
+      : Processor(name, uuid) {
     setTriggerWhenEmpty(true);
   }
 
-  explicit MockProcessor(std::string name)
-      : Processor(std::move(name)) {
+  explicit MockProcessor(std::string_view name)
+      : Processor(name) {
     setTriggerWhenEmpty(true);
   }
 
   ~MockProcessor() override = default;
 
   static constexpr const char* Description = "An example processor";
-  static inline const minifi::core::Property LinkedService{"linkedService", "Linked service"};
-  static auto properties() { return std::array{LinkedService}; }
-  static auto relationships() { return std::array<minifi::core::Relationship, 0>{}; }
+  static constexpr auto LinkedService = minifi::core::PropertyDefinitionBuilder<>::createProperty("linkedService").withDescription("Linked service").build();
+  static constexpr auto Properties = std::array<minifi::core::PropertyReference, 1>{LinkedService};
+  static constexpr auto Relationships = std::array<minifi::core::RelationshipDefinition, 0>{};
   static constexpr bool SupportsDynamicProperties = false;
   static constexpr bool SupportsDynamicRelationships = false;
   static constexpr minifi::core::annotation::Input InputRequirement = minifi::core::annotation::Input::INPUT_ALLOWED;
@@ -101,21 +104,21 @@ class MockProcessor : public minifi::core::Processor {
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
   void initialize() override {
-    setSupportedProperties(properties());
+    setSupportedProperties(Properties);
   }
 
-  void onTrigger(minifi::core::ProcessContext *context, minifi::core::ProcessSession* /*session*/) override {
-    std::string linked_service = "";
+  void onTrigger(minifi::core::ProcessContext& context, minifi::core::ProcessSession&) override {
+    std::string linked_service;
     getProperty("linkedService", linked_service);
     if (!IsNullOrEmpty(linked_service)) {
-      std::shared_ptr<minifi::core::controller::ControllerService> service = context->getControllerService(linked_service);
+      std::shared_ptr<minifi::core::controller::ControllerService> service = context.getControllerService(linked_service);
       std::lock_guard<std::mutex> lock(control_mutex);
       if (!disabled.load()) {
-        assert(true == context->isControllerServiceEnabled(linked_service));
+        assert(true == context.isControllerServiceEnabled(linked_service));
         assert(nullptr != service);
         assert("pushitrealgood" == std::static_pointer_cast<MockControllerService>(service)->doSomething());
       } else {
-        assert(false == context->isControllerServiceEnabled(linked_service));
+        assert(false == context.isControllerServiceEnabled(linked_service));
       }
       // verify we have access to the controller service
       // and verify that we can execute it.

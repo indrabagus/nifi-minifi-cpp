@@ -23,18 +23,19 @@
 #include "io/BufferStream.h"
 #include "core/ProcessContext.h"
 #include "core/ProcessSession.h"
+#include "core/Resource.h"
 #include "Exception.h"
 #include "core/logging/LoggerFactory.h"
 
 namespace org::apache::nifi::minifi::processors {
 
-PutSQL::PutSQL(std::string name, const utils::Identifier& uuid)
-  : SQLProcessor(std::move(name), uuid, core::logging::LoggerFactory<PutSQL>::getLogger(uuid)) {
+PutSQL::PutSQL(std::string_view name, const utils::Identifier& uuid)
+  : SQLProcessor(name, uuid, core::logging::LoggerFactory<PutSQL>::getLogger(uuid)) {
 }
 
 void PutSQL::initialize() {
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
 void PutSQL::processOnSchedule(core::ProcessContext& context) {
@@ -60,9 +61,11 @@ void PutSQL::processOnTrigger(core::ProcessContext& context, core::ProcessSessio
     connection_->prepareStatement(sql_statement)->execute(collectArguments(flow_file));
     session.transfer(flow_file, Success);
   } catch (const sql::StatementError& ex) {
-    logger_->log_error("Error while executing SQL statement in flow file: %s", ex.what());
+    logger_->log_error("Error while executing SQL statement in flow file: {}", ex.what());
     session.transfer(flow_file, Failure);
   }
 }
+
+REGISTER_RESOURCE(PutSQL, Processor);
 
 }  // namespace org::apache::nifi::minifi::processors

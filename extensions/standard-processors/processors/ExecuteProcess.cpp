@@ -19,13 +19,11 @@
  */
 #ifndef WIN32
 #include "ExecuteProcess.h"
-#include <cstring>
 #include <memory>
 #include <string>
 #include <iomanip>
 #include "core/ProcessContext.h"
 #include "core/ProcessSession.h"
-#include "core/PropertyBuilder.h"
 #include "core/Resource.h"
 #include "utils/StringUtils.h"
 #include "utils/TimeUtil.h"
@@ -36,57 +34,28 @@
 using namespace std::literals::chrono_literals;
 
 namespace org::apache::nifi::minifi::processors {
-core::Property ExecuteProcess::Command(
-    core::PropertyBuilder::createProperty("Command")
-      ->withDescription("Specifies the command to be executed; if just the name of an executable is provided, it must be in the user's environment PATH.")
-      ->build());
-
-core::Property ExecuteProcess::CommandArguments(
-    core::PropertyBuilder::createProperty("Command Arguments")
-      ->withDescription("The arguments to supply to the executable delimited by white space. White space can be escaped by enclosing it in double-quotes.")
-      ->build());
-
-core::Property ExecuteProcess::WorkingDir(
-    core::PropertyBuilder::createProperty("Working Directory")
-      ->withDescription("The directory to use as the current working directory when executing the command")
-      ->build());
-
-core::Property ExecuteProcess::BatchDuration(
-    core::PropertyBuilder::createProperty("Batch Duration")
-      ->withDescription("If the process is expected to be long-running and produce textual output, a batch duration can be specified.")
-      ->withDefaultValue<core::TimePeriodValue>("0 sec")
-      ->build());
-
-core::Property ExecuteProcess::RedirectErrorStream(
-    core::PropertyBuilder::createProperty("Redirect Error Stream")
-      ->withDescription("If true will redirect any error stream output of the process to the output stream.")
-      ->withDefaultValue<bool>(false)
-      ->build());
-
-core::Relationship ExecuteProcess::Success("success", "All created FlowFiles are routed to this relationship.");
 
 void ExecuteProcess::initialize() {
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
-void ExecuteProcess::onSchedule(core::ProcessContext* context, core::ProcessSessionFactory* /*session_factory*/) {
-  gsl_Expects(context);
+void ExecuteProcess::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory&) {
   std::string value;
-  if (context->getProperty(Command.getName(), value)) {
+  if (context.getProperty(Command, value)) {
     command_ = value;
   }
-  if (context->getProperty(CommandArguments.getName(), value)) {
+  if (context.getProperty(CommandArguments, value)) {
     command_argument_ = value;
   }
-  if (auto working_dir_str = context->getProperty(WorkingDir)) {
+  if (auto working_dir_str = context.getProperty(WorkingDir)) {
     working_dir_ = *working_dir_str;
   }
-  if (auto batch_duration = context->getProperty<core::TimePeriodValue>(BatchDuration)) {
+  if (auto batch_duration = context.getProperty<core::TimePeriodValue>(BatchDuration)) {
     batch_duration_ = batch_duration->getMilliseconds();
-    logger_->log_debug("Setting batch duration to %d milliseconds", batch_duration_.count());
+    logger_->log_debug("Setting batch duration to {}", batch_duration_);
   }
-  if (context->getProperty(RedirectErrorStream.getName(), value)) {
+  if (context.getProperty(RedirectErrorStream, value)) {
     redirect_error_stream_ = org::apache::nifi::minifi::utils::StringUtils::toBool(value).value_or(false);
   }
   full_command_ = command_ + " " + command_argument_;
@@ -148,7 +117,7 @@ void ExecuteProcess::readOutputInBatches(core::ProcessSession& session) {
     if (num_read <= 0) {
       break;
     }
-    logger_->log_debug("Execute Command Respond %zd", num_read);
+    logger_->log_debug("Execute Command Respond {}", num_read);
     auto flow_file = session.create();
     if (!flow_file) {
       logger_->log_error("Flow file could not be created!");
@@ -162,7 +131,7 @@ void ExecuteProcess::readOutputInBatches(core::ProcessSession& session) {
   }
 }
 
-bool ExecuteProcess::writeToFlowFile(core::ProcessSession& session, std::shared_ptr<core::FlowFile>& flow_file, gsl::span<const char> buffer) const {
+bool ExecuteProcess::writeToFlowFile(core::ProcessSession& session, std::shared_ptr<core::FlowFile>& flow_file, std::span<const char> buffer) const {
   if (!flow_file) {
     flow_file = session.create();
     if (!flow_file) {
@@ -187,7 +156,7 @@ void ExecuteProcess::readOutput(core::ProcessSession& session) {
   while (num_read > 0) {
     if (num_read == static_cast<ssize_t>(sizeof(buffer) - read_to_buffer)) {
       // we reach the max buffer size
-      logger_->log_debug("Execute Command Max Respond %zu", sizeof(buffer));
+      logger_->log_debug("Execute Command Max Respond {}", sizeof(buffer));
       if (!writeToFlowFile(session, flow_file, buffer)) {
         continue;
       }
@@ -202,7 +171,7 @@ void ExecuteProcess::readOutput(core::ProcessSession& session) {
   }
 
   if (read_to_buffer > 0) {
-    logger_->log_debug("Execute Command Respond %zu", read_to_buffer);
+    logger_->log_debug("Execute Command Respond {}", read_to_buffer);
     // child exits and close the pipe
     const auto buffer_span = gsl::make_span(buffer, read_to_buffer);
     if (!writeToFlowFile(session, flow_file, buffer_span)) {
@@ -226,17 +195,16 @@ void ExecuteProcess::collectChildProcessOutput(core::ProcessSession& session) {
   int status = 0;
   wait(&status);
   if (WIFEXITED(status)) {
-    logger_->log_info("Execute Command Complete %s status %d pid %d", full_command_, WEXITSTATUS(status), pid_);
+    logger_->log_info("Execute Command Complete {} status {} pid {}", full_command_, WEXITSTATUS(status), pid_);
   } else {
-    logger_->log_info("Execute Command Complete %s status %d pid %d", full_command_, WTERMSIG(status), pid_);
+    logger_->log_info("Execute Command Complete {} status {} pid {}", full_command_, WTERMSIG(status), pid_);
   }
 
   close(pipefd_[0]);
   pid_ = 0;
 }
 
-void ExecuteProcess::onTrigger(core::ProcessContext *context, core::ProcessSession *session) {
-  gsl_Expects(context && session);
+void ExecuteProcess::onTrigger(core::ProcessContext&, core::ProcessSession& session) {
   if (full_command_.length() == 0) {
     yield();
     return;
@@ -247,7 +215,7 @@ void ExecuteProcess::onTrigger(core::ProcessContext *context, core::ProcessSessi
     yield();
     return;
   }
-  logger_->log_info("Execute Command %s", full_command_);
+  logger_->log_info("Execute Command {}", full_command_);
 
   if (pipe(pipefd_) == -1) {
     yield();
@@ -261,7 +229,7 @@ void ExecuteProcess::onTrigger(core::ProcessContext *context, core::ProcessSessi
       executeChildProcess();
       break;
     default:  // this is the code the parent runs
-      collectChildProcessOutput(*session);
+      collectChildProcessOutput(session);
       break;
   }
 }

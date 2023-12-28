@@ -41,14 +41,14 @@ class ODBCService : public DatabaseService {
     initialize();
   }
 
-  explicit ODBCService(std::string name, const std::shared_ptr<Configure> &configuration)
-      : DatabaseService(std::move(name)) {
+  explicit ODBCService(std::string_view name, const std::shared_ptr<Configure> &configuration)
+      : DatabaseService(name) {
     setConfiguration(configuration);
     initialize();
   }
 
   EXTENSIONAPI static constexpr const char* Description = "Controller service that provides ODBC database connection";
-  static auto properties() { return DatabaseService::properties(); }
+  EXTENSIONAPI static constexpr auto Properties = DatabaseService::Properties;
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_CONTROLLER_SERVICES
 

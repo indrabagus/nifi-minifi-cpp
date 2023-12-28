@@ -21,6 +21,7 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
+#include <openssl/bio.h>
 #ifdef WIN32
 #pragma comment(lib, "crypt32.lib")
 #pragma comment(lib, "Ws2_32.lib")
@@ -32,10 +33,10 @@
 #include <memory>
 #include <string>
 
-#include "core/PropertyBuilder.h"
 #include "core/Resource.h"
 #include "io/validation.h"
 #include "properties/Configure.h"
+#include "utils/HTTPUtils.h"
 #include "utils/tls/CertificateUtils.h"
 #include "utils/tls/TLSUtils.h"
 #include "utils/tls/DistinguishedName.h"
@@ -44,73 +45,34 @@
 
 namespace org::apache::nifi::minifi::controllers {
 
-const core::Property SSLContextService::ClientCertificate(
-    core::PropertyBuilder::createProperty("Client Certificate")
-        ->withDescription("Client Certificate")
-        ->isRequired(false)
-        ->build());
-
-const core::Property SSLContextService::PrivateKey(
-    core::PropertyBuilder::createProperty("Private Key")
-        ->withDescription("Private Key file")
-        ->isRequired(false)
-        ->build());
-
-const core::Property SSLContextService::Passphrase(
-    core::PropertyBuilder::createProperty("Passphrase")
-        ->withDescription("Client passphrase. Either a file or unencrypted text")
-        ->isRequired(false)
-        ->build());
-
-const core::Property SSLContextService::CACertificate(
-    core::PropertyBuilder::createProperty("CA Certificate")
-        ->withDescription("CA certificate file")
-        ->isRequired(false)
-        ->build());
-
-const core::Property SSLContextService::UseSystemCertStore(
-    core::PropertyBuilder::createProperty("Use System Cert Store")
-        ->withDescription("Whether to use the certificates in the OS's certificate store")
-        ->isRequired(false)
-        ->withDefaultValue<bool>(false)
-        ->build());
+namespace {
+bool is_valid_and_readable_path(const std::filesystem::path& path_to_be_tested) {
+  std::ifstream file_to_be_tested(path_to_be_tested);
+  return file_to_be_tested.good();
+}
 
 #ifdef WIN32
-const core::Property SSLContextService::CertStoreLocation(
-    core::PropertyBuilder::createProperty("Certificate Store Location")
-        ->withDescription("One of the Windows certificate store locations, eg. LocalMachine or CurrentUser")
-        ->withAllowableValues(utils::tls::WindowsCertStoreLocation::allowedLocations())
-        ->isRequired(false)
-        ->withDefaultValue(utils::tls::WindowsCertStoreLocation::defaultLocation())
-        ->build());
+std::string getCertName(const utils::tls::X509_unique_ptr& cert) {
+  const size_t BUFFER_SIZE = 256;
+  char name_buffer[BUFFER_SIZE];
 
-const core::Property SSLContextService::ServerCertStore(
-    core::PropertyBuilder::createProperty("Server Cert Store")
-        ->withDescription("The name of the certificate store which contains the server certificate")
-        ->isRequired(false)
-        ->withDefaultValue("ROOT")
-        ->build());
+  BIO* bio = BIO_new(BIO_s_mem());
+  if (!bio) {
+    return {};
+  }
+  const auto guard = gsl::finally([&bio]() {
+    BIO_free(bio);
+  });
 
-const core::Property SSLContextService::ClientCertStore(
-    core::PropertyBuilder::createProperty("Client Cert Store")
-        ->withDescription("The name of the certificate store which contains the client certificate")
-        ->isRequired(false)
-        ->withDefaultValue("MY")
-        ->build());
+  X509_NAME_print_ex(bio, X509_get_subject_name(cert.get()), 0, XN_FLAG_ONELINE);
 
-const core::Property SSLContextService::ClientCertCN(
-    core::PropertyBuilder::createProperty("Client Cert CN")
-        ->withDescription("The CN that the client certificate is required to match; default: use the first available client certificate in the store")
-        ->isRequired(false)
-        ->build());
+  int length = BIO_read(bio, name_buffer, BUFFER_SIZE - 1);
+  name_buffer[length] = '\0';
 
-const core::Property SSLContextService::ClientCertKeyUsage(
-    core::PropertyBuilder::createProperty("Client Cert Key Usage")
-        ->withDescription("Comma-separated list of enhanced key usage values that the client certificate is required to have")
-        ->isRequired(false)
-        ->withDefaultValue("Client Authentication")
-        ->build());
-#endif  // WIN32
+  return name_buffer;
+}
+#endif
+}  // namespace
 
 void SSLContextService::initialize() {
   std::lock_guard<std::mutex> lock(initialization_mutex_);
@@ -139,7 +101,7 @@ bool SSLContextService::configure_ssl_context(SSL_CTX *ctx) {
     }
 
     if (!SSL_CTX_check_private_key(ctx)) {
-      core::logging::LOG_ERROR(logger_) << "Private key does not match the public certificate, " << getLatestOpenSSLErrorString();
+      logger_->log_error("Private key does not match the public certificate, {}", getLatestOpenSSLErrorString());
       return false;
     }
   }
@@ -148,7 +110,7 @@ bool SSLContextService::configure_ssl_context(SSL_CTX *ctx) {
 
   if (!ca_certificate_.empty()) {
     if (SSL_CTX_load_verify_locations(ctx, ca_certificate_.string().c_str(), nullptr) == 0) {
-      core::logging::LOG_ERROR(logger_) << "Cannot load CA certificate, exiting, " << getLatestOpenSSLErrorString();
+      logger_->log_error("Cannot load CA certificate, exiting, {}", getLatestOpenSSLErrorString());
       return false;
     }
   }
@@ -163,6 +125,19 @@ bool SSLContextService::configure_ssl_context(SSL_CTX *ctx) {
     if (!addServerCertificatesFromSystemStoreToSSLContext(ctx)) {
       return false;
     }
+  }
+
+  // Security level set to 0 for backwards compatibility to support TLS versions below v1.2
+  if ((minimum_tls_version_ != -1 && minimum_tls_version_ < TLS1_2_VERSION) || (maximum_tls_version_ != -1 && maximum_tls_version_ < TLS1_2_VERSION)) {
+    SSL_CTX_set_security_level(ctx, 0);
+  }
+
+  if (minimum_tls_version_ != -1) {
+    SSL_CTX_set_min_proto_version(ctx, minimum_tls_version_);
+  }
+
+  if (maximum_tls_version_ != -1) {
+    SSL_CTX_set_max_proto_version(ctx, maximum_tls_version_);
   }
 
   return true;
@@ -191,7 +166,7 @@ bool SSLContextService::addP12CertificateToSSLContext(SSL_CTX* ctx) const {
     }
   });
   if (error) {
-    core::logging::LOG_ERROR(logger_) << error.message();
+    logger_->log_error("{}", error.message());
     return false;
   }
   return true;
@@ -199,7 +174,7 @@ bool SSLContextService::addP12CertificateToSSLContext(SSL_CTX* ctx) const {
 
 bool SSLContextService::addPemCertificateToSSLContext(SSL_CTX* ctx) const {
   if (SSL_CTX_use_certificate_chain_file(ctx, certificate_.string().c_str()) <= 0) {
-    core::logging::LOG_ERROR(logger_) << "Could not load client certificate " << certificate_.string() << ", " << getLatestOpenSSLErrorString();
+    logger_->log_error("Could not load client certificate {}, {}", certificate_.string(), getLatestOpenSSLErrorString());
     return false;
   }
 
@@ -212,7 +187,7 @@ bool SSLContextService::addPemCertificateToSSLContext(SSL_CTX* ctx) const {
   if (!IsNullOrEmpty(private_key_)) {
     int retp = SSL_CTX_use_PrivateKey_file(ctx, private_key_.string().c_str(), SSL_FILETYPE_PEM);
     if (retp != 1) {
-      core::logging::LOG_ERROR(logger_) << "Could not load private key, " << retp << " on " << private_key_ << ", " << getLatestOpenSSLErrorString();
+      logger_->log_error("Could not load private key, {} on {}, {}", retp, private_key_, getLatestOpenSSLErrorString());
       return false;
     }
   }
@@ -224,11 +199,11 @@ bool SSLContextService::addPemCertificateToSSLContext(SSL_CTX* ctx) const {
 bool SSLContextService::findClientCertificate(ClientCertCallback cb) const {
   utils::tls::WindowsCertStore cert_store(utils::tls::WindowsCertStoreLocation{cert_store_location_}, client_cert_store_);
   if (auto error = cert_store.error()) {
-    logger_->log_error("Could not open system certificate store %s/%s (client certificates): %s", cert_store_location_, client_cert_store_, error.message());
+    logger_->log_error("Could not open system certificate store {}/{} (client certificates): {}", cert_store_location_, client_cert_store_, error.message());
     return false;
   }
 
-  logger_->log_debug("Looking for client certificate in sytem store %s/%s", cert_store_location_, client_cert_store_);
+  logger_->log_debug("Looking for client certificate in sytem store {}/{}", cert_store_location_, client_cert_store_);
 
   while (auto cert_ctx = cert_store.nextCert()) {
     if (useClientCertificate(cert_ctx, cb)) {
@@ -236,7 +211,7 @@ bool SSLContextService::findClientCertificate(ClientCertCallback cb) const {
     }
   }
 
-  logger_->log_error("Could not find any suitable client certificate in sytem store %s/%s", cert_store_location_, client_cert_store_);
+  logger_->log_error("Could not find any suitable client certificate in sytem store {}/{}", cert_store_location_, client_cert_store_);
   return false;
 }
 
@@ -245,13 +220,14 @@ bool SSLContextService::findClientCertificate(ClientCertCallback cb) const {
 #ifdef WIN32
 bool SSLContextService::addClientCertificateFromSystemStoreToSSLContext(SSL_CTX* ctx) const {
   return findClientCertificate([&] (auto cert, auto priv_key) -> bool {
+    auto cert_name = getCertName(cert);
     if (SSL_CTX_use_certificate(ctx, cert.get()) != 1) {
-      logger_->log_error("Failed to set certificate from %s, %s", cert->name, getLatestOpenSSLErrorString);
+      logger_->log_error("Failed to set certificate from {}, {}", cert_name, getLatestOpenSSLErrorString());
       return false;
     }
 
     if (SSL_CTX_use_PrivateKey(ctx, priv_key.get()) != 1) {
-      logger_->log_error("Failed to use private key %s, %s", cert->name, getLatestOpenSSLErrorString());
+      logger_->log_error("Failed to use private key {}, {}", cert_name, getLatestOpenSSLErrorString());
       return false;
     }
     return true;
@@ -272,36 +248,36 @@ bool SSLContextService::useClientCertificate(PCCERT_CONTEXT certificate, ClientC
     return false;
   }
 
+  std::string x509_name = getCertName(x509_cert);
   utils::tls::EVP_PKEY_unique_ptr private_key = utils::tls::extractPrivateKey(certificate);
   if (!private_key) {
-    logger_->log_debug("Skipping client certificate %s because it has no exportable private key", x509_cert->name);
+    logger_->log_debug("Skipping client certificate {} because it has no exportable private key", x509_name);
     return false;
   }
 
   if (!client_cert_cn_.empty()) {
-    utils::tls::DistinguishedName dn = utils::tls::DistinguishedName::fromSlashSeparated(x509_cert->name);
+    utils::tls::DistinguishedName dn = utils::tls::DistinguishedName::fromSlashSeparated(x509_name);
     std::optional<std::string> cn = dn.getCN();
     if (!cn || *cn != client_cert_cn_) {
-      logger_->log_debug("Skipping client certificate %s because it doesn't match CN=%s", x509_cert->name, client_cert_cn_);
+      logger_->log_debug("Skipping client certificate {} because it doesn't match CN={}", x509_name, client_cert_cn_);
       return false;
     }
   }
 
   utils::tls::EXTENDED_KEY_USAGE_unique_ptr key_usage{static_cast<EXTENDED_KEY_USAGE*>(X509_get_ext_d2i(x509_cert.get(), NID_ext_key_usage, nullptr, nullptr))};
   if (!key_usage) {
-    logger_->log_error("Skipping client certificate %s because it has no extended key usage", x509_cert->name);
+    logger_->log_error("Skipping client certificate {} because it has no extended key usage", x509_name);
     return false;
   }
 
   if (!(client_cert_key_usage_.isSubsetOf(utils::tls::ExtendedKeyUsage{*key_usage}))) {
-    logger_->log_debug("Skipping client certificate %s because its extended key usage set does not contain all usages specified in %s",
-                       x509_cert->name, Configuration::nifi_security_windows_client_cert_key_usage);
+    logger_->log_debug("Skipping client certificate {} because its extended key usage set does not contain all usages specified in {}",
+                       x509_name, Configuration::nifi_security_windows_client_cert_key_usage);
     return false;
   }
 
-  std::string cert_name = x509_cert->name;
   if (cb(std::move(x509_cert), std::move(private_key))) {
-    logger_->log_debug("Found client certificate %s", cert_name);
+    logger_->log_debug("Found client certificate {}", x509_name);
     return true;
   }
 
@@ -319,25 +295,31 @@ bool SSLContextService::addServerCertificatesFromSystemStoreToSSLContext(SSL_CTX
 
   findServerCertificate([&] (auto cert) -> bool {
     // return false to indicate that we wish to iterate over all subsequent certificates as well
+    auto cert_name = getCertName(cert);
     int success = X509_STORE_add_cert(ssl_store, cert.get());
     if (success == 1) {
-      logger_->log_debug("Added server certificate %s from the system store to the SSL store", cert->name);
+      logger_->log_debug("Added server certificate {} from the system store to the SSL store", cert_name);
       return false;
     }
 
     auto err = ERR_peek_last_error();
     if (ERR_GET_REASON(err) == X509_R_CERT_ALREADY_IN_HASH_TABLE) {
-      logger_->log_debug("Ignoring duplicate server certificate %s", cert->name);
+      logger_->log_debug("Ignoring duplicate server certificate {}", cert_name);
       return false;
     }
 
-    logger_->log_error("Failed to add server certificate %s to the SSL store; error: %s", cert->name, getLatestOpenSSLErrorString());
+    logger_->log_error("Failed to add server certificate {} to the SSL store; error: {}", cert_name, getLatestOpenSSLErrorString());
     return false;
   });
 
   return true;
 #else
-  SSL_CTX_set_default_verify_paths(ctx);
+  static const auto default_ca_file = utils::getDefaultCAFile();
+  if (default_ca_file) {
+    SSL_CTX_load_verify_file(ctx, std::string(*default_ca_file).c_str());
+  } else {
+    SSL_CTX_set_default_verify_paths(ctx);
+  }
   return true;
 #endif  // WIN32
 }
@@ -346,11 +328,11 @@ bool SSLContextService::addServerCertificatesFromSystemStoreToSSLContext(SSL_CTX
 bool SSLContextService::findServerCertificate(ServerCertCallback cb) const {
   utils::tls::WindowsCertStore cert_store(utils::tls::WindowsCertStoreLocation{cert_store_location_}, server_cert_store_);
   if (auto error = cert_store.error()) {
-    logger_->log_error("Could not open system certificate store %s/%s (server certificates): %s", cert_store_location_, server_cert_store_, error.message());
+    logger_->log_error("Could not open system certificate store {}/{} (server certificates): {}", cert_store_location_, server_cert_store_, error.message());
     return false;
   }
 
-  logger_->log_debug("Adding server certificates from system store %s/%s", cert_store_location_, server_cert_store_);
+  logger_->log_debug("Adding server certificates from system store {}/{}", cert_store_location_, server_cert_store_);
 
   while (auto cert_ctx = cert_store.nextCert()) {
     if (useServerCertificate(cert_ctx, cb)) {
@@ -383,11 +365,11 @@ bool SSLContextService::useServerCertificate(PCCERT_CONTEXT certificate, ServerC
 std::unique_ptr<SSLContext> SSLContextService::createSSLContext() {
 #ifdef OPENSSL_SUPPORT
   SSL_library_init();
-  const SSL_METHOD *method;
+  const SSL_METHOD *method = nullptr;
 
   OpenSSL_add_all_algorithms();
   SSL_load_error_strings();
-  method = TLSv1_2_client_method();
+  method = TLS_client_method();
   SSL_CTX *ctx = SSL_CTX_new(method);
 
   if (ctx == nullptr) {
@@ -425,13 +407,6 @@ const std::filesystem::path &SSLContextService::getCACertificate() const {
   return ca_certificate_;
 }
 
-namespace {
-bool is_valid_and_readable_path(const std::filesystem::path& path_to_be_tested) {
-  std::ifstream file_to_be_tested(path_to_be_tested);
-  return file_to_be_tested.good();
-}
-}  // namespace
-
 void SSLContextService::onEnable() {
   std::filesystem::path default_dir;
 
@@ -444,15 +419,15 @@ void SSLContextService::onEnable() {
   logger_->log_trace("onEnable()");
 
   certificate_.clear();
-  if (auto certificate = getProperty(ClientCertificate.getName())) {
+  if (auto certificate = getProperty(ClientCertificate)) {
     if (is_valid_and_readable_path(*certificate)) {
       certificate_ = *certificate;
     } else {
-      logger_->log_warn("Cannot open certificate file %s", *certificate);
+      logger_->log_warn("Cannot open certificate file {}", *certificate);
       if (is_valid_and_readable_path(default_dir / *certificate)) {
         certificate_ = default_dir / *certificate;
       } else {
-        logger_->log_error("Cannot open certificate file %s", (default_dir / *certificate).string());
+        logger_->log_error("Cannot open certificate file {}", (default_dir / *certificate));
       }
     }
   } else {
@@ -461,26 +436,26 @@ void SSLContextService::onEnable() {
 
   private_key_.clear();
   if (!certificate_.empty() && !isFileTypeP12(certificate_)) {
-    if (auto private_key = getProperty(PrivateKey.getName())) {
+    if (auto private_key = getProperty(PrivateKey)) {
       if (is_valid_and_readable_path(*private_key)) {
         private_key_ = *private_key;
       } else {
-        logger_->log_warn("Cannot open private key file %s", *private_key);
+        logger_->log_warn("Cannot open private key file {}", *private_key);
         if (is_valid_and_readable_path(default_dir / *private_key)) {
           private_key_ = default_dir / *private_key;
         } else {
-          logger_->log_error("Cannot open private key file %s", (default_dir / *private_key).string());
+          logger_->log_error("Cannot open private key file {}", (default_dir / *private_key));
         }
       }
-      logger_->log_info("Using private key file %s", private_key_.string());
+      logger_->log_info("Using private key file {}", private_key_);
     } else {
       logger_->log_debug("Private key empty");
     }
   }
 
   passphrase_.clear();
-  if (!getProperty(Passphrase.getName(), passphrase_)) {
-    logger_->log_debug("No pass phrase for %s", certificate_.string());
+  if (!getProperty(Passphrase, passphrase_)) {
+    logger_->log_debug("No pass phrase for {}", certificate_);
   } else {
     std::ifstream passphrase_file(passphrase_);
     if (passphrase_file.good()) {
@@ -500,40 +475,45 @@ void SSLContextService::onEnable() {
   }
 
   ca_certificate_.clear();
-  if (auto ca_certificate = getProperty(CACertificate.getName())) {
+  if (auto ca_certificate = getProperty(CACertificate)) {
     if (is_valid_and_readable_path(*ca_certificate)) {
       ca_certificate_ = *ca_certificate;
     } else {
-      logger_->log_warn("Cannot open CA certificate file %s", *ca_certificate);
+      logger_->log_warn("Cannot open CA certificate file {}", *ca_certificate);
       if (is_valid_and_readable_path(default_dir / *ca_certificate)) {
         ca_certificate_ = default_dir / *ca_certificate;
       } else {
-        logger_->log_error("Cannot open CA certificate file %s", (default_dir / *ca_certificate).string());
+        logger_->log_error("Cannot open CA certificate file {}", (default_dir / *ca_certificate));
       }
     }
-    logger_->log_info("Using CA certificate file %s", ca_certificate_.string());
+    logger_->log_info("Using CA certificate file {}", ca_certificate_);
   } else {
     logger_->log_debug("CA Certificate empty");
   }
 
-  getProperty(UseSystemCertStore.getName(), use_system_cert_store_);
+  getProperty(UseSystemCertStore, use_system_cert_store_);
 
 #ifdef WIN32
-  getProperty(CertStoreLocation.getName(), cert_store_location_);
-  getProperty(ServerCertStore.getName(), server_cert_store_);
-  getProperty(ClientCertStore.getName(), client_cert_store_);
-  getProperty(ClientCertCN.getName(), client_cert_cn_);
+  getProperty(CertStoreLocation, cert_store_location_);
+  getProperty(ServerCertStore, server_cert_store_);
+  getProperty(ClientCertStore, client_cert_store_);
+  getProperty(ClientCertCN, client_cert_cn_);
 
   std::string client_cert_key_usage;
-  getProperty(ClientCertKeyUsage.getName(), client_cert_key_usage);
+  getProperty(ClientCertKeyUsage, client_cert_key_usage);
   client_cert_key_usage_ = utils::tls::ExtendedKeyUsage{client_cert_key_usage};
 #endif  // WIN32
+
+  logger_->log_debug("Using certificate file \"{}\"", certificate_);
+  logger_->log_debug("Using private key file \"{}\"", private_key_);
+  logger_->log_debug("Using CA certificate file \"{}\"", ca_certificate_);
+  logger_->log_debug("Using the system cert store: {}", use_system_cert_store_ ? "yes" : "no");
 
   verifyCertificateExpiration();
 }
 
 void SSLContextService::initializeProperties() {
-  setSupportedProperties(properties());
+  setSupportedProperties(Properties);
 }
 
 void SSLContextService::verifyCertificateExpiration() {
@@ -541,14 +521,14 @@ void SSLContextService::verifyCertificateExpiration() {
     if (auto end_date = utils::tls::getCertificateExpiration(cert)) {
       std::string end_date_str = utils::timeutils::getTimeStr(*end_date);
       if (end_date.value() < std::chrono::system_clock::now()) {
-        core::logging::LOG_ERROR(logger_) << "Certificate in '" << cert_file << "' expired at " << end_date_str;
+        logger_->log_error("Certificate in '{}' expired at {}", cert_file, end_date_str);
       } else if (auto diff = end_date.value() - std::chrono::system_clock::now(); diff < std::chrono::weeks{2}) {
-        core::logging::LOG_WARN(logger_) << "Certificate in '" << cert_file << "' will expire at " << end_date_str;
+        logger_->log_error("Certificate in '{}' will expire at {}", cert_file, end_date_str);
       } else {
-        core::logging::LOG_DEBUG(logger_) << "Certificate in '" << cert_file << "' will expire at " << end_date_str;
+        logger_->log_error("Certificate in '{}' will expire at {}", cert_file, end_date_str);
       }
     } else {
-      core::logging::LOG_ERROR(logger_) << "Could not determine expiration date for certificate in '" << cert_file << "'";
+      logger_->log_error("Could not determine expiration date for certificate in '{}'", cert_file);
     }
   };
   if (!IsNullOrEmpty(certificate_)) {
@@ -565,7 +545,7 @@ void SSLContextService::verifyCertificateExpiration() {
           .priv_key_cb = {}
       });
       if (error) {
-        core::logging::LOG_ERROR(logger_) << error.value();
+        logger_->log_error("{}", error.value());
       }
     } else {
       auto error = utils::tls::processPEMCertificate(certificate_, passphrase_, {
@@ -580,7 +560,7 @@ void SSLContextService::verifyCertificateExpiration() {
           .priv_key_cb = {}
       });
       if (error) {
-        core::logging::LOG_ERROR(logger_) << error.value();
+        logger_->log_error("{}", error.value());
       }
     }
   }
@@ -598,21 +578,23 @@ void SSLContextService::verifyCertificateExpiration() {
         .priv_key_cb = {}
     });
     if (error) {
-      core::logging::LOG_ERROR(logger_) << error.message();
+      logger_->log_error("{}", error.message());
     }
   }
 
 #ifdef WIN32
   if (use_system_cert_store_ && IsNullOrEmpty(certificate_)) {
     findClientCertificate([&] (auto cert, auto /*priv_key*/) -> bool {
-      verify(cert->name, cert);
+      auto cert_name = getCertName(cert);
+      verify(cert_name, cert);
       return false;  // keep on iterating, check all
     });
   }
 
   if (use_system_cert_store_ && IsNullOrEmpty(ca_certificate_)) {
     findServerCertificate([&] (auto cert) -> bool {
-      verify(cert->name, cert);
+      auto cert_name = getCertName(cert);
+      verify(cert_name, cert);
       return false;  // keep on iterating, check all
     });
   }

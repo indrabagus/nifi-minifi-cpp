@@ -22,7 +22,6 @@
 #include <string>
 #include "core/Property.h"
 #include "properties/Configure.h"
-#include "io/StreamFactory.h"
 #include "RemoteProcessorGroupPort.h"
 #include "core/ContentRepository.h"
 #include "core/repository/VolatileContentRepository.h"
@@ -77,10 +76,9 @@ class Instance {
         free(cwd);
     }
     running_ = false;
-    stream_factory_ = minifi::io::StreamFactory::getInstance(configure_);
     utils::Identifier uuid;
     uuid = port;
-    rpg_ = std::make_shared<minifi::RemoteProcessorGroupPort>(stream_factory_, url, url, configure_, uuid);
+    rpg_ = std::make_shared<minifi::RemoteProcessorGroupPort>(url, url, configure_, uuid);
     proc_node_ = std::make_shared<core::ProcessorNode>(rpg_.get());
     core::extension::ExtensionManager::get().initialize(configure_);
     content_repo_->initialize(configure_);
@@ -130,7 +128,7 @@ class Instance {
     auto processContext = std::make_shared<core::ProcessContext>(proc_node_, nullptr, no_op_repo_, no_op_repo_, configure_, content_repo_);
     auto sessionFactory = std::make_shared<core::ProcessSessionFactory>(processContext);
 
-    rpg_->onSchedule(processContext, sessionFactory);
+    rpg_->onSchedule(*processContext, *sessionFactory);
 
     auto session = std::make_shared<core::ReflexiveSession>(processContext);
 
@@ -138,7 +136,7 @@ class Instance {
     if (stream) {
       session->importFrom(*stream.get(), ff);
     }
-    rpg_->onTrigger(processContext, session);
+    rpg_->onTrigger(*processContext, *session);
   }
 
  protected:
@@ -148,9 +146,8 @@ class Instance {
     // run all functions independently
 
     for (auto function : functions) {
-      utils::Worker<utils::TaskRescheduleInfo> functor(function, "listeners");
       std::future<utils::TaskRescheduleInfo> future;
-      listener_thread_pool_.execute(std::move(functor), future);
+      listener_thread_pool_.execute(utils::Worker{function, "listeners"}, future);
     }
   }
 
@@ -165,11 +162,10 @@ class Instance {
 
   std::shared_ptr<core::ProcessorNode> proc_node_;
   std::shared_ptr<minifi::RemoteProcessorGroupPort> rpg_;
-  std::shared_ptr<io::StreamFactory> stream_factory_;
   std::string url_;
   std::shared_ptr<Configure> configure_;
 
-  utils::ThreadPool<utils::TaskRescheduleInfo> listener_thread_pool_;
+  utils::ThreadPool listener_thread_pool_;
 };
 
 }  // namespace org::apache::nifi::minifi

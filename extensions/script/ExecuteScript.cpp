@@ -25,42 +25,24 @@
 #include <vector>
 #include <unordered_map>
 
-#include "core/PropertyBuilder.h"
 #include "core/Resource.h"
 #include "utils/ProcessorConfigUtils.h"
 #include "utils/StringUtils.h"
 
 namespace org::apache::nifi::minifi::processors {
 
-const core::Property ExecuteScript::ScriptEngine(
-  core::PropertyBuilder::createProperty("Script Engine")
-    ->withDescription(R"(The engine to execute scripts (python, lua))")
-    ->isRequired(true)
-    ->withAllowableValues(ScriptEngineOption::values())
-    ->withDefaultValue(toString(ScriptEngineOption::PYTHON))
-    ->build());
-const core::Property ExecuteScript::ScriptFile("Script File",
-    R"(Path to script file to execute. Only one of Script File or Script Body may be used)", "");
-const core::Property ExecuteScript::ScriptBody("Script Body",
-    R"(Body of script to execute. Only one of Script File or Script Body may be used)", "");
-const core::Property ExecuteScript::ModuleDirectory("Module Directory",
-    R"(Comma-separated list of paths to files and/or directories which contain modules required by the script)", "");
-
-const core::Relationship ExecuteScript::Success("success", "Script successes");
-const core::Relationship ExecuteScript::Failure("failure", "Script failures");
-
 void ExecuteScript::initialize() {
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
-void ExecuteScript::onSchedule(core::ProcessContext *context, core::ProcessSessionFactory* /*sessionFactory*/) {
+void ExecuteScript::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory&) {
   const auto executor_class_lookup = [](const std::string_view script_engine_prefix) -> const char* {
     if (script_engine_prefix == "lua") return "LuaScriptExecutor";
     if (script_engine_prefix == "python") return "PythonScriptExecutor";
     return nullptr;
   };
-  if (const auto script_engine_prefix = context->getProperty(ScriptEngine); script_engine_prefix && executor_class_lookup(*script_engine_prefix)) {
+  if (const auto script_engine_prefix = context.getProperty(ScriptEngine); script_engine_prefix && executor_class_lookup(*script_engine_prefix)) {
     const char* const executor_class_name = executor_class_lookup(*script_engine_prefix);
     script_executor_ = core::ClassLoader::getDefaultClassLoader().instantiate<extensions::script::ScriptExecutor>(executor_class_name, executor_class_name);
     if (!script_executor_) {
@@ -73,9 +55,9 @@ void ExecuteScript::onSchedule(core::ProcessContext *context, core::ProcessSessi
 
   std::string script_file;
   std::string script_body;
-  context->getProperty(ScriptFile.getName(), script_file);
-  context->getProperty(ScriptBody.getName(), script_body);
-  auto module_directory = context->getProperty(ModuleDirectory);
+  context.getProperty(ScriptFile, script_file);
+  context.getProperty(ScriptBody, script_body);
+  auto module_directory = context.getProperty(ModuleDirectory);
 
   if (script_file.empty() && script_body.empty()) {
     throw Exception(PROCESS_SCHEDULE_EXCEPTION, "Either Script Body or Script File must be defined");
@@ -92,8 +74,7 @@ void ExecuteScript::onSchedule(core::ProcessContext *context, core::ProcessSessi
   script_executor_->initialize(std::move(script_file), std::move(script_body), std::move(module_directory), getMaxConcurrentTasks(), Success, Failure, logger_);
 }
 
-void ExecuteScript::onTrigger(const std::shared_ptr<core::ProcessContext>& context,
-                              const std::shared_ptr<core::ProcessSession>& session) {
+void ExecuteScript::onTriggerSharedPtr(const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSession>& session) {
   gsl_Expects(script_executor_);
   script_executor_->onTrigger(context, session);
 }

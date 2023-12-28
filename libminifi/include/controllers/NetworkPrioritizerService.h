@@ -28,6 +28,9 @@
 #include "controllers/SSLContextService.h"
 #include "core/controller/ControllerService.h"
 #include "core/logging/LoggerFactory.h"
+#include "core/PropertyDefinition.h"
+#include "core/PropertyDefinitionBuilder.h"
+#include "core/PropertyType.h"
 #include "ThreadManagementService.h"
 #include "io/NetworkPrioritizer.h"
 #include "utils/Export.h"
@@ -39,10 +42,10 @@ namespace org::apache::nifi::minifi::controllers {
  */
 class NetworkPrioritizerService : public core::controller::ControllerService, public minifi::io::NetworkPrioritizer, public std::enable_shared_from_this<NetworkPrioritizerService> {
  public:
-  explicit NetworkPrioritizerService(std::string name,
+  explicit NetworkPrioritizerService(std::string_view name,
                                      const utils::Identifier& uuid = {},
                                      std::shared_ptr<utils::timeutils::Clock> clock = std::make_shared<utils::timeutils::SteadyClock>())
-      : ControllerService(std::move(name), uuid),
+      : ControllerService(name, uuid),
         enabled_(false),
         max_throughput_(std::numeric_limits<uint64_t>::max()),
         max_payload_(std::numeric_limits<uint64_t>::max()),
@@ -54,28 +57,50 @@ class NetworkPrioritizerService : public core::controller::ControllerService, pu
         clock_(std::move(clock)) {
   }
 
-  explicit NetworkPrioritizerService(std::string name, const std::shared_ptr<Configure> &configuration)
-      : NetworkPrioritizerService(std::move(name)) {
+  explicit NetworkPrioritizerService(std::string_view name, const std::shared_ptr<Configure> &configuration)
+      : NetworkPrioritizerService(name) {
     setConfiguration(configuration);
     initialize();
   }
 
   MINIFIAPI static constexpr const char* Description = "Enables selection of networking interfaces on defined parameters to include output and payload size";
 
-  MINIFIAPI static const core::Property NetworkControllers;
-  MINIFIAPI static const core::Property MaxThroughput;
-  MINIFIAPI static const core::Property MaxPayload;
-  MINIFIAPI static const core::Property VerifyInterfaces;
-  MINIFIAPI static const core::Property DefaultPrioritizer;
-  static auto properties() {
-    return std::array{
+  MINIFIAPI static constexpr auto NetworkControllers = core::PropertyDefinitionBuilder<>::createProperty("Network Controllers")
+      .withDescription("Comma separated list of network controllers in order of priority for this prioritizer")
+      .isRequired(false)
+      .build();
+  MINIFIAPI static constexpr auto MaxThroughput = core::PropertyDefinitionBuilder<>::createProperty("Max Throughput")
+      .withDescription("Max throughput ( per second ) for these network controllers")
+      .isRequired(true)
+      .withPropertyType(core::StandardPropertyTypes::DATA_SIZE_TYPE)
+      .withDefaultValue("1 MB")
+      .build();
+  MINIFIAPI static constexpr auto MaxPayload = core::PropertyDefinitionBuilder<>::createProperty("Max Payload")
+      .withDescription("Maximum payload for these network controllers")
+      .isRequired(true)
+      .withPropertyType(core::StandardPropertyTypes::DATA_SIZE_TYPE)
+      .withDefaultValue("1 GB")
+      .build();
+  MINIFIAPI static constexpr auto VerifyInterfaces = core::PropertyDefinitionBuilder<>::createProperty("Verify Interfaces")
+      .withDescription("Verify that interfaces are operational")
+      .isRequired(true)
+      .withPropertyType(core::StandardPropertyTypes::BOOLEAN_TYPE)
+      .withDefaultValue("true")
+      .build();
+  MINIFIAPI static constexpr auto DefaultPrioritizer = core::PropertyDefinitionBuilder<>::createProperty("Default Prioritizer")
+      .withDescription("Sets this controller service as the default prioritizer for all comms")
+      .isRequired(false)
+      .withPropertyType(core::StandardPropertyTypes::BOOLEAN_TYPE)
+      .withDefaultValue("false")
+      .build();
+  MINIFIAPI static constexpr auto Properties = std::array<core::PropertyReference, 5>{
       NetworkControllers,
       MaxThroughput,
       MaxPayload,
       VerifyInterfaces,
       DefaultPrioritizer
-    };
-  }
+  };
+
 
   MINIFIAPI static constexpr bool SupportsDynamicProperties = false;
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_CONTROLLER_SERVICES

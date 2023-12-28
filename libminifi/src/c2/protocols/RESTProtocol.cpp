@@ -55,12 +55,11 @@ AnnotatedValue parseAnnotatedValue(const rapidjson::Value& jsonValue) {
   return result;
 }
 
-C2Payload RESTProtocol::parseJsonResponse(const C2Payload &payload, gsl::span<const std::byte> response) {
+C2Payload RESTProtocol::parseJsonResponse(const C2Payload &payload, std::span<const std::byte> response) {
   rapidjson::Document root;
-  const auto char_span = response.as_span<const char>();
 
   try {
-    rapidjson::ParseResult ok = root.Parse(char_span.data(), char_span.size());
+    rapidjson::ParseResult ok = root.Parse(reinterpret_cast<const char*>(response.data()), response.size());
     if (ok) {
       std::string identifier;
       for (auto key : {"operationid", "operationId", "identifier"}) {
@@ -93,7 +92,7 @@ C2Payload RESTProtocol::parseJsonResponse(const C2Payload &payload, gsl::span<co
       auto array = root.HasMember("requested_operations") ? root["requested_operations"].GetArray() : root["requestedOperations"].GetArray();
 
       for (const rapidjson::Value& request : array) {
-        Operation newOp = Operation::parse(request["operation"].GetString(), Operation::HEARTBEAT, false);
+        auto newOp = magic_enum::enum_cast<Operation>(request["operation"].GetString(), magic_enum::case_insensitive).value_or(Operation::heartbeat);
         C2Payload nested_payload(newOp, state::UpdateState::READ_COMPLETE);
         C2ContentResponse new_command(newOp);
         new_command.delay = 0;
@@ -151,7 +150,7 @@ void RESTProtocol::initialize(core::controller::ControllerServiceProvider* /*con
     if (configure->get(minifi::Configuration::nifi_c2_rest_heartbeat_minimize_updates, "c2.rest.heartbeat.minimize.updates", value_str)) {
       auto opt_value = utils::StringUtils::toBool(value_str);
       if (!opt_value) {
-        logger_->log_error("Cannot convert '%s' to bool for property '%s'", value_str, minifi::Configuration::nifi_c2_rest_heartbeat_minimize_updates);
+        logger_->log_error("Cannot convert '{}' to bool for property '{}'", value_str, minifi::Configuration::nifi_c2_rest_heartbeat_minimize_updates);
         minimize_updates_ = false;
       } else {
         minimize_updates_ = opt_value.value();

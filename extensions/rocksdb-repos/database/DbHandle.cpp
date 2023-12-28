@@ -23,7 +23,7 @@ namespace org::apache::nifi::minifi::internal {
 
 DbHandle::~DbHandle() {
   static auto logger = core::logging::LoggerFactory<DbHandle>::getLogger();
-  logger->log_trace("Closing database handle '%s'", handle->GetName());
+  logger->log_trace("Closing database handle '{}'", handle->GetName());
 }
 
 }  // namespace org::apache::nifi::minifi::internal

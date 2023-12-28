@@ -17,12 +17,10 @@
 # under the License.
 #
 
-cmake_minimum_required(VERSION 3.17)
+cmake_minimum_required(VERSION 3.24)
 cmake_policy(SET CMP0096 NEW) # policy to preserve the leading zeros in PROJECT_VERSION_{MAJOR,MINOR,PATCH,TWEAK}
 cmake_policy(SET CMP0065 OLD) # default export policy, required for self-dlopen
-if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
-    cmake_policy(SET CMP0135 NEW) # policy to set the timestamps of extracted contents to the time of extraction
-endif()
+cmake_policy(SET CMP0135 NEW) # policy to set the timestamps of extracted contents to the time of extraction
 
 project(nifi-minifi-cpp VERSION 0.15.0)
 set(PROJECT_NAME "nifi-minifi-cpp")
@@ -108,7 +106,7 @@ endif()
 # Enable usage of the VERSION specifier
 if (WIN32)
     add_compile_definitions(WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS NOMINMAX)
-    add_compile_options(/W3 /utf-8)
+    add_compile_options(/W3 /utf-8 /bigobj /MP)
 endif()
 
 if (NOT PORTABLE)
@@ -145,6 +143,11 @@ if (ASAN_BUILD)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${ASAN_FLAGS}")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${ASAN_FLAGS}")
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${ASAN_FLAGS}")
+endif()
+
+if (ENABLE_COVERAGE)
+    include(CodeCoverage)
+    append_coverage_compiler_flags()
 endif()
 
 #### Third party dependencies ####
@@ -240,10 +243,10 @@ if(NOT WIN32)
     use_bundled_osspuuid(${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 endif()
 
-# OpenSSL/LibreSSL
+# OpenSSL
 if (NOT OPENSSL_OFF)
-    include(BundledLibreSSL)
-    use_libre_ssl("${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
+    include(BundledOpenSSL)
+    use_openssl("${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
     list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/ssl")
 
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DOPENSSL_SUPPORT")
@@ -276,8 +279,7 @@ else()
 endif()
 
 # spdlog
-include(BundledSpdlog)
-use_bundled_spdlog(${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+include(Spdlog)
 
 # yaml-cpp
 include(BundledYamlCpp)
@@ -291,9 +293,6 @@ target_include_directories(concurrentqueue SYSTEM INTERFACE "${CMAKE_CURRENT_SOU
 add_library(RapidJSON INTERFACE)
 target_include_directories(RapidJSON SYSTEM INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/rapidjson-48fbd8cd202ca54031fe799db2ad44ffa8e77c13/include")
 target_compile_definitions(RapidJSON INTERFACE RAPIDJSON_HAS_STDSTRING)
-
-# cxxopts
-include(CxxOpts)
 
 include(Coroutines)
 enable_coroutines()
@@ -321,14 +320,8 @@ include(Date)
 # expected-lite
 include(ExpectedLite)
 
-# Update passthrough args used in configurations in patch commands
-if (WIN32)
-    set(PASSTHROUGH_CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /w")
-    set(PASSTHROUGH_CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /w")
-else()
-    set(PASSTHROUGH_CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w")
-    set(PASSTHROUGH_CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w")
-endif()
+# magic_enum
+include(MagicEnum)
 
 # Setup warning flags
 if(MSVC)
@@ -378,7 +371,7 @@ if (ENABLE_ENCRYPT_CONFIG)
     add_subdirectory(encrypt-config)
 endif()
 
-if (NOT DISABLE_CURL AND NOT DISABLE_CONTROLLER)
+if (NOT DISABLE_CURL AND ENABLE_CONTROLLER)
     add_subdirectory(controller)
 endif()
 
@@ -533,7 +526,7 @@ if (NOT WIN32)
         DESTINATION minifi-python
         COMPONENT bin)
 
-    install(PROGRAMS bin/minifi.sh
+    install(PROGRAMS bin/minifi.sh bin/minifi.service
         DESTINATION bin
         COMPONENT bin)
 endif()
@@ -594,6 +587,7 @@ set(EXTENSIONS_ENABLED_BY_DEFAULT (
     minifi-gcp
     minifi-http-curl
     minifi-archive-extensions
+    minifi-mqtt-extensions
     minifi-rdkafka-extensions
     minifi-pdh
     minifi-prometheus
@@ -681,3 +675,15 @@ add_custom_target(
     COMMAND java -jar ${CMAKE_SOURCE_DIR}/thirdparty/apache-rat/apache-rat-0.13/apache-rat-0.13.jar -E ${CMAKE_SOURCE_DIR}/thirdparty/apache-rat/.rat-excludes -d ${CMAKE_SOURCE_DIR} | grep -B 1 -A 15 Summary )
 
 feature_summary(WHAT ALL FILENAME ${CMAKE_BINARY_DIR}/all.log)
+
+if (ENABLE_COVERAGE)
+    set(GCOVR_ADDITIONAL_ARGS --gcov-ignore-parse-errors=negative_hits.warn --gcov-ignore-errors=no_working_dir_found)
+    setup_target_for_coverage_gcovr_html(
+        NAME coverage
+        EXCLUDE "build/*" "cmake/*" "minifi_main/*" "nanofi/*" "thirdparty/*" "libminifi/test/*" "extensions/http-curl/tests/*" "encrypt-config/tests/*" "extensions/aws/tests/*"
+            "extensions/civetweb/tests/*" "extensions/coap/tests/*" "extensions/elasticsearch/tests/*" "extensions/expression-language/tests/*" "extensions/gcp/tests/*" "extensions/kubernetes/tests/*"
+            "extensions/librdkafka/tests/*" "extensions/lua/tests/*" "extensions/mqtt/tests/*" "extensions/opencv/tests/*" "extensions/procfs/tests/*" "extensions/prometheus/tests/*" "extensions/script/tests/*"
+            "extensions/sftp/tests/*" "extensions/splunk/tests/*" "extensions/standard-processors/tests/*" "extensions/systemd/tests/*" "extensions/test-processors/*" "libminifi/include/utils/IntegrationTestUtils.h"
+            "libminifi/include/utils/TestUtils.h" "controller/MiNiFiController.cpp"
+    )
+endif()

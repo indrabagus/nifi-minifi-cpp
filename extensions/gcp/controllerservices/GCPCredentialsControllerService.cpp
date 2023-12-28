@@ -18,42 +18,22 @@
 
 #include "GCPCredentialsControllerService.h"
 
-#include "core/PropertyBuilder.h"
 #include "core/Resource.h"
 #include "google/cloud/storage/client.h"
+#include "utils/ProcessorConfigUtils.h"
 
 namespace gcs = ::google::cloud::storage;
 
 namespace org::apache::nifi::minifi::extensions::gcp {
 
-const core::Property GCPCredentialsControllerService::CredentialsLoc(
-    core::PropertyBuilder::createProperty("Credentials Location")
-        ->withDescription("The location of the credentials.")
-        ->withAllowableValues(CredentialsLocation::values())
-        ->withDefaultValue(toString(CredentialsLocation::USE_DEFAULT_CREDENTIALS))
-        ->isRequired(true)
-        ->build());
-
-const core::Property GCPCredentialsControllerService::JsonFilePath(
-    core::PropertyBuilder::createProperty("Service Account JSON File")
-        ->withDescription("Path to a file containing a Service Account key file in JSON format.")
-        ->isRequired(false)
-        ->build());
-
-const core::Property GCPCredentialsControllerService::JsonContents(
-    core::PropertyBuilder::createProperty("Service Account JSON")
-        ->withDescription("The raw JSON containing a Service Account keyfile.")
-        ->isRequired(false)
-        ->build());
-
 void GCPCredentialsControllerService::initialize() {
-  setSupportedProperties(properties());
+  setSupportedProperties(Properties);
 }
 
 std::shared_ptr<gcs::oauth2::Credentials> GCPCredentialsControllerService::createDefaultCredentials() const {
   auto default_credentials = gcs::oauth2::CreateServiceAccountCredentialsFromDefaultPaths();
   if (!default_credentials.ok()) {
-    logger_->log_error(default_credentials.status().message().c_str());
+    logger_->log_error("{}", default_credentials.status().message());
     return nullptr;
   }
   return *default_credentials;
@@ -61,14 +41,14 @@ std::shared_ptr<gcs::oauth2::Credentials> GCPCredentialsControllerService::creat
 
 std::shared_ptr<gcs::oauth2::Credentials> GCPCredentialsControllerService::createCredentialsFromJsonPath() const {
   std::string json_path;
-  if (!getProperty(JsonFilePath.getName(), json_path)) {
-    logger_->log_error("Missing or invalid %s", JsonFilePath.getName());
+  if (!getProperty(JsonFilePath, json_path)) {
+    logger_->log_error("Missing or invalid {}", JsonFilePath.name);
     return nullptr;
   }
 
   auto json_path_credentials = gcs::oauth2::CreateServiceAccountCredentialsFromJsonFilePath(json_path);
   if (!json_path_credentials.ok()) {
-    logger_->log_error(json_path_credentials.status().message().c_str());
+    logger_->log_error("{}", json_path_credentials.status().message());
     return nullptr;
   }
   return *json_path_credentials;
@@ -76,34 +56,38 @@ std::shared_ptr<gcs::oauth2::Credentials> GCPCredentialsControllerService::creat
 
 std::shared_ptr<gcs::oauth2::Credentials> GCPCredentialsControllerService::createCredentialsFromJsonContents() const {
   std::string json_contents;
-  if (!getProperty(JsonContents.getName(), json_contents)) {
-    logger_->log_error("Missing or invalid %s", JsonContents.getName());
+  if (!getProperty(JsonContents, json_contents)) {
+    logger_->log_error("Missing or invalid {}", JsonContents.name);
     return nullptr;
   }
 
   auto json_path_credentials = gcs::oauth2::CreateServiceAccountCredentialsFromJsonContents(json_contents);
   if (!json_path_credentials.ok()) {
-    logger_->log_error(json_path_credentials.status().message().c_str());
+    logger_->log_error("{}", json_path_credentials.status().message());
     return nullptr;
   }
   return *json_path_credentials;
 }
 
 void GCPCredentialsControllerService::onEnable() {
-  CredentialsLocation credentials_location;
-  if (!getProperty(CredentialsLoc.getName(), credentials_location)) {
-    logger_->log_error("Invalid Credentials Location, defaulting to %s", toString(CredentialsLocation::USE_DEFAULT_CREDENTIALS));
+  std::string value;
+  std::optional<CredentialsLocation> credentials_location;
+  if (getProperty(CredentialsLoc, value)) {
+    credentials_location = magic_enum::enum_cast<CredentialsLocation>(value);
+  }
+  if (!credentials_location) {
+    logger_->log_error("Invalid Credentials Location, defaulting to {}", magic_enum::enum_name(CredentialsLocation::USE_DEFAULT_CREDENTIALS));
     credentials_location = CredentialsLocation::USE_DEFAULT_CREDENTIALS;
   }
-  if (credentials_location == CredentialsLocation::USE_DEFAULT_CREDENTIALS) {
+  if (*credentials_location == CredentialsLocation::USE_DEFAULT_CREDENTIALS) {
     credentials_ = createDefaultCredentials();
-  } else if (credentials_location == CredentialsLocation::USE_COMPUTE_ENGINE_CREDENTIALS) {
+  } else if (*credentials_location == CredentialsLocation::USE_COMPUTE_ENGINE_CREDENTIALS) {
     credentials_ = gcs::oauth2::CreateComputeEngineCredentials();
-  } else if (credentials_location == CredentialsLocation::USE_JSON_FILE) {
+  } else if (*credentials_location == CredentialsLocation::USE_JSON_FILE) {
     credentials_ = createCredentialsFromJsonPath();
-  } else if (credentials_location == CredentialsLocation::USE_JSON_CONTENTS) {
+  } else if (*credentials_location == CredentialsLocation::USE_JSON_CONTENTS) {
     credentials_ = createCredentialsFromJsonContents();
-  } else if (credentials_location == CredentialsLocation::USE_ANONYMOUS_CREDENTIALS) {
+  } else if (*credentials_location == CredentialsLocation::USE_ANONYMOUS_CREDENTIALS) {
     credentials_ = gcs::oauth2::CreateAnonymousCredentials();
   }
   if (!credentials_)
@@ -112,4 +96,3 @@ void GCPCredentialsControllerService::onEnable() {
 
 REGISTER_RESOURCE(GCPCredentialsControllerService, ControllerService);
 }  // namespace org::apache::nifi::minifi::extensions::gcp
-

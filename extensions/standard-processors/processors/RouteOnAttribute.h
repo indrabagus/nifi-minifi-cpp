@@ -27,6 +27,7 @@
 #include "FlowFileRecord.h"
 #include "core/Processor.h"
 #include "core/ProcessSession.h"
+#include "core/RelationshipDefinition.h"
 #include "core/Core.h"
 #include "core/logging/LoggerConfiguration.h"
 
@@ -34,8 +35,8 @@ namespace org::apache::nifi::minifi::processors {
 
 class RouteOnAttribute : public core::Processor {
  public:
-  explicit RouteOnAttribute(std::string name, const utils::Identifier& uuid = {})
-      : core::Processor(std::move(name), uuid) {
+  explicit RouteOnAttribute(std::string_view name, const utils::Identifier& uuid = {})
+      : core::Processor(name, uuid) {
   }
 
   EXTENSIONAPI static constexpr const char* Description = "Routes FlowFiles based on their Attributes using the Attribute Expression Language.\n\n"
@@ -43,11 +44,11 @@ class RouteOnAttribute : public core::Processor {
       "FlowFiles will be routed to all the relationships whose matching property evaluates to \"true\". "
       "Unmatched FlowFiles will be routed to the \"unmatched\" relationship, while failed ones to \"failure\".";
 
-  static auto properties() { return std::array<core::Property, 0>{}; }
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 0>{};
 
-  EXTENSIONAPI static const core::Relationship Unmatched;
-  EXTENSIONAPI static const core::Relationship Failure;
-  static auto relationships() { return std::array{Unmatched, Failure}; }
+  EXTENSIONAPI static constexpr auto Unmatched = core::RelationshipDefinition{"unmatched", "Files which do not match any expression are routed here"};
+  EXTENSIONAPI static constexpr auto Failure = core::RelationshipDefinition{"failure", "Failed files are transferred to failure"};
+  EXTENSIONAPI static constexpr auto Relationships = std::array{Unmatched, Failure};
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = true;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = true;
@@ -57,7 +58,7 @@ class RouteOnAttribute : public core::Processor {
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
   void onDynamicPropertyModified(const core::Property &orig_property, const core::Property &new_property) override;
-  void onTrigger(core::ProcessContext *context, core::ProcessSession *session) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
   void initialize() override;
 
  private:

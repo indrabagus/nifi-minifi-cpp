@@ -49,13 +49,14 @@ else ()
     execute_process(COMMAND  ${PCAPPLUSPLUS_BASE_DIR}/configure-linux.sh --default WORKING_DIRECTORY  ${PCAPPLUSPLUS_BASE_DIR})
 endif ()
 
-add_custom_target(
-    pcappp
-    COMMAND make libs
-    WORKING_DIRECTORY ${PCAPPLUSPLUS_BASE_DIR}
-)
-
 set(PCAPPLUSPLUS_LIB_DIR "${PCAPPLUSPLUS_BASE_DIR}/Dist")
+
+add_custom_target(
+        pcappp
+        COMMAND make libs
+        BYPRODUCTS ${PCAPPLUSPLUS_LIB_DIR}/libPcap++.a ${PCAPPLUSPLUS_LIB_DIR}/libPacket++.a ${PCAPPLUSPLUS_LIB_DIR}/libCommon++.a
+        WORKING_DIRECTORY ${PCAPPLUSPLUS_BASE_DIR}
+)
 
 file(GLOB SOURCES  "*.cpp")
 
@@ -73,5 +74,5 @@ endif ()
 
 target_link_libraries(minifi-pcap ${LIBMINIFI} Threads::Threads)
 
-register_extension(minifi-pcap "PCAP EXTENSIONS" PCAP-EXTENSION "Enables libPCAP Functionality and the PacketCapture processor." "${TEST_DIR}/pcap-tests")
+register_extension(minifi-pcap "PCAP EXTENSIONS" PCAP-EXTENSION "Enables libPCAP Functionality and the PacketCapture processor." "extensions/pcap/tests")
 register_extension_linter(minifi-pcap-linter)

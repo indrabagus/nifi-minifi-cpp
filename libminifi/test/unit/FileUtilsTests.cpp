@@ -16,9 +16,9 @@
  * limitations under the License.
  */
 
+#include <iostream>
 #include <cstdlib>
 #include <fstream>
-#include <iostream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -27,10 +27,10 @@
 #include "../Catch.h"
 #include "core/Core.h"
 #include "utils/file/FileUtils.h"
-#include "utils/file/PathUtils.h"
 #include "utils/gsl.h"
-#include "utils/Environment.h"
 #include "utils/TimeUtil.h"
+
+using namespace std::literals::chrono_literals;
 
 namespace FileUtils = org::apache::nifi::minifi::utils::file;
 
@@ -185,11 +185,8 @@ TEST_CASE("TestFileUtils::addFilesMatchingExtension", "[TestAddFilesMatchingExte
 }
 
 TEST_CASE("FileUtils::last_write_time and last_write_time_point work", "[last_write_time][last_write_time_point]") {
-  using namespace std::chrono;
-  namespace fs = std::filesystem;
-
-  fs::file_time_type time_before_write = file_clock::now();
-  time_point<file_clock, seconds> time_point_before_write = time_point_cast<seconds>(file_clock::now());
+  auto time_before_write = std::chrono::file_clock::now();
+  auto time_point_before_write = std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::file_clock::now());
 
   TestController testController;
 
@@ -197,21 +194,21 @@ TEST_CASE("FileUtils::last_write_time and last_write_time_point work", "[last_wr
 
   auto test_file = dir / "test.txt";
   REQUIRE_FALSE(FileUtils::last_write_time(test_file).has_value());  // non existent file should not return last w.t.
-  REQUIRE(FileUtils::last_write_time_point(test_file) == (time_point<file_clock, seconds>{}));
+  REQUIRE(FileUtils::last_write_time_point(test_file) == (std::chrono::time_point<std::chrono::file_clock, std::chrono::seconds>{}));
 
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
   std::ofstream test_file_stream(test_file);
   test_file_stream << "foo\n";
   test_file_stream.flush();
 
-  fs::file_time_type time_after_first_write = file_clock::now();
-  time_point<file_clock, seconds> time_point_after_first_write = time_point_cast<seconds>(file_clock::now());
+  auto time_after_first_write = std::chrono::file_clock::now();
+  auto time_point_after_first_write = std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::file_clock::now());
 
-  fs::file_time_type first_mtime = FileUtils::last_write_time(test_file).value();
+  auto first_mtime = FileUtils::last_write_time(test_file).value();
   REQUIRE(first_mtime >= time_before_write);
   REQUIRE(first_mtime <= time_after_first_write);
 
-  time_point<file_clock, seconds> first_mtime_time_point = FileUtils::last_write_time_point(test_file);
+  auto first_mtime_time_point = FileUtils::last_write_time_point(test_file);
   REQUIRE(first_mtime_time_point >= time_point_before_write);
   REQUIRE(first_mtime_time_point <= time_point_after_first_write);
 
@@ -219,15 +216,15 @@ TEST_CASE("FileUtils::last_write_time and last_write_time_point work", "[last_wr
   test_file_stream << "bar\n";
   test_file_stream.flush();
 
-  fs::file_time_type time_after_second_write = file_clock::now();
-  time_point<file_clock, seconds> time_point_after_second_write = time_point_cast<seconds>(file_clock::now());
+  auto time_after_second_write = std::chrono::file_clock::now();
+  auto time_point_after_second_write = time_point_cast<std::chrono::seconds>(std::chrono::file_clock::now());
 
-  fs::file_time_type second_mtime = FileUtils::last_write_time(test_file).value();
+  auto second_mtime = FileUtils::last_write_time(test_file).value();
   REQUIRE(second_mtime >= first_mtime);
   REQUIRE(second_mtime >= time_after_first_write);
   REQUIRE(second_mtime <= time_after_second_write);
 
-  time_point<file_clock, seconds> second_mtime_time_point = FileUtils::last_write_time_point(test_file);
+  auto second_mtime_time_point = FileUtils::last_write_time_point(test_file);
   REQUIRE(second_mtime_time_point >= first_mtime_time_point);
   REQUIRE(second_mtime_time_point >= time_point_after_first_write);
   REQUIRE(second_mtime_time_point <= time_point_after_second_write);
@@ -236,10 +233,10 @@ TEST_CASE("FileUtils::last_write_time and last_write_time_point work", "[last_wr
 
   // On Windows it would rarely occur that the last_write_time is off by 1 from the previous check
 #ifndef WIN32
-  fs::file_time_type third_mtime = FileUtils::last_write_time(test_file).value();
+  auto third_mtime = FileUtils::last_write_time(test_file).value();
   REQUIRE(third_mtime == second_mtime);
 
-  time_point<file_clock, seconds> third_mtime_time_point = FileUtils::last_write_time_point(test_file);
+  auto third_mtime_time_point = FileUtils::last_write_time_point(test_file);
   REQUIRE(third_mtime_time_point == second_mtime_time_point);
 #endif
 }
@@ -368,7 +365,7 @@ TEST_CASE("FileUtils::set_permissions and get_permissions", "[TestSetPermissions
   std::ofstream outfile(path, std::ios::out | std::ios::binary);
 
   REQUIRE(FileUtils::set_permissions(path, 0644) == 0);
-  uint32_t perms;
+  uint32_t perms = 0;
   REQUIRE(FileUtils::get_permissions(path, perms));
   REQUIRE(perms == 0644);
 }
@@ -518,32 +515,33 @@ TEST_CASE("FileUtils::path_size", "[TestPathSize]") {
 }
 
 TEST_CASE("file_clock to system_clock conversion tests") {
-  using namespace std::chrono;
-
-  static_assert(system_clock::period::num == file_clock::period::num);
-  constexpr auto lowest_den = std::min(file_clock::period::den, system_clock::period::den);
-  using LeastPreciseDurationType = duration<std::common_type_t<system_clock::duration::rep, file_clock::duration::rep>, std::ratio<system_clock::period::num, lowest_den>>;
+  static_assert(std::chrono::system_clock::period::num == std::chrono::file_clock::period::num);
+  constexpr auto lowest_den = std::min(std::chrono::file_clock::period::den, std::chrono::system_clock::period::den);
+  using LeastPreciseDurationType = std::chrono::duration<std::common_type_t<std::chrono::system_clock::duration::rep, std::chrono::file_clock::duration::rep>,
+    std::ratio<std::chrono::system_clock::period::num, lowest_den>>;
 
   {
-    system_clock::time_point system_now = system_clock::now();
-    file_clock::time_point converted_system_now = FileUtils::from_sys(system_now);
-    system_clock::time_point double_converted_system_now = FileUtils::to_sys(converted_system_now);
+    std::chrono::system_clock::time_point system_now = std::chrono::system_clock::now();
+    std::chrono::file_clock::time_point converted_system_now = FileUtils::from_sys(system_now);
+    std::chrono::system_clock::time_point double_converted_system_now = FileUtils::to_sys(converted_system_now);
 
-    CHECK(time_point_cast<LeastPreciseDurationType>(system_now).time_since_epoch().count() == time_point_cast<LeastPreciseDurationType>(double_converted_system_now).time_since_epoch().count());
+    CHECK(std::chrono::time_point_cast<LeastPreciseDurationType>(system_now).time_since_epoch().count() ==
+      std::chrono::time_point_cast<LeastPreciseDurationType>(double_converted_system_now).time_since_epoch().count());
   }
 
   {
-    file_clock::time_point file_now = file_clock ::now();
-    system_clock::time_point converted_file_now = FileUtils::to_sys(file_now);
-    file_clock::time_point double_converted_file_now = FileUtils::from_sys(converted_file_now);
+    std::chrono::file_clock::time_point file_now = std::chrono::file_clock ::now();
+    std::chrono::system_clock::time_point converted_file_now = FileUtils::to_sys(file_now);
+    std::chrono::file_clock::time_point double_converted_file_now = FileUtils::from_sys(converted_file_now);
 
-    CHECK(time_point_cast<LeastPreciseDurationType>(file_now).time_since_epoch().count() == time_point_cast<LeastPreciseDurationType>(double_converted_file_now).time_since_epoch().count());
+    CHECK(std::chrono::time_point_cast<LeastPreciseDurationType>(file_now).time_since_epoch().count() ==
+      std::chrono::time_point_cast<LeastPreciseDurationType>(double_converted_file_now).time_since_epoch().count());
   }
 
   {
     // t0 <= t1
-    auto sys_time_t0 = system_clock::now();
-    auto file_time_t1 = file_clock ::now();
+    auto sys_time_t0 = std::chrono::system_clock::now();
+    auto file_time_t1 = std::chrono::file_clock ::now();
 
     auto file_time_from_t0 = FileUtils::from_sys(sys_time_t0);
     auto sys_time_from_t1 = FileUtils::to_sys(file_time_t1);

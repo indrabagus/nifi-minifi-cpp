@@ -26,48 +26,48 @@ NetworkListenerProcessor::~NetworkListenerProcessor() {
   stopServer();
 }
 
-void NetworkListenerProcessor::onTrigger(const std::shared_ptr<core::ProcessContext>&, const std::shared_ptr<core::ProcessSession>& session) {
-  gsl_Expects(session && max_batch_size_ > 0);
+void NetworkListenerProcessor::onTrigger(core::ProcessContext&, core::ProcessSession& session) {
+  gsl_Expects(max_batch_size_ > 0);
   size_t logs_processed = 0;
   while (!server_->queueEmpty() && logs_processed < max_batch_size_) {
     utils::net::Message received_message;
     if (!server_->tryDequeue(received_message))
       break;
-    transferAsFlowFile(received_message, *session);
+    transferAsFlowFile(received_message, session);
     ++logs_processed;
   }
 }
 
 NetworkListenerProcessor::ServerOptions NetworkListenerProcessor::readServerOptions(const core::ProcessContext& context) {
   ServerOptions options;
-  context.getProperty(getMaxBatchSizeProperty().getName(), max_batch_size_);
+  context.getProperty(getMaxBatchSizeProperty(), max_batch_size_);
   if (max_batch_size_ < 1)
     throw Exception(PROCESSOR_EXCEPTION, "Max Batch Size property is invalid");
 
   uint64_t max_queue_size = 0;
-  context.getProperty(getMaxQueueSizeProperty().getName(), max_queue_size);
+  context.getProperty(getMaxQueueSizeProperty(), max_queue_size);
   options.max_queue_size = max_queue_size > 0 ? std::optional<uint64_t>(max_queue_size) : std::nullopt;
 
-  context.getProperty(getPortProperty().getName(), options.port);
+  context.getProperty(getPortProperty(), options.port);
   return options;
 }
 
 void NetworkListenerProcessor::startServer(const ServerOptions& options, utils::net::IpProtocol protocol) {
   server_thread_ = std::thread([this]() { server_->run(); });
-  logger_->log_debug("Started %s server on port %d with %s max queue size and %zu max batch size",
-                     protocol.toString(),
+  logger_->log_debug("Started {} server on port {} with {} max queue size and {} max batch size",
+                     magic_enum::enum_name(protocol),
                      options.port,
                      options.max_queue_size ? std::to_string(*options.max_queue_size) : "unlimited",
                      max_batch_size_);
 }
 
-void NetworkListenerProcessor::startTcpServer(const core::ProcessContext& context, const core::Property& ssl_context_property, const core::Property& client_auth_property) {
+void NetworkListenerProcessor::startTcpServer(const core::ProcessContext& context, const core::PropertyReference& ssl_context_property, const core::PropertyReference& client_auth_property) {
   gsl_Expects(!server_thread_.joinable() && !server_);
   auto options = readServerOptions(context);
 
   std::string ssl_value;
   std::optional<utils::net::SslServerOptions> ssl_options;
-  if (context.getProperty(ssl_context_property.getName(), ssl_value) && !ssl_value.empty()) {
+  if (context.getProperty(ssl_context_property, ssl_value) && !ssl_value.empty()) {
     auto ssl_data = utils::net::getSslData(context, ssl_context_property, logger_);
     if (!ssl_data || !ssl_data->isValid()) {
       throw Exception(PROCESSOR_EXCEPTION, "SSL Context Service is set, but no valid SSL data was found!");

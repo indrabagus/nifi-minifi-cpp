@@ -15,15 +15,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef LIBMINIFI_INCLUDE_CORE_CORE_H_
-#define LIBMINIFI_INCLUDE_CORE_CORE_H_
+#pragma once
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN 1
 #endif
 
+#include <algorithm>
+#include <array>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <type_traits>
 
 #ifdef WIN32
 #pragma comment(lib, "shlwapi.lib")
@@ -63,36 +66,65 @@
 #include <cxxabi.h>
 #endif
 
+#include "utils/ArrayUtils.h"
 #include "utils/Id.h"
 #include "properties/Configure.h"
 #include "utils/StringUtils.h"
 
-/**
- * namespace aliasing
- */
+#if defined(_MSC_VER)
+constexpr std::string_view removeStructOrClassPrefix(std::string_view input) {
+  using namespace std::literals;
+  for (auto prefix : { "struct "sv, "class "sv }) {
+    if (input.find(prefix) == 0) {
+      return input.substr(prefix.size());
+    }
+  }
+  return input;
+}
+#endif
+
+// based on https://bitwizeshift.github.io/posts/2021/03/09/getting-an-unmangled-type-name-at-compile-time/
+template<typename T>
+constexpr auto typeNameArray() {  // In root namespace to avoid gcc-13 optimizing out namespaces from __PRETTY_FUNCTION__
+#if defined(__clang__)
+  constexpr auto prefix   = std::string_view{"[T = "};
+  constexpr auto suffix   = std::string_view{"]"};
+  constexpr auto function = std::string_view{__PRETTY_FUNCTION__};
+#elif defined(__GNUC__)
+  constexpr auto prefix   = std::string_view{"with T = "};
+  constexpr auto suffix   = std::string_view{"]"};
+  constexpr auto function = std::string_view{__PRETTY_FUNCTION__};
+#elif defined(_MSC_VER)
+  constexpr auto prefix   = std::string_view{"typeNameArray<"};
+  constexpr auto suffix   = std::string_view{">(void)"};
+  constexpr auto function = std::string_view{__FUNCSIG__};
+#else
+# error Unsupported compiler
+#endif
+
+  constexpr auto start = function.find(prefix) + prefix.size();
+  constexpr auto end = function.rfind(suffix);
+  static_assert(start < end);
+
+#if defined(_MSC_VER)
+  constexpr auto name = removeStructOrClassPrefix(function.substr(start, end - start));
+#else
+  constexpr auto name = function.substr(start, end - start);
+#endif
+
+  return org::apache::nifi::minifi::utils::string_view_to_array<name.length()>(name);
+}
+
 namespace org::apache::nifi::minifi::core {
 
 template<typename T>
-static inline std::string getClassName() {
-#ifndef WIN32
-  char *b = abi::__cxa_demangle(typeid(T).name(), 0, 0, 0);
-  if (b == nullptr)
-    return {};
-  std::string name = b;
-  std::free(b);
-  return name;
-#else
-  std::string_view name = typeid(T).name();
-  const std::string_view class_prefix = "class ";
-  const std::string_view struct_prefix = "struct ";
+struct TypeNameHolder {
+  static constexpr auto value = typeNameArray<T>();
+};
 
-  if (utils::StringUtils::startsWith(name, class_prefix)) {
-    name.remove_prefix(class_prefix.length());
-  } else if (utils::StringUtils::startsWith(name, struct_prefix)) {
-    name.remove_prefix(struct_prefix.length());
-  }
-  return std::string{name};
-#endif
+template<typename T>
+constexpr std::string_view className() {
+  return utils::array_to_string_view(TypeNameHolder<std::remove_reference_t<T>>::value);
 }
 
 template<typename T>
@@ -111,7 +143,7 @@ std::unique_ptr<T> instantiate(const std::string name = {}) {
  */
 class CoreComponent {
  public:
-  explicit CoreComponent(std::string name, const utils::Identifier &uuid = {}, const std::shared_ptr<utils::IdGenerator> &idGenerator = utils::IdGenerator::getIdGenerator());
+  explicit CoreComponent(std::string_view name, const utils::Identifier &uuid = {}, const std::shared_ptr<utils::IdGenerator> &idGenerator = utils::IdGenerator::getIdGenerator());
   CoreComponent(const CoreComponent &other) = default;
   CoreComponent(CoreComponent &&other) = default;
   CoreComponent& operator=(const CoreComponent&) = default;
@@ -162,5 +194,3 @@ class CoreComponent {
 };
 
 }  // namespace org::apache::nifi::minifi::core
-
-#endif  // LIBMINIFI_INCLUDE_CORE_CORE_H_

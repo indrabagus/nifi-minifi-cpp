@@ -37,11 +37,11 @@ namespace org::apache::nifi::minifi::provenance {
 std::shared_ptr<utils::IdGenerator> ProvenanceEventRecord::id_generator_ = utils::IdGenerator::getIdGenerator();
 std::shared_ptr<core::logging::Logger> ProvenanceEventRecord::logger_ = core::logging::LoggerFactory<ProvenanceEventRecord>::getLogger();
 
-const char *ProvenanceEventRecord::ProvenanceEventTypeStr[REPLAY + 1] = { "CREATE", "RECEIVE", "FETCH", "SEND", "DOWNLOAD", "DROP", "EXPIRE", "FORK", "JOIN", "CLONE", "CONTENT_MODIFIED",
-    "ATTRIBUTES_MODIFIED", "ROUTE", "ADDINFO", "REPLAY" };
+const char *ProvenanceEventRecord::ProvenanceEventTypeStr[REPLAY + 1] = { "CREATE", "RECEIVE", "FETCH", "SEND", "DOWNLOAD",  // NOLINT(cppcoreguidelines-avoid-c-arrays)
+    "DROP", "EXPIRE", "FORK", "JOIN", "CLONE", "CONTENT_MODIFIED", "ATTRIBUTES_MODIFIED", "ROUTE", "ADDINFO", "REPLAY" };
 
 ProvenanceEventRecord::ProvenanceEventRecord(ProvenanceEventRecord::ProvenanceEventType event, std::string componentId, std::string componentType)
-    : core::SerializableComponent(core::getClassName<ProvenanceEventRecord>()),
+    : core::SerializableComponent(core::className<ProvenanceEventRecord>()),
       _eventType(event),
       _componentId(std::move(componentId)),
       _componentType(std::move(componentType)),
@@ -50,7 +50,7 @@ ProvenanceEventRecord::ProvenanceEventRecord(ProvenanceEventRecord::ProvenanceEv
 
 bool ProvenanceEventRecord::loadFromRepository(const std::shared_ptr<core::Repository> &repo) {
   std::string value;
-  bool ret;
+  bool ret = false;
 
   if (nullptr == repo || uuid_.isNil()) {
     logger_->log_error("Repo could not be assigned");
@@ -59,10 +59,10 @@ bool ProvenanceEventRecord::loadFromRepository(const std::shared_ptr<core::Repos
   ret = repo->Get(getUUIDStr(), value);
 
   if (!ret) {
-    logger_->log_error("NiFi Provenance Store event %s can not be found", getUUIDStr());
+    logger_->log_error("NiFi Provenance Store event {} can not be found", getUUIDStr());
     return false;
   } else {
-    logger_->log_debug("NiFi Provenance Read event %s", getUUIDStr());
+    logger_->log_debug("NiFi Provenance Read event {}", getUUIDStr());
   }
 
   org::apache::nifi::minifi::io::BufferStream stream(value);
@@ -70,9 +70,9 @@ bool ProvenanceEventRecord::loadFromRepository(const std::shared_ptr<core::Repos
   ret = deserialize(stream);
 
   if (ret) {
-    logger_->log_debug("NiFi Provenance retrieve event %s size %llu eventType %d success", getUUIDStr(), stream.size(), _eventType);
+    logger_->log_debug("NiFi Provenance retrieve event {} size {} eventType {} success", getUUIDStr(), stream.size(), magic_enum::enum_name(_eventType));
   } else {
-    logger_->log_debug("NiFi Provenance retrieve event %s size %llu eventType %d fail", getUUIDStr(), stream.size(), _eventType);
+    logger_->log_debug("NiFi Provenance retrieve event {} size {} eventType {} fail", getUUIDStr(), stream.size(), magic_enum::enum_name(_eventType));
   }
 
   return ret;
@@ -249,7 +249,7 @@ bool ProvenanceEventRecord::deserialize(io::InputStream &input_stream) {
     }
   }
 
-  uint32_t eventType;
+  uint32_t eventType = 0;
   {
     const auto ret = input_stream.read(eventType);
     if (ret != 4) {
@@ -257,9 +257,14 @@ bool ProvenanceEventRecord::deserialize(io::InputStream &input_stream) {
     }
   }
 
-  this->_eventType = (ProvenanceEventRecord::ProvenanceEventType) eventType;
+  if (auto event_type_opt = magic_enum::enum_cast<ProvenanceEventRecord::ProvenanceEventType>(eventType)) {
+    _eventType = *event_type_opt;
+  } else {
+    return false;
+  }
+
   {
-    uint64_t event_time_in_ms;
+    uint64_t event_time_in_ms = 0;
     const auto ret = input_stream.read(event_time_in_ms);
     if (ret != 8) {
       return false;
@@ -268,7 +273,7 @@ bool ProvenanceEventRecord::deserialize(io::InputStream &input_stream) {
   }
 
   {
-    uint64_t entry_date_in_ms;
+    uint64_t entry_date_in_ms = 0;
     const auto ret = input_stream.read(entry_date_in_ms);
     if (ret != 8) {
       return false;
@@ -277,7 +282,7 @@ bool ProvenanceEventRecord::deserialize(io::InputStream &input_stream) {
   }
 
   {
-    uint64_t event_duration_ms;
+    uint64_t event_duration_ms = 0;
     const auto ret = input_stream.read(event_duration_ms);
     if (ret != 8) {
       return false;
@@ -286,7 +291,7 @@ bool ProvenanceEventRecord::deserialize(io::InputStream &input_stream) {
   }
 
   {
-    uint64_t lineage_start_date_in_ms;
+    uint64_t lineage_start_date_in_ms = 0;
     const auto ret = input_stream.read(lineage_start_date_in_ms);
     if (ret != 8) {
       return false;

@@ -73,7 +73,7 @@ const core::PropertyValidator* getValidator(const std::string& lookup_value) {
 }
 
 std::optional<std::string> ensureTimePeriodValidatedPropertyHasExplicitUnit(const core::PropertyValidator* const validator, std::string& value) {
-  if (validator != &core::StandardValidators::TIME_PERIOD_VALIDATOR)
+  if (validator != &core::StandardPropertyTypes::TIME_PERIOD_TYPE)
     return std::nullopt;
   if (value.empty() || !std::all_of(value.begin(), value.end(), [](unsigned char c){ return ::isdigit(c); }))
     return std::nullopt;
@@ -82,7 +82,7 @@ std::optional<std::string> ensureTimePeriodValidatedPropertyHasExplicitUnit(cons
 }
 
 std::optional<std::string> ensureDataSizeValidatedPropertyHasExplicitUnit(const core::PropertyValidator* const validator, std::string& value) {
-  if (validator != &core::StandardValidators::DATA_SIZE_VALIDATOR)
+  if (validator != &core::StandardPropertyTypes::DATA_SIZE_TYPE)
     return std::nullopt;
   if (value.empty() || !std::all_of(value.begin(), value.end(), [](unsigned char c){ return ::isdigit(c); }))
     return std::nullopt;
@@ -91,14 +91,14 @@ std::optional<std::string> ensureDataSizeValidatedPropertyHasExplicitUnit(const 
 }
 
 bool integerValidatedProperty(const core::PropertyValidator* const validator) {
-  return validator == &core::StandardValidators::INTEGER_VALIDATOR
-      || validator == &core::StandardValidators::UNSIGNED_INT_VALIDATOR
-      || validator == &core::StandardValidators::LONG_VALIDATOR
-      || validator == &core::StandardValidators::UNSIGNED_LONG_VALIDATOR;
+  return validator == &core::StandardPropertyTypes::INTEGER_TYPE
+      || validator == &core::StandardPropertyTypes::UNSIGNED_INT_TYPE
+      || validator == &core::StandardPropertyTypes::LONG_TYPE
+      || validator == &core::StandardPropertyTypes::UNSIGNED_LONG_TYPE;
 }
 
 std::optional<int64_t> stringToDataSize(std::string_view input) {
-  int64_t value;
+  int64_t value = 0;
   std::string unit_str;
   if (!utils::StringUtils::splitToValueAndUnit(input, value, unit_str)) {
     return std::nullopt;
@@ -108,6 +108,16 @@ std::optional<int64_t> stringToDataSize(std::string_view input) {
     return value * *unit_multiplier;
   }
   return std::nullopt;
+}
+
+std::optional<int64_t> stringToDataTransferSpeed(std::string_view input) {
+  std::string data_size;
+  try {
+    data_size = core::DataTransferSpeedValue::removePerSecSuffix(std::string(input));
+  } catch (const utils::internal::ParseException&) {
+    return std::nullopt;
+  }
+  return stringToDataSize(data_size);
 }
 
 std::optional<std::string> ensureIntegerValidatedPropertyHasNoUnit(const core::PropertyValidator* const validator, std::string& value) {
@@ -121,6 +131,10 @@ std::optional<std::string> ensureIntegerValidatedPropertyHasNoUnit(const core::P
 
   if (auto parsed_data_size = stringToDataSize(value)) {
     return fmt::format("{}", *parsed_data_size);
+  }
+
+  if (auto parsed_data_transfer_speed = stringToDataTransferSpeed(value)) {
+    return fmt::format("{}", *parsed_data_transfer_speed);
   }
 
   return std::nullopt;
@@ -144,12 +158,12 @@ void fixValidatedProperty(const std::string& property_name,
   }
 
   if (persisted_value == value) {
-    logger.log_info("Changed validated property from %s to %s, this change will be persisted",  value, *fixed_property_value);
+    logger.log_info("Changed validated property from {} to {}, this change will be persisted",  value, *fixed_property_value);
     value = *fixed_property_value;
     persisted_value = value;
     needs_to_persist_new_value = true;
   } else {
-    logger.log_info("Changed validated property from %s to %s, this change won't be persisted", value, *fixed_property_value);
+    logger.log_info("Changed validated property from {} to {}, this change won't be persisted", value, *fixed_property_value);
     value = *fixed_property_value;
     needs_to_persist_new_value = false;
   }
@@ -162,7 +176,7 @@ void fixValidatedProperty(const std::string& property_name,
 void Properties::loadConfigureFile(const std::filesystem::path& configuration_file, std::string_view prefix) {
   std::lock_guard<std::mutex> lock(mutex_);
   if (configuration_file.empty()) {
-    logger_->log_error("Configuration file path for %s is empty!", getName());
+    logger_->log_error("Configuration file path for {} is empty!", getName());
     return;
   }
 
@@ -170,16 +184,16 @@ void Properties::loadConfigureFile(const std::filesystem::path& configuration_fi
   properties_file_ = std::filesystem::canonical(getHome() / configuration_file, ec);
 
   if (ec.value() != 0) {
-    logger_->log_warn("Configuration file '%s' does not exist, so it could not be loaded.", configuration_file.string());
+    logger_->log_warn("Configuration file '{}' does not exist, so it could not be loaded.", configuration_file);
     return;
   }
 
-  logger_->log_info("Using configuration file to load configuration for %s from %s (located at %s)",
+  logger_->log_info("Using configuration file to load configuration for {} from {} (located at {})",
                     getName().c_str(), configuration_file.string(), properties_file_.string());
 
   std::ifstream file(properties_file_, std::ifstream::in);
   if (!file.good()) {
-    logger_->log_error("load configure file failed %s", properties_file_.string());
+    logger_->log_error("load configure file failed {}", properties_file_);
     return;
   }
   properties_.clear();
@@ -209,7 +223,7 @@ bool Properties::commitChanges() {
   }
   std::ifstream file(properties_file_, std::ifstream::in);
   if (!file) {
-    logger_->log_error("load configure file failed %s", properties_file_.string());
+    logger_->log_error("load configure file failed {}", properties_file_);
     return false;
   }
 
@@ -231,20 +245,20 @@ bool Properties::commitChanges() {
   try {
     current_content.writeTo(new_file);
   } catch (const std::exception&) {
-    logger_->log_error("Could not update %s", properties_file_.string());
+    logger_->log_error("Could not update {}", properties_file_);
     return false;
   }
 
   auto backup = properties_file_;
   backup += ".bak";
   if (utils::file::FileUtils::copy_file(properties_file_, backup) == 0 && utils::file::FileUtils::copy_file(new_file, properties_file_) == 0) {
-    logger_->log_info("Persisted %s", properties_file_.string());
+    logger_->log_info("Persisted {}", properties_file_);
     checksum_calculator_.invalidateChecksum();
     dirty_ = false;
     return true;
   }
 
-  logger_->log_error("Could not update %s", properties_file_.string());
+  logger_->log_error("Could not update {}", properties_file_);
   return false;
 }
 

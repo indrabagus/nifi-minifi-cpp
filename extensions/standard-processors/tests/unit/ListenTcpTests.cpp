@@ -22,10 +22,12 @@
 #include "Utils.h"
 #include "controllers/SSLContextService.h"
 #include "range/v3/algorithm/contains.hpp"
+#include "utils/IntegrationTestUtils.h"
 
 using ListenTCP = org::apache::nifi::minifi::processors::ListenTCP;
 
 using namespace std::literals::chrono_literals;
+using org::apache::nifi::minifi::utils::verifyLogLinePresenceInPollTime;
 
 namespace org::apache::nifi::minifi::test {
 
@@ -43,13 +45,13 @@ TEST_CASE("ListenTCP test multiple messages", "[ListenTCP][NetworkListenerProces
   auto port = utils::scheduleProcessorOnRandomPort(controller.plan, listen_tcp);
 
   asio::ip::tcp::endpoint endpoint;
-  SECTION("sending through IPv4", "[IPv4]") {
-    endpoint = asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), port);
-  }
   SECTION("sending through IPv6", "[IPv6]") {
     if (utils::isIPv6Disabled())
-      return;
+      SKIP("IPv6 is disabled");
     endpoint = asio::ip::tcp::endpoint(asio::ip::address_v6::loopback(), port);
+  }
+  SECTION("sending through IPv4", "[IPv4]") {
+    endpoint = asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), port);
   }
 
   CHECK_THAT(utils::sendMessagesViaTCP({"test_message_1"}, endpoint), MatchesSuccess());
@@ -84,13 +86,13 @@ TEST_CASE("ListenTCP max queue and max batch size test", "[ListenTCP][NetworkLis
   auto port = utils::scheduleProcessorOnRandomPort(controller.plan, listen_tcp);
 
   asio::ip::tcp::endpoint endpoint;
-  SECTION("sending through IPv4", "[IPv4]") {
-    endpoint = asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), port);
-  }
   SECTION("sending through IPv6", "[IPv6]") {
     if (utils::isIPv6Disabled())
-      return;
+      SKIP("IPv6 is disabled");
     endpoint = asio::ip::tcp::endpoint(asio::ip::address_v6::loopback(), port);
+  }
+  SECTION("sending through IPv4", "[IPv4]") {
+    endpoint = asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), port);
   }
 
   LogTestController::getInstance().setWarn<ListenTCP>();
@@ -115,12 +117,12 @@ TEST_CASE("Test ListenTCP with SSL connection", "[ListenTCP][NetworkListenerProc
   auto ssl_context_service = controller.plan->addController("SSLContextService", "SSLContextService");
   LogTestController::getInstance().setTrace<ListenTCP>();
   const auto executable_dir = minifi::utils::file::FileUtils::get_executable_dir();
-  REQUIRE(controller.plan->setProperty(ssl_context_service, controllers::SSLContextService::CACertificate.getName(), (executable_dir / "resources" / "ca_A.crt").string()));
-  REQUIRE(controller.plan->setProperty(ssl_context_service, controllers::SSLContextService::ClientCertificate.getName(), (executable_dir / "resources" / "localhost_by_A.pem").string()));
-  REQUIRE(controller.plan->setProperty(ssl_context_service, controllers::SSLContextService::PrivateKey.getName(), (executable_dir / "resources" / "localhost_by_A.pem").string()));
-  REQUIRE(controller.plan->setProperty(ssl_context_service, controllers::SSLContextService::Passphrase.getName(), "Password12"));
-  REQUIRE(controller.plan->setProperty(listen_tcp, ListenTCP::MaxBatchSize.getName(), "2"));
-  REQUIRE(controller.plan->setProperty(listen_tcp, ListenTCP::SSLContextService.getName(), "SSLContextService"));
+  REQUIRE(controller.plan->setProperty(ssl_context_service, controllers::SSLContextService::CACertificate, (executable_dir / "resources" / "ca_A.crt").string()));
+  REQUIRE(controller.plan->setProperty(ssl_context_service, controllers::SSLContextService::ClientCertificate, (executable_dir / "resources" / "localhost_by_A.pem").string()));
+  REQUIRE(controller.plan->setProperty(ssl_context_service, controllers::SSLContextService::PrivateKey, (executable_dir / "resources" / "localhost.key").string()));
+  REQUIRE(controller.plan->setProperty(ssl_context_service, controllers::SSLContextService::Passphrase, "Password12"));
+  REQUIRE(controller.plan->setProperty(listen_tcp, ListenTCP::MaxBatchSize, "2"));
+  REQUIRE(controller.plan->setProperty(listen_tcp, ListenTCP::SSLContextService, "SSLContextService"));
   std::vector<std::string> expected_successful_messages;
 
   asio::ip::tcp::endpoint endpoint;
@@ -129,26 +131,26 @@ TEST_CASE("Test ListenTCP with SSL connection", "[ListenTCP][NetworkListenerProc
     SECTION("Client certificate not required, Client Auth set to NONE by default") {
       ssl_context_service->enable();
       port = utils::scheduleProcessorOnRandomPort(controller.plan, listen_tcp);
-      SECTION("sending through IPv4", "[IPv4]") {
-        endpoint = asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), port);
-      }
       SECTION("sending through IPv6", "[IPv6]") {
         if (utils::isIPv6Disabled())
-          return;
+          SKIP("IPv6 is disabled");
         endpoint = asio::ip::tcp::endpoint(asio::ip::address_v6::loopback(), port);
+      }
+      SECTION("sending through IPv4", "[IPv4]") {
+        endpoint = asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), port);
       }
     }
     SECTION("Client certificate not required, but validated if provided") {
-      REQUIRE(controller.plan->setProperty(listen_tcp, ListenTCP::ClientAuth.getName(), "WANT"));
+      REQUIRE(controller.plan->setProperty(listen_tcp, ListenTCP::ClientAuth, "WANT"));
       ssl_context_service->enable();
       port = utils::scheduleProcessorOnRandomPort(controller.plan, listen_tcp);
-      SECTION("sending through IPv4", "[IPv4]") {
-        endpoint = asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), port);
-      }
       SECTION("sending through IPv6", "[IPv6]") {
         if (utils::isIPv6Disabled())
-          return;
+          SKIP("IPv6 is disabled");
         endpoint = asio::ip::tcp::endpoint(asio::ip::address_v6::loopback(), port);
+      }
+      SECTION("sending through IPv4", "[IPv4]") {
+        endpoint = asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), port);
       }
     }
 
@@ -160,36 +162,36 @@ TEST_CASE("Test ListenTCP with SSL connection", "[ListenTCP][NetworkListenerProc
 
   SECTION("With client certificate provided") {
     SECTION("Client certificate required") {
-      REQUIRE(controller.plan->setProperty(listen_tcp, ListenTCP::ClientAuth.getName(), "REQUIRED"));
+      REQUIRE(controller.plan->setProperty(listen_tcp, ListenTCP::ClientAuth, "REQUIRED"));
       ssl_context_service->enable();
       port = utils::scheduleProcessorOnRandomPort(controller.plan, listen_tcp);
-      SECTION("sending through IPv4", "[IPv4]") {
-        endpoint = asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), port);
-      }
       SECTION("sending through IPv6", "[IPv6]") {
         if (utils::isIPv6Disabled())
-          return;
+          SKIP("IPv6 is disabled");
         endpoint = asio::ip::tcp::endpoint(asio::ip::address_v6::loopback(), port);
+      }
+      SECTION("sending through IPv4", "[IPv4]") {
+        endpoint = asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), port);
       }
     }
     SECTION("Client certificate not required but validated") {
-      REQUIRE(controller.plan->setProperty(listen_tcp, ListenTCP::ClientAuth.getName(), "WANT"));
+      REQUIRE(controller.plan->setProperty(listen_tcp, ListenTCP::ClientAuth, "WANT"));
       ssl_context_service->enable();
       port = utils::scheduleProcessorOnRandomPort(controller.plan, listen_tcp);
-      SECTION("sending through IPv4", "[IPv4]") {
-        endpoint = asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), port);
-      }
       SECTION("sending through IPv6", "[IPv6]") {
         if (utils::isIPv6Disabled())
-          return;
+          SKIP("IPv6 is disabled");
         endpoint = asio::ip::tcp::endpoint(asio::ip::address_v6::loopback(), port);
+      }
+      SECTION("sending through IPv4", "[IPv4]") {
+        endpoint = asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), port);
       }
     }
 
     minifi::utils::net::SslData ssl_data;
     ssl_data.ca_loc = executable_dir / "resources" / "ca_A.crt";
     ssl_data.cert_loc = executable_dir / "resources" / "localhost_by_A.pem";
-    ssl_data.key_loc = executable_dir / "resources" / "localhost_by_A.pem";
+    ssl_data.key_loc = executable_dir / "resources" / "localhost.key";
     ssl_data.key_pw = "Password12";
 
     expected_successful_messages = {"test_message_1", "another_message"};
@@ -200,18 +202,19 @@ TEST_CASE("Test ListenTCP with SSL connection", "[ListenTCP][NetworkListenerProc
 
   SECTION("Required certificate not provided") {
     ssl_context_service->enable();
-    REQUIRE(controller.plan->setProperty(listen_tcp, ListenTCP::ClientAuth.getName(), "REQUIRED"));
+    REQUIRE(controller.plan->setProperty(listen_tcp, ListenTCP::ClientAuth, "REQUIRED"));
     port = utils::scheduleProcessorOnRandomPort(controller.plan, listen_tcp);
+    SECTION("sending through IPv6", "[IPv6]") {
+      if (utils::isIPv6Disabled())
+        SKIP("IPv6 is disabled");
+      endpoint = asio::ip::tcp::endpoint(asio::ip::address_v6::loopback(), port);
+    }
     SECTION("sending through IPv4", "[IPv4]") {
       endpoint = asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), port);
     }
-    SECTION("sending through IPv6", "[IPv6]") {
-      if (utils::isIPv6Disabled())
-        return;
-      endpoint = asio::ip::tcp::endpoint(asio::ip::address_v6::loopback(), port);
-    }
 
-    CHECK_THAT(utils::sendMessagesViaSSL({"test_message_1"}, endpoint, executable_dir / "resources" / "ca_A.crt"), MatchesError());
+    utils::sendMessagesViaSSL({"test_message_1"}, endpoint, executable_dir / "resources" / "ca_A.crt");
+    CHECK(verifyLogLinePresenceInPollTime(std::chrono::seconds(3), "peer did not return a certificate (SSL routines)"));
   }
 
   ProcessorTriggerResult result;
@@ -243,13 +246,13 @@ TEST_CASE("Test ListenTCP SSL/TLS compatibility", "[ListenTCP][NetworkListenerPr
   auto ssl_context_service = controller.plan->addController("SSLContextService", "SSLContextService");
   LogTestController::getInstance().setTrace<ListenTCP>();
   const auto executable_dir = minifi::utils::file::FileUtils::get_executable_dir();
-  REQUIRE(controller.plan->setProperty(ssl_context_service, controllers::SSLContextService::CACertificate.getName(), (executable_dir / "resources" / "ca_A.crt").string()));
-  REQUIRE(controller.plan->setProperty(ssl_context_service, controllers::SSLContextService::ClientCertificate.getName(), (executable_dir / "resources" / "localhost_by_A.pem").string()));
-  REQUIRE(controller.plan->setProperty(ssl_context_service, controllers::SSLContextService::PrivateKey.getName(), (executable_dir / "resources" / "localhost_by_A.pem").string()));
-  REQUIRE(controller.plan->setProperty(ssl_context_service, controllers::SSLContextService::Passphrase.getName(), "Password12"));
-  REQUIRE(controller.plan->setProperty(listen_tcp, ListenTCP::MaxBatchSize.getName(), "2"));
-  REQUIRE(controller.plan->setProperty(listen_tcp, ListenTCP::SSLContextService.getName(), "SSLContextService"));
-  REQUIRE(controller.plan->setProperty(listen_tcp, ListenTCP::ClientAuth.getName(), "REQUIRED"));
+  REQUIRE(controller.plan->setProperty(ssl_context_service, controllers::SSLContextService::CACertificate, (executable_dir / "resources" / "ca_A.crt").string()));
+  REQUIRE(controller.plan->setProperty(ssl_context_service, controllers::SSLContextService::ClientCertificate, (executable_dir / "resources" / "localhost_by_A.pem").string()));
+  REQUIRE(controller.plan->setProperty(ssl_context_service, controllers::SSLContextService::PrivateKey, (executable_dir / "resources" / "localhost.key").string()));
+  REQUIRE(controller.plan->setProperty(ssl_context_service, controllers::SSLContextService::Passphrase, "Password12"));
+  REQUIRE(controller.plan->setProperty(listen_tcp, ListenTCP::MaxBatchSize, "2"));
+  REQUIRE(controller.plan->setProperty(listen_tcp, ListenTCP::SSLContextService, "SSLContextService"));
+  REQUIRE(controller.plan->setProperty(listen_tcp, ListenTCP::ClientAuth, "REQUIRED"));
 
   ssl_context_service->enable();
   uint16_t port = utils::scheduleProcessorOnRandomPort(controller.plan, listen_tcp);
@@ -258,7 +261,7 @@ TEST_CASE("Test ListenTCP SSL/TLS compatibility", "[ListenTCP][NetworkListenerPr
   minifi::utils::net::SslData ssl_data;
   ssl_data.ca_loc = executable_dir / "resources" / "ca_A.crt";
   ssl_data.cert_loc = executable_dir / "resources" / "localhost_by_A.pem";
-  ssl_data.key_loc = executable_dir / "resources" / "localhost_by_A.pem";
+  ssl_data.key_loc = executable_dir / "resources" / "localhost.key";
   ssl_data.key_pw = "Password12";
 
 

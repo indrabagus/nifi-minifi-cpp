@@ -26,7 +26,6 @@
 #include <map>
 #include <set>
 #include <list>
-#include <string>
 #include <utility>
 #include <vector>
 #include <tuple>
@@ -39,17 +38,11 @@
 #include "core/ProcessContext.h"
 #include "core/Resource.h"
 #include "io/BufferStream.h"
-#include "io/StreamFactory.h"
 #include "rapidjson/ostreamwrapper.h"
 
 using namespace std::literals::chrono_literals;
 
 namespace org::apache::nifi::minifi::processors {
-
-const std::map<std::string, uint64_t> ListSFTP::LISTING_LAG_MAP = {
-  {ListSFTP::TARGET_SYSTEM_TIMESTAMP_PRECISION_SECONDS, 1000},
-  {ListSFTP::TARGET_SYSTEM_TIMESTAMP_PRECISION_MINUTES, 60000},
-};
 
 namespace {
 uint64_t toUnixTime(const std::optional<std::chrono::system_clock::time_point> time_point) {
@@ -69,79 +62,79 @@ std::optional<std::chrono::system_clock::time_point> fromUnixTime(const uint64_t
 void ListSFTP::initialize() {
   logger_->log_trace("Initializing FetchSFTP");
 
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
-ListSFTP::ListSFTP(std::string name, const utils::Identifier& uuid /*= utils::Identifier()*/)
-    : SFTPProcessorBase(std::move(name), uuid) {
+ListSFTP::ListSFTP(std::string_view name, const utils::Identifier& uuid /*= utils::Identifier()*/)
+    : SFTPProcessorBase(name, uuid) {
   logger_ = core::logging::LoggerFactory<ListSFTP>::getLogger(uuid_);
 }
 
 ListSFTP::~ListSFTP() = default;
 
-void ListSFTP::onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory>& /*sessionFactory*/) {
+void ListSFTP::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory&) {
   parseCommonPropertiesOnSchedule(context);
 
-  state_manager_ = context->getStateManager();
+  state_manager_ = context.getStateManager();
   if (state_manager_ == nullptr) {
     throw Exception(PROCESSOR_EXCEPTION, "Failed to get StateManager");
   }
 
   std::string value;
-  context->getProperty(ListingStrategy.getName(), listing_strategy_);
+  context.getProperty(ListingStrategy, listing_strategy_);
   if (!last_listing_strategy_.empty() && last_listing_strategy_ != listing_strategy_) {
     invalidateCache();
   }
   last_listing_strategy_ = listing_strategy_;
-  if (!context->getProperty(SearchRecursively.getName(), value)) {
+  if (!context.getProperty(SearchRecursively, value)) {
     logger_->log_error("Search Recursively attribute is missing or invalid");
   } else {
     search_recursively_ = utils::StringUtils::toBool(value).value_or(false);
   }
-  if (!context->getProperty(FollowSymlink.getName(), value)) {
+  if (!context.getProperty(FollowSymlink, value)) {
     logger_->log_error("Follow symlink attribute is missing or invalid");
   } else {
     follow_symlink_ = utils::StringUtils::toBool(value).value_or(false);
   }
-  if (context->getProperty(FileFilterRegex.getName(), file_filter_regex_) && !file_filter_regex_.empty()) {
+  if (context.getProperty(FileFilterRegex, file_filter_regex_) && !file_filter_regex_.empty()) {
     try {
       compiled_file_filter_regex_ = utils::Regex(file_filter_regex_);
     } catch (const Exception &e) {
-      logger_->log_error("Failed to compile File Filter Regex \"%s\"", file_filter_regex_.c_str());
+      logger_->log_error("Failed to compile File Filter Regex \"{}\"", file_filter_regex_.c_str());
     }
   }
-  if (context->getProperty(PathFilterRegex.getName(), path_filter_regex_) && !path_filter_regex_.empty()) {
+  if (context.getProperty(PathFilterRegex, path_filter_regex_) && !path_filter_regex_.empty()) {
     try {
       compiled_path_filter_regex_ = utils::Regex(path_filter_regex_);
     } catch (const Exception &e) {
-      logger_->log_error("Failed to compile Path Filter Regex \"%s\"", path_filter_regex_.c_str());
+      logger_->log_error("Failed to compile Path Filter Regex \"{}\"", path_filter_regex_.c_str());
     }
   }
-  if (!context->getProperty(IgnoreDottedFiles.getName(), value)) {
+  if (!context.getProperty(IgnoreDottedFiles, value)) {
     logger_->log_error("Ignore Dotted Files attribute is missing or invalid");
   } else {
     ignore_dotted_files_ = utils::StringUtils::toBool(value).value_or(true);
   }
-  context->getProperty(TargetSystemTimestampPrecision.getName(), target_system_timestamp_precision_);
-  context->getProperty(EntityTrackingInitialListingTarget.getName(), entity_tracking_initial_listing_target_);
+  context.getProperty(TargetSystemTimestampPrecision, target_system_timestamp_precision_);
+  context.getProperty(EntityTrackingInitialListingTarget, entity_tracking_initial_listing_target_);
 
-  if (auto minimum_file_age = context->getProperty<core::TimePeriodValue>(MinimumFileAge)) {
+  if (auto minimum_file_age = context.getProperty<core::TimePeriodValue>(MinimumFileAge)) {
     minimum_file_age_ = minimum_file_age->getMilliseconds();
   } else {
     logger_->log_error("Minimum File Age attribute is missing or invalid");
   }
 
-  if (auto maximum_file_age = context->getProperty<core::TimePeriodValue>(MaximumFileAge)) {
+  if (auto maximum_file_age = context.getProperty(MaximumFileAge) | utils::andThen(&core::TimePeriodValue::fromString)) {
     maximum_file_age_ = maximum_file_age->getMilliseconds();
   } else {
     logger_->log_error("Maximum File Age attribute is missing or invalid");
   }
 
-  if (!context->getProperty(MinimumFileSize.getName(), minimum_file_size_)) {
+  if (!context.getProperty(MinimumFileSize, minimum_file_size_)) {
     logger_->log_error("Minimum File Size attribute is invalid");
   }
-  if (context->getProperty(MaximumFileSize.getName(), value)) {
+  if (context.getProperty(MaximumFileSize, value)) {
     if (!core::DataSizeValue::StringToInt(value, maximum_file_size_)) {
       logger_->log_error("Maximum File Size attribute is invalid");
     }
@@ -164,8 +157,8 @@ void ListSFTP::invalidateCache() {
   already_listed_entities_.clear();
 }
 
-ListSFTP::Child::Child(const std::string& parent_path_, std::tuple<std::string /* filename */, std::string /* longentry */, LIBSSH2_SFTP_ATTRIBUTES /* attrs */>&& sftp_child) {
-  parent_path = parent_path_;
+ListSFTP::Child::Child(const std::string& parent_path_, std::tuple<std::string /* filename */, std::string /* longentry */, LIBSSH2_SFTP_ATTRIBUTES /* attrs */>&& sftp_child)
+    : parent_path(parent_path_) {
   std::tie(filename, std::ignore, attrs) = std::move(sftp_child);
   directory = LIBSSH2_SFTP_S_ISDIR(attrs.permissions);
 }
@@ -179,7 +172,7 @@ bool ListSFTP::filter(const std::string& parent_path, const std::tuple<std::stri
   const LIBSSH2_SFTP_ATTRIBUTES& attrs = std::get<2>(sftp_child);
   /* This should not happen */
   if (filename.empty()) {
-    logger_->log_error("Listing directory \"%s\" returned an empty child", parent_path.c_str());
+    logger_->log_error("Listing directory \"{}\" returned an empty child", parent_path.c_str());
     return false;
   }
   /* Ignore current dir and parent dir */
@@ -188,12 +181,12 @@ bool ListSFTP::filter(const std::string& parent_path, const std::tuple<std::stri
   }
   /* Dotted files */
   if (ignore_dotted_files_ && filename[0] == '.') {
-    logger_->log_debug("Ignoring \"%s/%s\" because Ignore Dotted Files is true", parent_path.c_str(), filename.c_str());
+    logger_->log_debug("Ignoring \"{}/{}\" because Ignore Dotted Files is true", parent_path.c_str(), filename.c_str());
     return false;
   }
   if (!(attrs.flags & LIBSSH2_SFTP_ATTR_PERMISSIONS)) {
     // TODO(Bakai): maybe do a fallback stat here
-    logger_->log_error("Failed to get permissions in stat for \"%s/%s\"", parent_path.c_str(), filename.c_str());
+    logger_->log_error("Failed to get permissions in stat for \"{}/{}\"", parent_path.c_str(), filename.c_str());
     return false;
   }
   if (LIBSSH2_SFTP_S_ISREG(attrs.permissions)) {
@@ -201,7 +194,7 @@ bool ListSFTP::filter(const std::string& parent_path, const std::tuple<std::stri
   } else if (LIBSSH2_SFTP_S_ISDIR(attrs.permissions)) {
     return filterDirectory(parent_path, filename, attrs);
   } else {
-    logger_->log_debug("Skipping non-regular, non-directory file \"%s/%s\"", parent_path.c_str(), filename.c_str());
+    logger_->log_debug("Skipping non-regular, non-directory file \"{}/{}\"", parent_path.c_str(), filename.c_str());
     return false;
   }
 }
@@ -211,32 +204,32 @@ bool ListSFTP::filterFile(const std::string& parent_path, const std::string& fil
       !(attrs.flags & LIBSSH2_SFTP_ATTR_SIZE) ||
       !(attrs.flags & LIBSSH2_SFTP_ATTR_ACMODTIME)) {
     // TODO(Bakai): maybe do a fallback stat here
-    logger_->log_error("Failed to get all attributes in stat for \"%s/%s\"", parent_path.c_str(), filename.c_str());
+    logger_->log_error("Failed to get all attributes in stat for \"{}/{}\"", parent_path.c_str(), filename.c_str());
     return false;
   }
 
   /* Age */
   auto file_age = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - std::chrono::system_clock::from_time_t(gsl::narrow<time_t>(attrs.mtime)));
   if (file_age < minimum_file_age_) {
-    logger_->log_debug("Ignoring \"%s/%s\" because it is younger than the Minimum File Age: %ld ms < %lu ms",
+    logger_->log_debug("Ignoring \"{}/{}\" because it is younger than the Minimum File Age: {} < {}",
         parent_path.c_str(),
         filename.c_str(),
-        file_age.count(),
-        minimum_file_age_.count());
+        file_age,
+        minimum_file_age_);
     return false;
   }
   if (maximum_file_age_ != 0ms && file_age > maximum_file_age_) {
-    logger_->log_debug("Ignoring \"%s/%s\" because it is older than the Maximum File Age: %" PRId64 " ms > %" PRId64 " ms",
+    logger_->log_debug("Ignoring \"{}/{}\" because it is older than the Maximum File Age: {} > {}",
                        parent_path.c_str(),
                        filename.c_str(),
-                       int64_t{file_age.count()},
-                       int64_t{maximum_file_age_.count()});
+                       file_age,
+                       maximum_file_age_);
     return false;
   }
 
   /* Size */
   if (attrs.filesize < minimum_file_size_) {
-    logger_->log_debug("Ignoring \"%s/%s\" because it is smaller than the Minimum File Size: %lu B < %lu B",
+    logger_->log_debug("Ignoring \"{}/{}\" because it is smaller than the Minimum File Size: {} B < {} B",
                        parent_path.c_str(),
                        filename.c_str(),
                        attrs.filesize,
@@ -244,7 +237,7 @@ bool ListSFTP::filterFile(const std::string& parent_path, const std::string& fil
     return false;
   }
   if (maximum_file_size_ != 0U && attrs.filesize > maximum_file_size_) {
-    logger_->log_debug("Ignoring \"%s/%s\" because it is larger than the Maximum File Size: %lu B > %lu B",
+    logger_->log_debug("Ignoring \"{}/{}\" because it is larger than the Maximum File Size: {} B > {} B",
                        parent_path.c_str(),
                        filename.c_str(),
                        attrs.filesize,
@@ -257,7 +250,7 @@ bool ListSFTP::filterFile(const std::string& parent_path, const std::string& fil
     bool match = false;
     match = utils::regexMatch(filename, *compiled_file_filter_regex_);
     if (!match) {
-      logger_->log_debug(R"(Ignoring "%s/%s" because it did not match the File Filter Regex "%s")",
+      logger_->log_debug(R"(Ignoring "{}/{}" because it did not match the File Filter Regex "{}")",
                          parent_path.c_str(),
                          filename.c_str(),
                          file_filter_regex_);
@@ -279,7 +272,7 @@ bool ListSFTP::filterDirectory(const std::string& parent_path, const std::string
     bool match = false;
     match = utils::regexMatch(dir_path, *compiled_path_filter_regex_);
     if (!match) {
-      logger_->log_debug(R"(Not recursing into "%s" because it did not match the Path Filter Regex "%s")",
+      logger_->log_debug(R"(Not recursing into "{}" because it did not match the Path Filter Regex "{}")",
                          dir_path.c_str(),
                          path_filter_regex_);
       return false;
@@ -290,49 +283,49 @@ bool ListSFTP::filterDirectory(const std::string& parent_path, const std::string
 }
 
 bool ListSFTP::createAndTransferFlowFileFromChild(
-    const std::shared_ptr<core::ProcessSession>& session,
+    core::ProcessSession& session,
     const std::string& hostname,
     uint16_t port,
     const std::string& username,
     const ListSFTP::Child& child) {
   /* Convert mtime to string */
   if (child.attrs.mtime > gsl::narrow<uint64_t>(std::numeric_limits<int64_t>::max())) {
-    logger_->log_error("Modification date %lu of \"%s/%s\" larger than int64_t max", child.attrs.mtime, child.parent_path.c_str(), child.filename.c_str());
+    logger_->log_error("Modification date {} of \"{}/{}\" larger than int64_t max", child.attrs.mtime, child.parent_path.c_str(), child.filename.c_str());
     return true;
   }
   auto mtime_str = utils::timeutils::getDateTimeStr(date::sys_seconds{std::chrono::seconds(child.attrs.mtime)});
 
   /* Create FlowFile */
-  auto flow_file = session->create();
+  auto flow_file = session.create();
   if (flow_file == nullptr) {
     logger_->log_error("Failed to create FlowFileRecord");
     return false;
   }
 
   /* Set attributes */
-  session->putAttribute(flow_file, ATTRIBUTE_SFTP_REMOTE_HOST, hostname);
-  session->putAttribute(flow_file, ATTRIBUTE_SFTP_REMOTE_PORT, std::to_string(port));
-  session->putAttribute(flow_file, ATTRIBUTE_SFTP_LISTING_USER, username);
+  session.putAttribute(flow_file, ATTRIBUTE_SFTP_REMOTE_HOST, hostname);
+  session.putAttribute(flow_file, ATTRIBUTE_SFTP_REMOTE_PORT, std::to_string(port));
+  session.putAttribute(flow_file, ATTRIBUTE_SFTP_LISTING_USER, username);
 
   /* uid and gid */
-  session->putAttribute(flow_file, ATTRIBUTE_FILE_OWNER, std::to_string(child.attrs.uid));
-  session->putAttribute(flow_file, ATTRIBUTE_FILE_GROUP, std::to_string(child.attrs.gid));
+  session.putAttribute(flow_file, ATTRIBUTE_FILE_OWNER, std::to_string(child.attrs.uid));
+  session.putAttribute(flow_file, ATTRIBUTE_FILE_GROUP, std::to_string(child.attrs.gid));
 
   /* permissions */
   std::stringstream ss;
   ss << std::setfill('0') << std::setw(4) << std::oct << (child.attrs.permissions & 0777);
-  session->putAttribute(flow_file, ATTRIBUTE_FILE_PERMISSIONS, ss.str());
+  session.putAttribute(flow_file, ATTRIBUTE_FILE_PERMISSIONS, ss.str());
 
   /* filesize */
-  session->putAttribute(flow_file, ATTRIBUTE_FILE_SIZE, std::to_string(child.attrs.filesize));
+  session.putAttribute(flow_file, ATTRIBUTE_FILE_SIZE, std::to_string(child.attrs.filesize));
 
   /* mtime */
-  session->putAttribute(flow_file, ATTRIBUTE_FILE_LASTMODIFIEDTIME, mtime_str);
+  session.putAttribute(flow_file, ATTRIBUTE_FILE_LASTMODIFIEDTIME, mtime_str);
 
   flow_file->setAttribute(core::SpecialFlowAttribute::FILENAME, child.filename.generic_string());
   flow_file->setAttribute(core::SpecialFlowAttribute::PATH, child.parent_path.generic_string());
 
-  session->transfer(flow_file, Success);
+  session.transfer(flow_file, Success);
 
   return true;
 }
@@ -347,7 +340,7 @@ ListSFTP::ListedEntity::ListedEntity(uint64_t timestamp_, uint64_t size_)
     , size(size_) {
 }
 
-bool ListSFTP::persistTrackingTimestampsCache(const std::shared_ptr<core::ProcessContext>& /*context*/, const std::string& hostname, const std::string& username, const std::string& remote_path) {
+bool ListSFTP::persistTrackingTimestampsCache(core::ProcessContext& /*context*/, const std::string& hostname, const std::string& username, const std::string& remote_path) {
   std::unordered_map<std::string, std::string> state;
   state["listing_strategy"] = LISTING_STRATEGY_TRACKING_TIMESTAMPS;
   state["hostname"] = hostname;
@@ -363,13 +356,13 @@ bool ListSFTP::persistTrackingTimestampsCache(const std::shared_ptr<core::Proces
   return state_manager_->set(state);
 }
 
-bool ListSFTP::updateFromTrackingTimestampsCache(const std::shared_ptr<core::ProcessContext>& /*context*/, const std::string& hostname, const std::string& username, const std::string& remote_path) {
+bool ListSFTP::updateFromTrackingTimestampsCache(core::ProcessContext& /*context*/, const std::string& hostname, const std::string& username, const std::string& remote_path) {
   std::string state_listing_strategy;
   std::string state_hostname;
   std::string state_username;
   std::string state_remote_path;
-  uint64_t state_listing_timestamp;
-  uint64_t state_processed_timestamp;
+  uint64_t state_listing_timestamp = 0;
+  uint64_t state_processed_timestamp = 0;
   std::set<std::string> state_ids;
 
   std::unordered_map<std::string, std::string> state_map;
@@ -426,10 +419,10 @@ bool ListSFTP::updateFromTrackingTimestampsCache(const std::shared_ptr<core::Pro
       state_remote_path != remote_path) {
     logger_->log_error(
         "Processor state was persisted with different settings than the current ones, ignoring. "
-        "Listing Strategy: \"%s\" vs. \"%s\", "
-        "Hostname: \"%s\" vs. \"%s\", "
-        "Username: \"%s\" vs. \"%s\", "
-        "Remote Path: \"%s\" vs. \"%s\"",
+        "Listing Strategy: \"{}\" vs. \"{}\", "
+        "Hostname: \"{}\" vs. \"{}\", "
+        "Username: \"{}\" vs. \"{}\", "
+        "Remote Path: \"{}\" vs. \"{}\"",
         state_listing_strategy, listing_strategy_,
         state_hostname, hostname,
         state_username, username,
@@ -445,8 +438,8 @@ bool ListSFTP::updateFromTrackingTimestampsCache(const std::shared_ptr<core::Pro
 }
 
 void ListSFTP::listByTrackingTimestamps(
-    const std::shared_ptr<core::ProcessContext>& context,
-    const std::shared_ptr<core::ProcessSession>& session,
+    core::ProcessContext& context,
+    core::ProcessSession& session,
     const std::string& hostname,
     uint16_t port,
     const std::string& username,
@@ -479,7 +472,7 @@ void ListSFTP::listByTrackingTimestamps(
       auto& files_for_timestamp = ordered_files[timestamp];
       files_for_timestamp.emplace_back(std::move(file));
     } else {
-      logger_->log_trace("Skipping \"%s\", because it is not new.", file.getPath().c_str());
+      logger_->log_trace("Skipping \"{}\", because it is not new.", file.getPath().c_str());
     }
   }
 
@@ -506,8 +499,8 @@ void ListSFTP::listByTrackingTimestamps(
        */
       remote_system_timestamp_precision = TARGET_SYSTEM_TIMESTAMP_PRECISION_SECONDS;
     }
-    std::chrono::milliseconds listing_lag{LISTING_LAG_MAP.at(remote_system_timestamp_precision)};
-    logger_->log_debug("The listing lag is %lu ms", listing_lag.count());
+    std::chrono::milliseconds listing_lag{utils::at(LISTING_LAG_MAP, remote_system_timestamp_precision)};
+    logger_->log_debug("The listing lag is {}", listing_lag);
 
     /* If the latest listing time is equal to the last listing time, there are no entries with a newer timestamp than previously seen */
     if (latest_listed_entry_timestamp_this_cycle == last_listed_latest_entry_timestamp_ && latest_listed_entry_timestamp_this_cycle) {
@@ -515,12 +508,10 @@ void ListSFTP::listByTrackingTimestamps(
       auto elapsed_time = std::chrono::duration_cast<std::chrono::milliseconds>(current_run_time - last_run_time_);
       /* If a precision-specific listing lag has not yet elapsed since out last execution, we wait. */
       if (elapsed_time < listing_lag) {
-        logger_->log_debug("The latest listed entry timestamp is the same as the last listed entry timestamp (%lu) "
-                           "and the listing lag has not yet elapsed (%lu ms < % lu ms). Yielding.",
-                           toUnixTime(latest_listed_entry_timestamp_this_cycle),
-                           elapsed_time.count(),
-                           listing_lag.count());
-        context->yield();
+        logger_->log_debug("The latest listed entry timestamp is the same as the last listed entry timestamp ({}) "
+                           "and the listing lag has not yet elapsed ({} < {}). Yielding.",
+                           latest_listed_entry_timestamp_this_cycle, elapsed_time, listing_lag);
+        context.yield();
         return;
       }
       /*
@@ -531,24 +522,24 @@ void ListSFTP::listByTrackingTimestamps(
           std::all_of(latest_files.begin(), latest_files.end(), [this](const Child& child) {
             return latest_identifiers_processed_.count(child.getPath()) == 1U;
           })) {
-        logger_->log_debug("The latest listed entry timestamp is the same as the last listed entry timestamp (%lu) "
-                           "and all files for that timestamp has been processed. Yielding.", toUnixTime(latest_listed_entry_timestamp_this_cycle));
-        context->yield();
+        logger_->log_debug("The latest listed entry timestamp is the same as the last listed entry timestamp ({}) "
+                           "and all files for that timestamp has been processed. Yielding.", latest_listed_entry_timestamp_this_cycle);
+        context.yield();
         return;
       }
     } else {
       /* Determine the minimum reliable timestamp based on precision */
       auto minimum_reliable_timestamp = now - listing_lag;
       if (remote_system_timestamp_precision == TARGET_SYSTEM_TIMESTAMP_PRECISION_SECONDS) {
-        std::chrono::floor<std::chrono::seconds>(minimum_reliable_timestamp);
+        minimum_reliable_timestamp = std::chrono::floor<std::chrono::seconds>(minimum_reliable_timestamp);
       } else {
-        std::chrono::floor<std::chrono::minutes>(minimum_reliable_timestamp);
+        minimum_reliable_timestamp = std::chrono::floor<std::chrono::minutes>(minimum_reliable_timestamp);
       }
       /* If the latest timestamp is not old enough, we wait another cycle */
       if (latest_listed_entry_timestamp_this_cycle && minimum_reliable_timestamp < latest_listed_entry_timestamp_this_cycle) {
-        logger_->log_debug("Skipping files with latest timestamp because their modification date is not smaller than the minimum reliable timestamp: %lu ms >= %lu ms",
-                           toUnixTime(latest_listed_entry_timestamp_this_cycle),
-                           toUnixTime(minimum_reliable_timestamp));
+        logger_->log_debug("Skipping files with latest timestamp because their modification date is not smaller than the minimum reliable timestamp: {} >= {}",
+                           latest_listed_entry_timestamp_this_cycle,
+                           minimum_reliable_timestamp);
         ordered_files.erase(*latest_listed_entry_timestamp_this_cycle);
       }
     }
@@ -569,8 +560,8 @@ void ListSFTP::listByTrackingTimestamps(
         if (createAndTransferFlowFileFromChild(session, hostname, port, username, file)) {
           flow_files_created++;
         } else {
-          logger_->log_error("Failed to emit FlowFile for \"%s\"", file.filename.generic_string());
-          context->yield();
+          logger_->log_error("Failed to emit FlowFile for \"{}\"", file.filename.generic_string());
+          context.yield();
           return;
         }
       }
@@ -601,12 +592,12 @@ void ListSFTP::listByTrackingTimestamps(
     }
   } else {
     logger_->log_debug("There are no files to list. Yielding.");
-    context->yield();
+    context.yield();
     return;
   }
 }
 
-bool ListSFTP::persistTrackingEntitiesCache(const std::shared_ptr<core::ProcessContext>& /*context*/, const std::string& hostname, const std::string& username, const std::string& remote_path) {
+bool ListSFTP::persistTrackingEntitiesCache(core::ProcessContext& /*context*/, const std::string& hostname, const std::string& username, const std::string& remote_path) {
   std::unordered_map<std::string, std::string> state;
   state["listing_strategy"] = listing_strategy_;
   state["hostname"] = hostname;
@@ -622,7 +613,7 @@ bool ListSFTP::persistTrackingEntitiesCache(const std::shared_ptr<core::ProcessC
   return state_manager_->set(state);
 }
 
-bool ListSFTP::updateFromTrackingEntitiesCache(const std::shared_ptr<core::ProcessContext>& /*context*/, const std::string& hostname, const std::string& username, const std::string& remote_path) {
+bool ListSFTP::updateFromTrackingEntitiesCache(core::ProcessContext& /*context*/, const std::string& hostname, const std::string& username, const std::string& remote_path) {
   std::string state_listing_strategy;
   std::string state_hostname;
   std::string state_username;
@@ -674,7 +665,7 @@ bool ListSFTP::updateFromTrackingEntitiesCache(const std::shared_ptr<core::Proce
                                           std::forward_as_tuple(name),
                                           std::forward_as_tuple(timestamp, size));
     } catch (...) {
-      logger_->log_error("State for entity \"%s\" is missing or invalid, skipping", name);
+      logger_->log_error("State for entity \"{}\" is missing or invalid, skipping", name);
       continue;
     }
   }
@@ -685,10 +676,10 @@ bool ListSFTP::updateFromTrackingEntitiesCache(const std::shared_ptr<core::Proce
       state_remote_path != remote_path) {
     logger_->log_error(
         "Processor state was persisted with different settings than the current ones, ignoring. "
-        "Listing Strategy: \"%s\" vs. \"%s\", "
-        "Hostname: \"%s\" vs. \"%s\", "
-        "Username: \"%s\" vs. \"%s\", "
-        "Remote Path: \"%s\" vs. \"%s\"",
+        "Listing Strategy: \"{}\" vs. \"{}\", "
+        "Hostname: \"{}\" vs. \"{}\", "
+        "Username: \"{}\" vs. \"{}\", "
+        "Remote Path: \"{}\" vs. \"{}\"",
         state_listing_strategy, listing_strategy_,
         state_hostname, hostname,
         state_username, username,
@@ -702,8 +693,8 @@ bool ListSFTP::updateFromTrackingEntitiesCache(const std::shared_ptr<core::Proce
 }
 
 void ListSFTP::listByTrackingEntities(
-    const std::shared_ptr<core::ProcessContext>& context,
-    const std::shared_ptr<core::ProcessSession>& session,
+    core::ProcessContext& context,
+    core::ProcessSession& session,
     const std::string& hostname,
     uint16_t port,
     const std::string& username,
@@ -728,7 +719,7 @@ void ListSFTP::listByTrackingEntities(
   /* Skip files not in the tracking window */
   for (auto it = files.begin(); it != files.end(); ) {
     if (it->attrs.mtime * 1000 < min_timestamp_to_list) {
-      logger_->log_trace("Skipping \"%s\" because it has an older timestamp than the minimum timestamp to list: %lu < %lu",
+      logger_->log_trace("Skipping \"{}\" because it has an older timestamp than the minimum timestamp to list: {} < {}",
           it->getPath(), it->attrs.mtime * 1000, min_timestamp_to_list);
       it = files.erase(it);
     } else {
@@ -738,7 +729,7 @@ void ListSFTP::listByTrackingEntities(
 
   if (files.empty()) {
     logger_->log_debug("No entities to list within the tracking time window");
-    context->yield();
+    context.yield();
     return;
   }
 
@@ -750,12 +741,12 @@ void ListSFTP::listByTrackingEntities(
                [&](const Child& child) {
      auto already_listed_it = already_listed_entities_.find(child.getPath());
      if (already_listed_it == already_listed_entities_.end()) {
-       logger_->log_trace("Found new file \"%s\"", child.getPath());
+       logger_->log_trace("Found new file \"{}\"", child.getPath());
        return true;
      }
 
      if (child.attrs.mtime * 1000 > already_listed_it->second.timestamp) {
-       logger_->log_trace("Found file \"%s\" with newer timestamp: %lu -> %lu",
+       logger_->log_trace("Found file \"{}\" with newer timestamp: {} -> {}",
            child.getPath(),
            already_listed_it->second.timestamp,
            child.attrs.mtime * 1000);
@@ -763,14 +754,14 @@ void ListSFTP::listByTrackingEntities(
      }
 
      if (child.attrs.filesize != already_listed_it->second.size) {
-       logger_->log_trace("Found file \"%s\" with different size: %lu -> %lu",
+       logger_->log_trace("Found file \"{}\" with different size: {} -> {}",
                           child.getPath(),
                           already_listed_it->second.size,
                           child.attrs.filesize);
        return true;
      }
 
-     logger_->log_trace("Skipping file \"%s\" because it has not changed", child.getPath());
+     logger_->log_trace("Skipping file \"{}\" because it has not changed", child.getPath());
      return false;
   });
 
@@ -784,7 +775,7 @@ void ListSFTP::listByTrackingEntities(
 
   /* If we have no new files and no expired tracked entities, we have nothing to do */
   if (updated_entities.empty() && old_entity_ids.empty()) {
-    context->yield();
+    context.yield();
     return;
   }
 
@@ -796,8 +787,8 @@ void ListSFTP::listByTrackingEntities(
   for (const auto& updated_entity : updated_entities) {
     /* Create the FlowFile for this path */
     if (!createAndTransferFlowFileFromChild(session, hostname, port, username, updated_entity)) {
-      logger_->log_error("Failed to emit FlowFile for \"%s\"", updated_entity.getPath());
-      context->yield();
+      logger_->log_error("Failed to emit FlowFile for \"{}\"", updated_entity.getPath());
+      context.yield();
       return;
     }
     already_listed_entities_[updated_entity.getPath()] = ListedEntity(updated_entity.attrs.mtime * 1000, updated_entity.attrs.filesize);
@@ -808,16 +799,16 @@ void ListSFTP::listByTrackingEntities(
   persistTrackingEntitiesCache(context, hostname, username, remote_path);
 }
 
-void ListSFTP::onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) {
+void ListSFTP::onTrigger(core::ProcessContext& context, core::ProcessSession& session) {
   /* Parse common properties */
   SFTPProcessorBase::CommonProperties common_properties;
   if (!parseCommonPropertiesOnTrigger(context, nullptr /*flow_file*/, common_properties)) {
-    context->yield();
+    context.yield();
     return;
   }
 
   std::string remote_path_str;
-  context->getProperty(RemotePath.getName(), remote_path_str);
+  context.getProperty(RemotePath, remote_path_str);
   /* Remove trailing slashes */
   while (remote_path_str.size() > 1 && remote_path_str.ends_with('/')) {
     remote_path_str.pop_back();
@@ -826,7 +817,7 @@ void ListSFTP::onTrigger(const std::shared_ptr<core::ProcessContext> &context, c
 
   std::string value;
   std::chrono::milliseconds entity_tracking_time_window = 3h;  /* The default is 3 hours */
-  if (context->getProperty(EntityTrackingTimeWindow.getName(), value)) {
+  if (context.getProperty(EntityTrackingTimeWindow, value)) {
     if (auto parsed_entity_time_window = utils::timeutils::StringToDuration<std::chrono::milliseconds>(value)) {
       entity_tracking_time_window = parsed_entity_time_window.value();
     } else {
@@ -858,7 +849,7 @@ void ListSFTP::onTrigger(const std::shared_ptr<core::ProcessContext> &context, c
                                       common_properties.private_key_passphrase,
                                       common_properties.proxy_password);
   if (client == nullptr) {
-    context->yield();
+    context.yield();
     return;
   }
 
@@ -914,12 +905,14 @@ void ListSFTP::onTrigger(const std::shared_ptr<core::ProcessContext> &context, c
     listByTrackingEntities(context, session, common_properties.hostname, common_properties.port,
         common_properties.username, remote_path.generic_string(), entity_tracking_time_window, std::move(files));
   } else {
-    logger_->log_error("Unknown Listing Strategy: \"%s\"", listing_strategy_.c_str());
-    context->yield();
+    logger_->log_error("Unknown Listing Strategy: \"{}\"", listing_strategy_.c_str());
+    context.yield();
     return;
   }
 
   put_connection_back_to_cache();
 }
+
+REGISTER_RESOURCE(ListSFTP, Processor);
 
 }  // namespace org::apache::nifi::minifi::processors

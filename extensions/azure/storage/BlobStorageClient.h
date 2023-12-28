@@ -25,7 +25,7 @@
 #include <vector>
 #include <memory>
 
-#include "azure/storage/blobs/protocol/blob_rest_client.hpp"
+#include "azure/storage/blobs/blob_responses.hpp"
 #include "AzureStorageCredentials.h"
 #include "utils/gsl.h"
 #include "utils/Enum.h"
@@ -33,11 +33,31 @@
 
 namespace org::apache::nifi::minifi::azure::storage {
 
-SMART_ENUM(OptionalDeletion,
-  (NONE, "None"),
-  (INCLUDE_SNAPSHOTS, "Include Snapshots"),
-  (DELETE_SNAPSHOTS_ONLY, "Delete Snapshots Only")
-)
+enum class OptionalDeletion {
+  NONE,
+  INCLUDE_SNAPSHOTS,
+  DELETE_SNAPSHOTS_ONLY
+};
+}  // namespace org::apache::nifi::minifi::azure::storage
+
+namespace magic_enum::customize {
+using OptionalDeletion = org::apache::nifi::minifi::azure::storage::OptionalDeletion;
+
+template <>
+constexpr customize_t enum_name<OptionalDeletion>(OptionalDeletion value) noexcept {
+  switch (value) {
+    case OptionalDeletion::NONE:
+      return "None";
+    case OptionalDeletion::INCLUDE_SNAPSHOTS:
+      return "Include Snapshots";
+    case OptionalDeletion::DELETE_SNAPSHOTS_ONLY:
+      return "Delete Snapshots Only";
+  }
+  return invalid_tag;
+}
+}  // namespace magic_enum::customize
+
+namespace org::apache::nifi::minifi::azure::storage {
 
 struct AzureBlobStorageParameters {
   AzureStorageCredentials credentials;
@@ -66,7 +86,7 @@ struct ListAzureBlobStorageParameters : public AzureBlobStorageParameters {
 class BlobStorageClient {
  public:
   virtual bool createContainerIfNotExists(const PutAzureBlobStorageParameters& params) = 0;
-  virtual Azure::Storage::Blobs::Models::UploadBlockBlobResult uploadBlob(const PutAzureBlobStorageParameters& params, gsl::span<const std::byte> buffer) = 0;
+  virtual Azure::Storage::Blobs::Models::UploadBlockBlobResult uploadBlob(const PutAzureBlobStorageParameters& params, std::span<const std::byte> buffer) = 0;
   virtual std::string getUrl(const AzureBlobStorageParameters& params) = 0;
   virtual bool deleteBlob(const DeleteAzureBlobStorageParameters& params) = 0;
   virtual std::unique_ptr<io::InputStream> fetchBlob(const FetchAzureBlobStorageParameters& params) = 0;

@@ -23,7 +23,6 @@
 #include <sstream>
 #include "processors/InvokeHTTP.h"
 #include "TestBase.h"
-#include "Catch.h"
 #include "core/ProcessGroup.h"
 #include "properties/Configure.h"
 #include "TestServer.h"
@@ -67,7 +66,7 @@ class VerifyC2Server : public HTTPIntegrationBase {
 
     assert(inv != nullptr);
     std::string url;
-    inv->getProperty(minifi::processors::InvokeHTTP::URL.getName(), url);
+    inv->getProperty(minifi::processors::InvokeHTTP::URL, url);
 
     std::string port;
     std::string scheme;

@@ -18,7 +18,6 @@
 
 #include "core/ProcessContext.h"
 #include "core/ProcessSession.h"
-#include "core/PropertyBuilder.h"
 #include "core/Resource.h"
 #include "../ContainerInfo.h"
 #include "../MetricsApi.h"
@@ -26,28 +25,18 @@
 
 namespace org::apache::nifi::minifi::processors {
 
-const core::Property CollectKubernetesPodMetrics::KubernetesControllerService{
-    core::PropertyBuilder::createProperty("Kubernetes Controller Service")
-    ->withDescription("Controller service which provides Kubernetes functionality")
-    ->isRequired(true)
-    ->build()};
-
-const core::Relationship CollectKubernetesPodMetrics::Success("success", "All flow files produced are routed to Success.");
-
 void CollectKubernetesPodMetrics::initialize() {
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
-void CollectKubernetesPodMetrics::onSchedule(const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSessionFactory>&) {
-  gsl_Expects(context);
-
-  const auto controller_service_name = context->getProperty(KubernetesControllerService);
+void CollectKubernetesPodMetrics::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory&) {
+  const auto controller_service_name = context.getProperty(KubernetesControllerService);
   if (!controller_service_name || controller_service_name->empty()) {
-    throw minifi::Exception{ExceptionType::PROCESS_SCHEDULE_EXCEPTION, utils::StringUtils::join_pack("Missing '", KubernetesControllerService.getName(), "' property")};
+    throw minifi::Exception{ExceptionType::PROCESS_SCHEDULE_EXCEPTION, utils::StringUtils::join_pack("Missing '", KubernetesControllerService.name, "' property")};
   }
 
-  std::shared_ptr<core::controller::ControllerService> controller_service = context->getControllerService(*controller_service_name);
+  std::shared_ptr<core::controller::ControllerService> controller_service = context.getControllerService(*controller_service_name);
   if (!controller_service) {
     throw minifi::Exception{ExceptionType::PROCESS_SCHEDULE_EXCEPTION, utils::StringUtils::join_pack("Controller service '", *controller_service_name, "' not found")};
   }
@@ -58,8 +47,8 @@ void CollectKubernetesPodMetrics::onSchedule(const std::shared_ptr<core::Process
   }
 }
 
-void CollectKubernetesPodMetrics::onTrigger(const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSession>& session) {
-  gsl_Expects(context && session && kubernetes_controller_service_);
+void CollectKubernetesPodMetrics::onTrigger(core::ProcessContext&, core::ProcessSession& session) {
+  gsl_Expects(kubernetes_controller_service_);
 
   const kubernetes::ApiClient* api_client = kubernetes_controller_service_->apiClient();
   if (!api_client) {
@@ -68,7 +57,7 @@ void CollectKubernetesPodMetrics::onTrigger(const std::shared_ptr<core::ProcessC
 
   const auto metrics = kubernetes::metrics::podMetricsList(*api_client);
   if (!metrics) {
-    logger_->log_error("Could not get metrics from the Kubernetes API: %s", metrics.error());
+    logger_->log_error("Could not get metrics from the Kubernetes API: {}", metrics.error());
     return;
   }
 
@@ -76,15 +65,15 @@ void CollectKubernetesPodMetrics::onTrigger(const std::shared_ptr<core::ProcessC
     return kubernetes_controller_service_->matchesRegexFilters(container_info);
   });
   if (!metrics_filtered) {
-    logger_->log_error("Error parsing or filtering the metrics received from the Kubernetes API: %s", metrics_filtered.error());
+    logger_->log_error("Error parsing or filtering the metrics received from the Kubernetes API: {}", metrics_filtered.error());
     return;
   }
 
-  logger_->log_debug("Metrics received from the Kubernetes API: %s", metrics_filtered.value());
+  logger_->log_debug("Metrics received from the Kubernetes API: {}", metrics_filtered.value());
 
-  const auto flow_file = session->create();
-  session->writeBuffer(flow_file, metrics_filtered.value());
-  session->transfer(flow_file, Success);
+  const auto flow_file = session.create();
+  session.writeBuffer(flow_file, metrics_filtered.value());
+  session.transfer(flow_file, Success);
 }
 
 REGISTER_RESOURCE(CollectKubernetesPodMetrics, Processor);

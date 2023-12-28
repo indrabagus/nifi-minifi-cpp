@@ -47,94 +47,28 @@ extern "C" {
 #include "core/logging/Logger.h"
 #include "core/ProcessContext.h"
 #include "core/ProcessSessionFactory.h"
-#include "core/PropertyBuilder.h"
-#include "core/Relationship.h"
 #include "core/Resource.h"
 #include "io/BufferStream.h"
-#include "io/StreamFactory.h"
 #include "ResourceClaim.h"
 #include "utils/gsl.h"
 #include "utils/StringUtils.h"
 #include "utils/file/FileUtils.h"
 #include "utils/tls/CertificateUtils.h"
 
-#define XML_NS_CUSTOM_SUBSCRIPTION "http://schemas.microsoft.com/wbem/wsman/1/subscription"
-#define XML_NS_CUSTOM_AUTHENTICATION "http://schemas.microsoft.com/wbem/wsman/1/authentication"
-#define XML_NS_CUSTOM_POLICY "http://schemas.xmlsoap.org/ws/2002/12/policy"
-#define XML_NS_CUSTOM_MACHINEID "http://schemas.microsoft.com/wbem/wsman/1/machineid"
-#define WSMAN_CUSTOM_ACTION_ACK "http://schemas.dmtf.org/wbem/wsman/1/wsman/Ack"
-#define WSMAN_CUSTOM_ACTION_HEARTBEAT "http://schemas.dmtf.org/wbem/wsman/1/wsman/Heartbeat"
-#define WSMAN_CUSTOM_ACTION_EVENTS "http://schemas.dmtf.org/wbem/wsman/1/wsman/Events"
+namespace {
+constexpr const char* XML_NS_CUSTOM_SUBSCRIPTION = "http://schemas.microsoft.com/wbem/wsman/1/subscription";
+constexpr const char* XML_NS_CUSTOM_AUTHENTICATION = "http://schemas.microsoft.com/wbem/wsman/1/authentication";
+constexpr const char* XML_NS_CUSTOM_POLICY = "http://schemas.xmlsoap.org/ws/2002/12/policy";
+constexpr const char* XML_NS_CUSTOM_MACHINEID = "http://schemas.microsoft.com/wbem/wsman/1/machineid";
+constexpr const char* WSMAN_CUSTOM_ACTION_ACK = "http://schemas.dmtf.org/wbem/wsman/1/wsman/Ack";
+constexpr const char* WSMAN_CUSTOM_ACTION_HEARTBEAT = "http://schemas.dmtf.org/wbem/wsman/1/wsman/Heartbeat";
+constexpr const char* WSMAN_CUSTOM_ACTION_EVENTS = "http://schemas.dmtf.org/wbem/wsman/1/wsman/Events";
+}  // namespace
 
 namespace org::apache::nifi::minifi::processors {
 
-const core::Property SourceInitiatedSubscriptionListener::ListenHostname(
-    core::PropertyBuilder::createProperty("Listen Hostname")->withDescription("The hostname or IP of this machine that will be advertised to event sources to connect to. "
-                                                                              "It must be contained as a Subject Alternative Name in the server certificate, "
-                                                                              "otherwise source machines will refuse to connect.")
-        ->isRequired(true)->build());
-const core::Property SourceInitiatedSubscriptionListener::ListenPort(
-    core::PropertyBuilder::createProperty("Listen Port")->withDescription("The port to listen on.")
-        ->isRequired(true)->withDefaultValue<int64_t>(5986, core::StandardValidators::LISTEN_PORT_VALIDATOR)->build());
-const core::Property SourceInitiatedSubscriptionListener::SubscriptionManagerPath(
-    core::PropertyBuilder::createProperty("Subscription Manager Path")->withDescription("The URI path that will be used for the WEC Subscription Manager endpoint.")
-        ->isRequired(true)->withDefaultValue("/wsman/SubscriptionManager/WEC")->build());
-const core::Property SourceInitiatedSubscriptionListener::SubscriptionsBasePath(
-    core::PropertyBuilder::createProperty("Subscriptions Base Path")->withDescription("The URI path that will be used as the base for endpoints serving individual subscriptions.")
-        ->isRequired(true)->withDefaultValue("/wsman/subscriptions")->build());
-const core::Property SourceInitiatedSubscriptionListener::SSLCertificate(
-    core::PropertyBuilder::createProperty("SSL Certificate")->withDescription("File containing PEM-formatted file including TLS/SSL certificate and key. "
-                                                                              "The root CA of the certificate must be the CA set in SSL Certificate Authority.")
-        ->isRequired(true)->build());
-const core::Property SourceInitiatedSubscriptionListener::SSLCertificateAuthority(
-    core::PropertyBuilder::createProperty("SSL Certificate Authority")->withDescription("File containing the PEM-formatted CA that is the root CA for both this server's certificate "
-                                                                                        "and the event source clients' certificates.")
-        ->isRequired(true)->build());
-const core::Property SourceInitiatedSubscriptionListener::SSLVerifyPeer(
-    core::PropertyBuilder::createProperty("SSL Verify Peer")->withDescription("Whether or not to verify the client's certificate")
-        ->isRequired(false)->withDefaultValue<bool>(true)->build());
-const core::Property SourceInitiatedSubscriptionListener::XPathXmlQuery(
-    core::PropertyBuilder::createProperty("XPath XML Query")->withDescription("An XPath Query in structured XML format conforming to the Query Schema described in "
-                                                                              "https://docs.microsoft.com/en-gb/windows/win32/wes/queryschema-schema, "
-                                                                              "see an example here: https://docs.microsoft.com/en-gb/windows/win32/wes/consuming-events")
-        ->isRequired(true)
-        ->withDefaultValue("<QueryList>\n"
-                           "  <Query Id=\"0\">\n"
-                           "    <Select Path=\"Application\">*</Select>\n"
-                           "  </Query>\n"
-                           "</QueryList>\n")->build());
-const core::Property SourceInitiatedSubscriptionListener::InitialExistingEventsStrategy(
-    core::PropertyBuilder::createProperty("Initial Existing Events Strategy")->withDescription("Defines the behaviour of the Processor when a new event source connects.\n"
-    "None: will not request existing events\n"
-    "All: will request all existing events matching the query")
-        ->isRequired(true)->withAllowableValues<std::string>({INITIAL_EXISTING_EVENTS_STRATEGY_NONE, INITIAL_EXISTING_EVENTS_STRATEGY_ALL})
-        ->withDefaultValue(INITIAL_EXISTING_EVENTS_STRATEGY_NONE)->build());
-const core::Property SourceInitiatedSubscriptionListener::SubscriptionExpirationInterval(
-    core::PropertyBuilder::createProperty("Subscription Expiration Interval")->withDescription("The interval while a subscription is valid without renewal. "
-    "Because in a source-initiated subscription, the collector can not cancel the subscription, "
-    "setting this too large could cause unnecessary load on the source machine. "
-    "Setting this too small causes frequent reenumeration and resubscription which is ineffective.")
-        ->isRequired(true)->withDefaultValue<core::TimePeriodValue>("10 min")->build());
-const core::Property SourceInitiatedSubscriptionListener::HeartbeatInterval(
-    core::PropertyBuilder::createProperty("Heartbeat Interval")->withDescription("The processor will ask the sources to send heartbeats with this interval.")
-        ->isRequired(true)->withDefaultValue<core::TimePeriodValue>("30 sec")->build());
-const core::Property SourceInitiatedSubscriptionListener::MaxElements(
-    core::PropertyBuilder::createProperty("Max Elements")->withDescription("The maximum number of events a source will batch together and send at once.")
-        ->isRequired(true)->withDefaultValue<uint32_t>(20U)->build());
-const core::Property SourceInitiatedSubscriptionListener::MaxLatency(
-    core::PropertyBuilder::createProperty("Max Latency")->withDescription("The maximum time a source will wait to send new events.")
-        ->isRequired(true)->withDefaultValue<core::TimePeriodValue>("10 sec")->build());
-const core::Property SourceInitiatedSubscriptionListener::ConnectionRetryInterval(
-    core::PropertyBuilder::createProperty("Connection Retry Interval")->withDescription("The interval with which a source will try to reconnect to the server.")
-        ->withDefaultValue<core::TimePeriodValue>("10 sec")->build());
-const core::Property SourceInitiatedSubscriptionListener::ConnectionRetryCount(
-    core::PropertyBuilder::createProperty("Connection Retry Count")->withDescription("The number of connection retries after which a source will consider the subscription expired.")
-        ->withDefaultValue<uint32_t>(5U)->build());
-
-const core::Relationship SourceInitiatedSubscriptionListener::Success("success", "All Events are routed to success");
-
-SourceInitiatedSubscriptionListener::SourceInitiatedSubscriptionListener(std::string name, const utils::Identifier& uuid)
-    : Processor(std::move(name), uuid)
+SourceInitiatedSubscriptionListener::SourceInitiatedSubscriptionListener(std::string_view name, const utils::Identifier& uuid)
+    : Processor(name, uuid)
     , session_factory_(nullptr)
     , listen_port_(0U)
     , subscription_expiration_interval_(0)
@@ -195,12 +129,14 @@ bool SourceInitiatedSubscriptionListener::persistState() const {
   size_t i = 0U;
   for (const auto& subscriber : subscribers_) {
     char* xml_buf = nullptr;
+    auto clean_up_xml_buf = gsl::finally([&]{
+      ws_xml_free_memory(xml_buf);
+    });
     int xml_buf_size = 0;
     ws_xml_dump_memory_enc(subscriber.second.bookmark_, &xml_buf, &xml_buf_size, "UTF-8");
     state_map.emplace("subscriber." + std::to_string(i) + ".machineid", subscriber.first);
     state_map.emplace("subscriber." + std::to_string(i) + ".bookmark", std::string(xml_buf, xml_buf_size));
     i++;
-    ws_xml_free_memory(xml_buf);
   }
   return state_manager_->set(state_map);
 }
@@ -223,13 +159,13 @@ bool SourceInitiatedSubscriptionListener::loadState() {
     try {
       bookmark = state_map.at("subscriber." + std::to_string(i) + ".bookmark");
     } catch (...) {
-      logger_->log_error("Bookmark for subscriber \"%s\" is missing, skipping", machineId);
+      logger_->log_error("Bookmark for subscriber \"{}\" is missing, skipping", machineId);
       continue;
     }
 
     WsXmlDocH doc = ws_xml_read_memory(bookmark.data(), bookmark.size(), "UTF-8", 0);
     if (doc == nullptr) {
-      logger_->log_error("Failed to parse saved bookmark for subscriber \"%s\", skipping", machineId);
+      logger_->log_error("Failed to parse saved bookmark for subscriber \"{}\", skipping", machineId);
       continue;
     }
     subscribers_[machineId].setBookmark(doc);
@@ -239,9 +175,9 @@ bool SourceInitiatedSubscriptionListener::loadState() {
 }
 
 std::string SourceInitiatedSubscriptionListener::Handler::millisecondsToXsdDuration(std::chrono::milliseconds milliseconds) {
-  char buf[1024];
-  snprintf(buf, sizeof(buf), "PT%" PRId64 ".%03" PRId64 "S", int64_t{milliseconds.count() / 1000}, int64_t{milliseconds.count() % 1000});
-  return buf;
+  std::array<char, 1024> buf{};
+  (void)snprintf(buf.data(), buf.size(), "PT%" PRId64 ".%03" PRId64 "S", int64_t{milliseconds.count() / 1000}, int64_t{milliseconds.count() % 1000});
+  return buf.data();
 }
 
 bool SourceInitiatedSubscriptionListener::Handler::handlePost(CivetServer* /*server*/, struct mg_connection* conn) {
@@ -256,10 +192,10 @@ bool SourceInitiatedSubscriptionListener::Handler::handlePost(CivetServer* /*ser
     processor_.logger_->log_error("Failed to get called endpoint (local_uri)");
     return false;
   }
-  processor_.logger_->log_trace("Endpoint \"%s\" has been called", endpoint);
+  processor_.logger_->log_trace("Endpoint \"{}\" has been called", endpoint);
 
   for (int i = 0; i < req_info->num_headers; i++) {
-    processor_.logger_->log_trace("Received header \"%s: %s\"", req_info->http_headers[i].name, req_info->http_headers[i].value);
+    processor_.logger_->log_trace("Received header \"{}: {}\"", req_info->http_headers[i].name, req_info->http_headers[i].value);
   }
 
   const char* content_type = mg_get_header(conn, "Content-Type");
@@ -282,12 +218,12 @@ bool SourceInitiatedSubscriptionListener::Handler::handlePost(CivetServer* /*ser
         charset = std::string(charset_begin, charset_end - charset_begin);
     }
   }
-  processor_.logger_->log_trace("charset is \"%s\"", charset.c_str());
+  processor_.logger_->log_trace("charset is \"{}\"", charset.c_str());
 
   std::vector<uint8_t> raw_data;
   {
-    std::array<uint8_t, 16384U> buf;
-    int read_bytes;
+    std::array<uint8_t, 16384U> buf{};
+    int read_bytes = 0;
     while ((read_bytes = mg_read(conn, buf.data(), buf.size())) > 0) {
       size_t orig_size = raw_data.size();
       raw_data.resize(orig_size + read_bytes);
@@ -310,11 +246,13 @@ bool SourceInitiatedSubscriptionListener::Handler::handlePost(CivetServer* /*ser
   {
     WsXmlNodeH node = ws_xml_get_doc_root(doc);
     char* xml_buf = nullptr;
+    auto clean_up_xml_buf = gsl::finally([&]{
+      ws_xml_free_memory(xml_buf);
+    });
     int xml_buf_size = 0;
     ws_xml_dump_memory_node_tree_enc(node, &xml_buf, &xml_buf_size, "UTF-8");
     if (xml_buf != nullptr) {
-        core::logging::LOG_TRACE(processor_.logger_) << "Received request: \"" << std::string(xml_buf, xml_buf_size) << "\"";
-        ws_xml_free_memory(xml_buf);
+      processor_.logger_->log_trace("Received request: \"{}\"", std::string_view(xml_buf, xml_buf_size));
     }
   }
 
@@ -372,8 +310,7 @@ bool SourceInitiatedSubscriptionListener::Handler::isAckRequested(WsXmlDocH doc)
 }
 
 void SourceInitiatedSubscriptionListener::Handler::sendResponse(struct mg_connection* conn, const std::string& machineId, const std::string& remoteIp, char* xml_buf, size_t xml_buf_size) {
-  core::logging::LOG_TRACE(processor_.logger_) << "Sending response to " << machineId << " (" << remoteIp << "): \"" << std::string(xml_buf, xml_buf_size) << "\"";
-
+  processor_.logger_->log_trace("Sending response to {} ({}) \"{}\"", machineId, remoteIp, std::string_view(xml_buf, xml_buf_size));
   mg_printf(conn, "HTTP/1.1 200 OK\r\n");
   mg_printf(conn, "Content-Type: application/soap+xml;charset=UTF-8\r\n");
   mg_printf(conn, "Authorization: %s\r\n", WSMAN_SECURITY_PROFILE_HTTPS_MUTUAL);
@@ -392,7 +329,7 @@ bool SourceInitiatedSubscriptionListener::Handler::handleSubscriptionManager(str
   const struct mg_request_info* req_info = mg_get_request_info(conn);
   std::string remote_ip = req_info->remote_addr;
   if (action != ENUM_ACTION_ENUMERATE) {
-    processor_.logger_->log_error("%s called by %s (%s) with unknown Action \"%s\"", endpoint.c_str(), machine_id.c_str(), remote_ip.c_str(), action.c_str());
+    processor_.logger_->log_error("{} called by {} ({}) with unknown Action \"{}\"", endpoint.c_str(), machine_id.c_str(), remote_ip.c_str(), action.c_str());
     return false;  // TODO(bakaid): generate fault if possible
   }
 
@@ -447,7 +384,7 @@ bool SourceInitiatedSubscriptionListener::Handler::handleSubscriptionManager(str
 
     // Header
     WsXmlNodeH header = ws_xml_get_soap_header(subscription_doc);
-    WsXmlNodeH node;
+    WsXmlNodeH node = nullptr;
 
     // Header/Action
     node = ws_xml_add_child(header, XML_NS_ADDRESSING, WSA_ACTION, EVT_ACTION_SUBSCRIBE);
@@ -581,12 +518,12 @@ bool SourceInitiatedSubscriptionListener::Handler::handleSubscriptionManager(str
 
   // Send response
   char* xml_buf = nullptr;
+  auto clean_up_xml_buf = gsl::finally([&]{
+    ws_xml_free_memory(xml_buf);
+  });
   int xml_buf_size = 0;
   ws_xml_dump_memory_enc(response, &xml_buf, &xml_buf_size, "UTF-8");
-
   sendResponse(conn, machine_id, req_info->remote_addr, xml_buf, xml_buf_size);
-
-  ws_xml_free_memory(xml_buf);
 
   return true;
 }
@@ -624,7 +561,7 @@ int SourceInitiatedSubscriptionListener::Handler::enumerateEventCallback(WsXmlNo
 
     session->transfer(flow_file, SourceInitiatedSubscriptionListener::Success);
   } catch (const std::exception& e) {
-    logger->log_error("Caught exception while processing Events: %s", e.what());
+    logger->log_error("Caught exception while processing Events: {}", e.what());
     return 1;
   } catch (...) {
     logger->log_error("Caught exception while processing Events");
@@ -650,19 +587,19 @@ bool SourceInitiatedSubscriptionListener::Handler::handleSubscriptions(struct mg
     }
     // TODO(bakaid): make sure whether we really have to clean the bookmark as well (based on the fault)
   } else if (action == WSMAN_CUSTOM_ACTION_HEARTBEAT) {
-    processor_.logger_->log_debug("Received Heartbeat on %s from %s (%s)", endpoint.c_str(), machine_id.c_str(), remote_ip.c_str());
+    processor_.logger_->log_debug("Received Heartbeat on {} from {} ({})", endpoint.c_str(), machine_id.c_str(), remote_ip.c_str());
   } else if (action == WSMAN_CUSTOM_ACTION_EVENTS) {
-    processor_.logger_->log_debug("Received Events on %s from %s (%s)", endpoint.c_str(), machine_id.c_str(), remote_ip.c_str());
+    processor_.logger_->log_debug("Received Events on {} from {} ({})", endpoint.c_str(), machine_id.c_str(), remote_ip.c_str());
     // Body
     WsXmlNodeH body = ws_xml_get_soap_body(request);
     if (body == nullptr) {
-      processor_.logger_->log_error("Received malformed Events request on %s from %s (%s), SOAP Body missing", endpoint.c_str(), machine_id.c_str(), remote_ip.c_str());
+      processor_.logger_->log_error("Received malformed Events request on {} from {} ({}), SOAP Body missing", endpoint.c_str(), machine_id.c_str(), remote_ip.c_str());
       return false;
     }
     // Body/Events
     WsXmlNodeH events_node = ws_xml_get_child(body, 0 /*index*/, XML_NS_WS_MAN, WSM_EVENTS);
     if (events_node == nullptr) {
-      processor_.logger_->log_error("Received malformed Events request on %s from %s (%s), Events missing", endpoint.c_str(), machine_id.c_str(), remote_ip.c_str());
+      processor_.logger_->log_error("Received malformed Events request on {} from {} ({}), Events missing", endpoint.c_str(), machine_id.c_str(), remote_ip.c_str());
       return false;
     }
     // Enumare Body/Events/Event nodes
@@ -671,7 +608,7 @@ bool SourceInitiatedSubscriptionListener::Handler::handleSubscriptions(struct mg
         std::forward_as_tuple(session, processor_.logger_, machine_id, remote_ip);
     int ret = ws_xml_enum_children(events_node, &SourceInitiatedSubscriptionListener::Handler::enumerateEventCallback, &callback_args, 0 /*bRecursive*/);
     if (ret != 0) {
-      processor_.logger_->log_error("Failed to parse events on %s from %s (%s), rolling back session", endpoint.c_str(), machine_id.c_str(), remote_ip.c_str());
+      processor_.logger_->log_error("Failed to parse events on {} from {} ({}), rolling back session", endpoint.c_str(), machine_id.c_str(), remote_ip.c_str());
       session->rollback();
     }
     // Header
@@ -696,13 +633,15 @@ bool SourceInitiatedSubscriptionListener::Handler::handleSubscriptions(struct mg
       processor_.persistState();
 
       char* xml_buf = nullptr;
+      auto clean_up_xml_buf = gsl::finally([&]{
+        ws_xml_free_memory(xml_buf);
+      });
       int xml_buf_size = 0;
       ws_xml_dump_memory_enc(bookmark_doc, &xml_buf, &xml_buf_size, "UTF-8");
-      processor_.logger_->log_debug("Saved new bookmark for %s: \"%.*s\"", machine_id.c_str(), xml_buf_size, xml_buf);
-      ws_xml_free_memory(xml_buf);
+      processor_.logger_->log_debug("Saved new bookmark for {}: \"{:.{}}\"", machine_id.c_str(), xml_buf, xml_buf_size);
     }
   } else {
-    processor_.logger_->log_error("%s called by %s (%s) with unknown Action \"%s\"", endpoint.c_str(), machine_id.c_str(), remote_ip.c_str(), action.c_str());
+    processor_.logger_->log_error("{} called by {} ({}) with unknown Action \"{}\"", endpoint.c_str(), machine_id.c_str(), remote_ip.c_str(), action.c_str());
     return false;  // TODO(bakaid): generate fault if possible
   }
 
@@ -718,30 +657,32 @@ bool SourceInitiatedSubscriptionListener::Handler::handleSubscriptions(struct mg
 
     // Send ACK
     char* xml_buf = nullptr;
+    auto clean_up_xml_buf = gsl::finally([&]{
+      ws_xml_free_memory(xml_buf);
+    });
     int xml_buf_size = 0;
     ws_xml_dump_memory_enc(ack, &xml_buf, &xml_buf_size, "UTF-8");
 
     sendResponse(conn, machine_id, remote_ip, xml_buf, xml_buf_size);
 
-    ws_xml_free_memory(xml_buf);
     ws_xml_destroy_doc(ack);
   }
 
   return true;
 }
 
-void SourceInitiatedSubscriptionListener::onTrigger(const std::shared_ptr<core::ProcessContext>& /*context*/, const std::shared_ptr<core::ProcessSession>& /*session*/) {
+void SourceInitiatedSubscriptionListener::onTrigger(core::ProcessContext&, core::ProcessSession&) {
   logger_->log_trace("SourceInitiatedSubscriptionListener onTrigger called");
 }
 
 void SourceInitiatedSubscriptionListener::initialize() {
   logger_->log_trace("Initializing SourceInitiatedSubscriptionListener");
 
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
-void SourceInitiatedSubscriptionListener::onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &sessionFactory) {
+void SourceInitiatedSubscriptionListener::onScheduleSharedPtr(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &sessionFactory) {
   std::string ssl_certificate_file;
   std::string ssl_ca_file;
 
@@ -751,26 +692,26 @@ void SourceInitiatedSubscriptionListener::onSchedule(const std::shared_ptr<core:
   }
 
   std::string value;
-  context->getProperty(ListenHostname.getName(), listen_hostname_);
-  if (!context->getProperty(ListenPort.getName(), value)) {
+  context->getProperty(ListenHostname, listen_hostname_);
+  if (!context->getProperty(ListenPort, value)) {
     throw Exception(PROCESSOR_EXCEPTION, "Listen Port attribute is missing or invalid");
   } else {
     core::Property::StringToInt(value, listen_port_);
   }
-  context->getProperty(SubscriptionManagerPath.getName(), subscription_manager_path_);
-  context->getProperty(SubscriptionsBasePath.getName(), subscriptions_base_path_);
-  if (!context->getProperty(SSLCertificate.getName(), ssl_certificate_file)) {
+  context->getProperty(SubscriptionManagerPath, subscription_manager_path_);
+  context->getProperty(SubscriptionsBasePath, subscriptions_base_path_);
+  if (!context->getProperty(SSLCertificate, ssl_certificate_file)) {
     throw Exception(PROCESSOR_EXCEPTION, "SSL Certificate attribute is missing");
   }
-  if (!context->getProperty(SSLCertificateAuthority.getName(), ssl_ca_file)) {
+  if (!context->getProperty(SSLCertificateAuthority, ssl_ca_file)) {
     throw Exception(PROCESSOR_EXCEPTION, "SSL Certificate Authority attribute is missing");
   }
-  if (!context->getProperty(SSLVerifyPeer.getName(), value)) {
+  if (!context->getProperty(SSLVerifyPeer, value)) {
     throw Exception(PROCESSOR_EXCEPTION, "SSL Verify Peer attribute is missing");
   }
   bool verify_peer = utils::StringUtils::toBool(value).value_or(true);
-  context->getProperty(XPathXmlQuery.getName(), xpath_xml_query_);
-  if (!context->getProperty(InitialExistingEventsStrategy.getName(), initial_existing_events_strategy_)) {
+  context->getProperty(XPathXmlQuery, xpath_xml_query_);
+  if (!context->getProperty(InitialExistingEventsStrategy, initial_existing_events_strategy_)) {
     throw Exception(PROCESSOR_EXCEPTION, "Initial Existing Events Strategy attribute is missing or invalid");
   }
   if (auto subscription_expiration_interval = context->getProperty<core::TimePeriodValue>(SubscriptionExpirationInterval)) {
@@ -783,7 +724,7 @@ void SourceInitiatedSubscriptionListener::onSchedule(const std::shared_ptr<core:
   } else {
     throw Exception(PROCESSOR_EXCEPTION, "Heartbeat Interval attribute is missing or invalid");
   }
-  if (!context->getProperty(MaxElements.getName(), value)) {
+  if (!context->getProperty(MaxElements, value)) {
     throw Exception(PROCESSOR_EXCEPTION, "Max Elements attribute is missing or invalid");
   } else if (!core::Property::StringToInt(value, max_elements_)) {
     throw Exception(PROCESSOR_EXCEPTION, "Max Elements attribute is invalid");
@@ -798,19 +739,19 @@ void SourceInitiatedSubscriptionListener::onSchedule(const std::shared_ptr<core:
   } else {
     throw Exception(PROCESSOR_EXCEPTION, "Connection Retry Interval attribute is missing or invalid");
   }
-  if (!context->getProperty(ConnectionRetryCount.getName(), value)) {
+  if (!context->getProperty(ConnectionRetryCount, value)) {
     throw Exception(PROCESSOR_EXCEPTION, "Connection Retry Count attribute is missing or invalid");
   } else if (!core::Property::StringToInt(value, connection_retry_count_)) {
     throw Exception(PROCESSOR_EXCEPTION, "Connection Retry Count attribute is invalid");
   }
 
-  FILE* fp = fopen(ssl_ca_file.c_str(), "rb");
+  gsl::owner<FILE*> fp = fopen(ssl_ca_file.c_str(), "rb");
   if (fp == nullptr) {
     throw Exception(PROCESSOR_EXCEPTION, "Failed to open file specified by SSL Certificate Authority attribute");
   }
   X509* ca = nullptr;
   PEM_read_X509(fp, &ca, nullptr, nullptr);
-  fclose(fp);
+  (void)fclose(fp);
   if (ca == nullptr) {
     throw Exception(PROCESSOR_EXCEPTION, "Failed to parse file specified by SSL Certificate Authority attribute");
   }
@@ -822,7 +763,7 @@ void SourceInitiatedSubscriptionListener::onSchedule(const std::shared_ptr<core:
     throw Exception(PROCESSOR_EXCEPTION, "Failed to get fingerprint for CA specified by SSL Certificate Authority attribute");
   }
   ssl_ca_cert_thumbprint_ = utils::StringUtils::to_hex(hash_buf, true /*uppercase*/);
-  logger_->log_debug("%s SHA-1 thumbprint is %s", ssl_ca_file.c_str(), ssl_ca_cert_thumbprint_.c_str());
+  logger_->log_debug("{} SHA-1 thumbprint is {}", ssl_ca_file.c_str(), ssl_ca_cert_thumbprint_.c_str());
 
   session_factory_ = sessionFactory;
 

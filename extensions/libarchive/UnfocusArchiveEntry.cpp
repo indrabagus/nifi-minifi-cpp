@@ -19,7 +19,6 @@
  */
 #include "UnfocusArchiveEntry.h"
 
-#include <cstring>
 #include <iostream>
 #include <fstream>
 #include <memory>
@@ -36,15 +35,13 @@
 
 namespace org::apache::nifi::minifi::processors {
 
-const core::Relationship UnfocusArchiveEntry::Success("success", "success operational on the flow record");
-
 void UnfocusArchiveEntry::initialize() {
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
-void UnfocusArchiveEntry::onTrigger(core::ProcessContext *context, core::ProcessSession *session) {
-  auto flowFile = session->get();
+void UnfocusArchiveEntry::onTrigger(core::ProcessContext& context, core::ProcessSession& session) {
+  auto flowFile = session.get();
 
   if (!flowFile) {
     return;
@@ -65,13 +62,13 @@ void UnfocusArchiveEntry::onTrigger(core::ProcessContext *context, core::Process
         try {
           archiveStack.loadJsonString(existingLensStack);
         } catch (Exception &exception) {
-          logger_->log_debug(exception.what());
-          context->yield();
+          logger_->log_debug("{}", exception.what());
+          context.yield();
           return;
         }
       } else {
         logger_->log_error("UnfocusArchiveEntry lens metadata not found");
-        context->yield();
+        context.yield();
         return;
       }
     }
@@ -92,8 +89,8 @@ void UnfocusArchiveEntry::onTrigger(core::ProcessContext *context, core::Process
     }
 
     if (entry.entryName == lensArchiveMetadata.focusedEntry) {
-      logger_->log_debug("UnfocusArchiveEntry exporting focused entry to %s", entry.tmpFileName.string());
-      session->exportContent(entry.tmpFileName.string(), flowFile, false);
+      logger_->log_debug("UnfocusArchiveEntry exporting focused entry to {}", entry.tmpFileName);
+      session.exportContent(entry.tmpFileName.string(), flowFile, false);
     }
   }
 
@@ -107,10 +104,10 @@ void UnfocusArchiveEntry::onTrigger(core::ProcessContext *context, core::Process
       continue;
     }
 
-    logger_->log_debug("UnfocusArchiveEntry exporting entry %s to %s", entry.stashKey, entry.tmpFileName.string());
-    session->restore(entry.stashKey, flowFile);
+    logger_->log_debug("UnfocusArchiveEntry exporting entry {} to {}", entry.stashKey, entry.tmpFileName);
+    session.restore(entry.stashKey, flowFile);
     // TODO(calebj) implement copy export/don't worry about multiple claims/optimal efficiency for *now*
-    session->exportContent(entry.tmpFileName.string(), flowFile, false);
+    session.exportContent(entry.tmpFileName.string(), flowFile, false);
   }
 
   if (lensArchiveMetadata.archiveName.empty()) {
@@ -129,14 +126,14 @@ void UnfocusArchiveEntry::onTrigger(core::ProcessContext *context, core::Process
 
   // Create archive by restoring each entry in the archive from tmp files
   WriteCallback cb(&lensArchiveMetadata);
-  session->write(flowFile, std::cref(cb));
+  session.write(flowFile, std::cref(cb));
 
   // Transfer to the relationship
-  session->transfer(flowFile, Success);
+  session.transfer(flowFile, Success);
 }
 
-UnfocusArchiveEntry::WriteCallback::WriteCallback(ArchiveMetadata *archiveMetadata) {
-  _archiveMetadata = archiveMetadata;
+UnfocusArchiveEntry::WriteCallback::WriteCallback(ArchiveMetadata *archiveMetadata)
+    : _archiveMetadata(archiveMetadata) {
 }
 
 struct UnfocusArchiveEntryWriteData {
@@ -161,18 +158,18 @@ int64_t UnfocusArchiveEntry::WriteCallback::operator()(const std::shared_ptr<io:
   archive_write_open(outputArchive, &data, ok_cb, write_cb, ok_cb);
 
   // Iterate entries & write from tmp file to archive
-  char buf[8192];
-  struct stat st;
+  std::array<char, 8192> buf{};
+  struct stat st{};
   struct archive_entry* entry = nullptr;
 
   for (const auto &entryMetadata : _archiveMetadata->entryMetadata) {
     entry = archive_entry_new();
-    logger_->log_info("UnfocusArchiveEntry writing entry %s", entryMetadata.entryName);
+    logger_->log_info("UnfocusArchiveEntry writing entry {}", entryMetadata.entryName);
 
     if (entryMetadata.entryType == AE_IFREG && entryMetadata.entrySize > 0) {
       size_t stat_ok = stat(entryMetadata.tmpFileName.string().c_str(), &st);
       if (stat_ok != 0) {
-        logger_->log_error("Error statting %s: %s", entryMetadata.tmpFileName.string(), std::system_category().default_error_condition(errno).message());
+        logger_->log_error("Error statting {}: {}", entryMetadata.tmpFileName, std::system_category().default_error_condition(errno).message());
       }
       archive_entry_copy_stat(entry, &st);
     }
@@ -180,27 +177,27 @@ int64_t UnfocusArchiveEntry::WriteCallback::operator()(const std::shared_ptr<io:
     archive_entry_set_filetype(entry, entryMetadata.entryType);
     archive_entry_set_pathname(entry, entryMetadata.entryName.c_str());
     archive_entry_set_perm(entry, entryMetadata.entryPerm);
-    archive_entry_set_size(entry, entryMetadata.entrySize);
+    archive_entry_set_size(entry, gsl::narrow<la_int64_t>(entryMetadata.entrySize));
     archive_entry_set_uid(entry, entryMetadata.entryUID);
     archive_entry_set_gid(entry, entryMetadata.entryGID);
     archive_entry_set_mtime(entry, entryMetadata.entryMTime, gsl::narrow<long>(entryMetadata.entryMTimeNsec));  // NOLINT long comes from libarchive API
 
-    logger_->log_info("Writing %s with type %d, perms %d, size %d, uid %d, gid %d, mtime %d,%d", entryMetadata.entryName, entryMetadata.entryType, entryMetadata.entryPerm,
+    logger_->log_info("Writing {} with type {}, perms {}, size {}, uid {}, gid {}, mtime {},{}", entryMetadata.entryName, entryMetadata.entryType, entryMetadata.entryPerm,
                       entryMetadata.entrySize, entryMetadata.entryUID, entryMetadata.entryGID, entryMetadata.entryMTime, entryMetadata.entryMTimeNsec);
 
     archive_write_header(outputArchive, entry);
 
     // If entry is regular file, copy entry contents
     if (entryMetadata.entryType == AE_IFREG && entryMetadata.entrySize > 0) {
-      logger_->log_info("UnfocusArchiveEntry writing %d bytes of "
-                        "data from tmp file %s to archive entry %s",
+      logger_->log_info("UnfocusArchiveEntry writing {} bytes of "
+                        "data from tmp file {} to archive entry {}",
                         st.st_size, entryMetadata.tmpFileName.string(), entryMetadata.entryName);
       std::ifstream ifs(entryMetadata.tmpFileName, std::ifstream::in | std::ios::binary);
 
       while (ifs.good()) {
-        ifs.read(buf, sizeof(buf));
+        ifs.read(buf.data(), buf.size());
         auto len = gsl::narrow<size_t>(ifs.gcount());
-        int64_t written = archive_write_data(outputArchive, buf, len);
+        int64_t written = archive_write_data(outputArchive, buf.data(), len);
         if (written < 0) {
           logger_->log_error("UnfocusArchiveEntry failed to write data to "
                              "archive entry %s due to error: %s",

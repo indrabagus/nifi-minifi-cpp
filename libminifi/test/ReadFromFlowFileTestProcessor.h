@@ -21,9 +21,11 @@
 #include <vector>
 #include <utility>
 
+#include "core/Core.h"
 #include "core/Processor.h"
 #include "core/ProcessSession.h"
-#include "core/Core.h"
+#include "core/PropertyDefinition.h"
+#include "core/RelationshipDefinition.h"
 #include "core/Resource.h"
 #include "core/logging/Logger.h"
 #include "core/logging/LoggerConfiguration.h"
@@ -38,16 +40,16 @@ class ReadFromFlowFileTestProcessor : public core::Processor {
   static constexpr const char* ON_TRIGGER_LOG_STR = "ReadFromFlowFileTestProcessor::onTrigger executed";
   static constexpr const char* ON_UNSCHEDULE_LOG_STR = "ReadFromFlowFileTestProcessor::onUnSchedule executed";
 
-  explicit ReadFromFlowFileTestProcessor(std::string name, const utils::Identifier& uuid = utils::Identifier())
-      : Processor(std::move(name), uuid) {
+  explicit ReadFromFlowFileTestProcessor(std::string_view name, const utils::Identifier& uuid = utils::Identifier())
+      : Processor(name, uuid) {
   }
 
   static constexpr const char* Description = "ReadFromFlowFileTestProcessor (only for testing purposes)";
 
-  static auto properties() { return std::array<core::Property, 0>{}; }
+  static constexpr auto Properties = std::array<core::PropertyReference, 0>{};
 
-  static const core::Relationship Success;
-  static auto relationships() { return std::array{Success}; }
+  static constexpr auto Success = core::RelationshipDefinition{"success", "success operational on the flow record"};
+  static constexpr auto Relationships = std::array{Success};
 
   static constexpr bool SupportsDynamicProperties = false;
   static constexpr bool SupportsDynamicRelationships = false;
@@ -56,8 +58,8 @@ class ReadFromFlowFileTestProcessor : public core::Processor {
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  void onSchedule(core::ProcessContext *context, core::ProcessSessionFactory *sessionFactory) override;
-  void onTrigger(core::ProcessContext *context, core::ProcessSession *session) override;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& session_factory) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
   void initialize() override;
   void onUnSchedule() override;
 
@@ -83,7 +85,7 @@ class ReadFromFlowFileTestProcessor : public core::Processor {
 
  private:
   struct FlowFileData {
-    FlowFileData(core::ProcessSession* session, const gsl::not_null<std::shared_ptr<core::FlowFile>>& flow_file);
+    FlowFileData(core::ProcessSession& session, const gsl::not_null<std::shared_ptr<core::FlowFile>>& flow_file);
     std::string content_;
     std::map<std::string, std::string> attributes_;
   };

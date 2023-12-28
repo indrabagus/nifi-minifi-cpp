@@ -30,6 +30,7 @@
 #include "../unit/ProvenanceTestHelper.h"
 #include "../TestBase.h"
 #include "../Catch.h"
+#include "catch2/matchers/catch_matchers_string.hpp"
 #include "../../extensions/libarchive/MergeContent.h"
 #include "core/repository/VolatileFlowFileRepository.h"
 #include "../../extensions/rocksdb-repos/DatabaseContentRepository.h"
@@ -101,7 +102,8 @@ struct TestFlow{
 
     // prepare Merge Processor for execution
     processor_->setScheduledState(core::ScheduledState::RUNNING);
-    processor_->onSchedule(processorContext.get(), new core::ProcessSessionFactory(processorContext));
+    process_session_factory_ = std::make_unique<core::ProcessSessionFactory>(processorContext);
+    processor_->onSchedule(*processorContext, *process_session_factory_);
   }
   std::shared_ptr<core::FlowFile> write(const std::string& data) {
     minifi::io::BufferStream stream(data);
@@ -118,7 +120,7 @@ struct TestFlow{
   }
   void trigger() {
     auto session = std::make_shared<core::ProcessSession>(processorContext);
-    processor_->onTrigger(processorContext, session);
+    processor_->onTrigger(*processorContext, *session);
     session->commit();
   }
 
@@ -139,6 +141,7 @@ struct TestFlow{
   std::shared_ptr<core::Repository> prov_repo;
   std::shared_ptr<core::ProcessContext> inputContext;
   std::shared_ptr<core::ProcessContext> processorContext;
+  std::unique_ptr<core::ProcessSessionFactory> process_session_factory_;
 };
 
 std::unique_ptr<MergeContent> setupMergeProcessor(const utils::Identifier& id) {
@@ -178,7 +181,7 @@ TEST_CASE("Processors Can Store FlowFiles", "[TestP1]") {
   ff_repository->initialize(config);
   content_repo->initialize(config);
 
-  auto flowConfig = std::make_unique<core::FlowConfiguration>(core::ConfigurationContext{ff_repository, content_repo, nullptr, config, ""});
+  auto flowConfig = std::make_unique<core::FlowConfiguration>(core::ConfigurationContext{ff_repository, content_repo, config, ""});
   auto flowController = std::make_shared<minifi::FlowController>(prov_repo, ff_repository, config, std::move(flowConfig), content_repo);
 
   {
@@ -235,13 +238,13 @@ TEST_CASE("Processors Can Store FlowFiles", "[TestP1]") {
 
     auto content = flow.read(file);
     // See important note about matchers at: https://github.com/catchorg/Catch2/blob/e8cdfdca87ebacd993befdd08ea6aa7e8068ef3d/docs/matchers.md#using-matchers
-    REQUIRE_THAT(content, Catch::Equals("_Header_one_Demarcator_two_Demarcator_three_Footer_") || Catch::Equals("_Header_two_Demarcator_one_Demarcator_three_Footer_"));
+    REQUIRE_THAT(content, Catch::Matchers::Equals("_Header_one_Demarcator_two_Demarcator_three_Footer_") || Catch::Matchers::Equals("_Header_two_Demarcator_one_Demarcator_three_Footer_"));
   }
 }
 
 class ContentUpdaterProcessor : public core::Processor {
  public:
-  ContentUpdaterProcessor(std::string name, const utils::Identifier& id) : Processor(std::move(name), id) {}
+  ContentUpdaterProcessor(std::string_view name, const utils::Identifier& id) : Processor(name, id) {}
 
   static constexpr bool SupportsDynamicProperties = false;
   static constexpr bool SupportsDynamicRelationships = false;
@@ -249,12 +252,12 @@ class ContentUpdaterProcessor : public core::Processor {
   static constexpr bool IsSingleThreaded = false;
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  void onTrigger(core::ProcessContext* /*context*/, core::ProcessSession *session) override {
-    auto ff = session->get();
+  void onTrigger(core::ProcessContext&, core::ProcessSession& session) override {
+    auto ff = session.get();
     std::string data = "<override>";
     minifi::io::BufferStream stream(data);
-    session->importFrom(stream, ff);
-    session->transfer(ff, {"success", "d"});
+    session.importFrom(stream, ff);
+    session.transfer(ff, {"success", "d"});
   }
 };
 
@@ -277,6 +280,7 @@ TEST_CASE("Persisted flowFiles are updated on modification", "[TestP1]") {
   auto config = std::make_shared<minifi::Configure>();
   config->set(minifi::Configure::nifi_dbcontent_repository_directory_default, (dir / "content_repository").string());
   config->set(minifi::Configure::nifi_flowfile_repository_directory_default, (dir / "flowfile_repository").string());
+  config->set(minifi::Configure::nifi_dbcontent_repository_purge_period, "0 s");
 
   std::shared_ptr<core::Repository> prov_repo = std::make_shared<TestThreadedRepository>();
   std::shared_ptr<core::Repository> ff_repository = std::make_shared<core::repository::FlowFileRepository>("flowFileRepository");
@@ -296,7 +300,7 @@ TEST_CASE("Persisted flowFiles are updated on modification", "[TestP1]") {
   ff_repository->initialize(config);
   content_repo->initialize(config);
 
-  auto flowConfig = std::make_unique<core::FlowConfiguration>(core::ConfigurationContext{ff_repository, content_repo, nullptr, config, ""});
+  auto flowConfig = std::make_unique<core::FlowConfiguration>(core::ConfigurationContext{ff_repository, content_repo, config, ""});
   auto flowController = std::make_shared<minifi::FlowController>(prov_repo, ff_repository, config, std::move(flowConfig), content_repo);
 
   {

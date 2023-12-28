@@ -36,7 +36,6 @@ ExecutionPlan::ExecutionPlan(std::shared_ptr<core::ContentRepository> content_re
       location(-1),
       current_flowfile_(nullptr),
       logger_(core::logging::LoggerFactory<ExecutionPlan>::getLogger()) {
-  stream_factory = org::apache::nifi::minifi::io::StreamFactory::getInstance(std::make_shared<minifi::Configure>());
 }
 
 /**
@@ -70,7 +69,7 @@ std::shared_ptr<core::Processor> ExecutionPlan::addCallback(void *obj,
 
 bool ExecutionPlan::setProperty(const std::shared_ptr<core::Processor>& proc, const std::string &prop, const std::string &value) {
   uint32_t i = 0;
-  logger_->log_debug("Attempting to set property %s %s for %s", prop, value, proc->getName());
+  logger_->log_debug("Attempting to set property {} {} for {}", prop, value, proc->getName());
   for (i = 0; i < processor_queue_.size(); i++) {
     if (processor_queue_.at(i) == proc) {
       break;
@@ -89,7 +88,6 @@ std::shared_ptr<core::Processor> ExecutionPlan::addProcessor(const std::shared_p
     return nullptr;
   }
 
-  processor->setStreamFactory(stream_factory);
   // initialize the processor
   processor->initialize();
 
@@ -157,7 +155,7 @@ bool ExecutionPlan::runNextProcessor(std::function<void(const std::shared_ptr<co
   std::shared_ptr<core::ProcessSessionFactory> factory = std::make_shared<core::ProcessSessionFactory>(context);
   factories_.push_back(factory);
   if (std::find(configured_processors_.begin(), configured_processors_.end(), processor) == configured_processors_.end()) {
-    processor->onSchedule(context, factory);
+    processor->onSchedule(*context, *factory);
     configured_processors_.push_back(processor);
   }
   std::shared_ptr<core::ProcessSession> current_session = std::make_shared<core::ProcessSession>(context);
@@ -177,8 +175,8 @@ bool ExecutionPlan::runNextProcessor(std::function<void(const std::shared_ptr<co
   if (verify != nullptr) {
     verify(context, current_session);
   } else {
-    logger_->log_debug("Running %s", processor->getName());
-    processor->onTrigger(context, current_session);
+    logger_->log_debug("Running {}", processor->getName());
+    processor->onTrigger(*context, *current_session);
   }
   current_session->commit();
   current_flowfile_ = current_session->get();
@@ -347,4 +345,3 @@ bool ExecutionPlan::addCustomProcessor(custom_processor_args in) {
 int ExecutionPlan::deleteCustomProcessor(const char * name) {
   return custom_processors.erase(name);
 }
-

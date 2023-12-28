@@ -19,6 +19,7 @@
 #include <cinttypes>
 #include <vector>
 #include <string>
+#include <string_view>
 #include <memory>
 #include <algorithm>
 #include <utility>
@@ -40,16 +41,16 @@ constexpr auto PROVENANCE_PURGE_PERIOD = std::chrono::milliseconds(2500);
 
 class ProvenanceRepository : public core::repository::RocksDbRepository {
  public:
-  ProvenanceRepository(std::string name, const utils::Identifier& /*uuid*/)
-    : ProvenanceRepository(std::move(name)) {
+  ProvenanceRepository(std::string_view name, const utils::Identifier& /*uuid*/)
+    : ProvenanceRepository(name) {
   }
 
-  explicit ProvenanceRepository(std::string repo_name = "",
+  explicit ProvenanceRepository(std::string_view repo_name = "",
                                 std::string directory = PROVENANCE_DIRECTORY,
                                 std::chrono::milliseconds maxPartitionMillis = MAX_PROVENANCE_ENTRY_LIFE_TIME,
                                 int64_t maxPartitionBytes = MAX_PROVENANCE_STORAGE_SIZE,
                                 std::chrono::milliseconds purgePeriod = PROVENANCE_PURGE_PERIOD)
-    : RocksDbRepository(repo_name.length() > 0 ? std::move(repo_name) : core::getClassName<ProvenanceRepository>(),
+    : RocksDbRepository(repo_name.length() > 0 ? repo_name : core::className<ProvenanceRepository>(),
         directory, maxPartitionMillis, maxPartitionBytes, purgePeriod, core::logging::LoggerFactory<ProvenanceRepository>::getLogger()) {
   }
 
@@ -57,7 +58,7 @@ class ProvenanceRepository : public core::repository::RocksDbRepository {
     stop();
   }
 
-  static auto properties() { return std::array<core::Property, 0>{}; }
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 0>{};
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
 
@@ -83,7 +84,7 @@ class ProvenanceRepository : public core::repository::RocksDbRepository {
 
  private:
   // Run function for the thread
-  void run() override;
+  void run() override {};
 };
 
 }  // namespace org::apache::nifi::minifi::provenance

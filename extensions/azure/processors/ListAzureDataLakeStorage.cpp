@@ -41,27 +41,26 @@ std::shared_ptr<core::FlowFile> createNewFlowFile(core::ProcessSession &session,
 }  // namespace
 
 void ListAzureDataLakeStorage::initialize() {
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
-void ListAzureDataLakeStorage::onSchedule(const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSessionFactory>& sessionFactory) {
-  gsl_Expects(context && sessionFactory);
-  AzureDataLakeStorageProcessorBase::onSchedule(context, sessionFactory);
+void ListAzureDataLakeStorage::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& session_factory) {
+  AzureDataLakeStorageProcessorBase::onSchedule(context, session_factory);
 
-  auto state_manager = context->getStateManager();
+  auto state_manager = context.getStateManager();
   if (state_manager == nullptr) {
     throw Exception(PROCESSOR_EXCEPTION, "Failed to get StateManager");
   }
   state_manager_ = std::make_unique<minifi::utils::ListingStateManager>(state_manager);
 
-  auto params = buildListParameters(*context);
+  auto params = buildListParameters(context);
   if (!params) {
     throw Exception(PROCESS_SCHEDULE_EXCEPTION, "Required parameters for ListAzureDataLakeStorage processor are missing or invalid");
   }
 
   list_parameters_ = *std::move(params);
-  tracking_strategy_ = utils::parseEnumProperty<EntityTracking>(*context, ListingStrategy);
+  tracking_strategy_ = utils::parseEnumProperty<azure::EntityTracking>(context, ListingStrategy);
 }
 
 std::optional<storage::ListAzureDataLakeStorageParameters> ListAzureDataLakeStorage::buildListParameters(core::ProcessContext& context) {
@@ -70,12 +69,12 @@ std::optional<storage::ListAzureDataLakeStorageParameters> ListAzureDataLakeStor
     return std::nullopt;
   }
 
-  if (!context.getProperty(RecurseSubdirectories.getName(), params.recurse_subdirectories)) {
+  if (!context.getProperty(RecurseSubdirectories, params.recurse_subdirectories)) {
     logger_->log_error("Recurse Subdirectories property missing or invalid");
     return std::nullopt;
   }
 
-  auto createFilterRegex = [&context](const std::string& property_name) -> std::optional<minifi::utils::Regex> {
+  auto createFilterRegex = [&context](std::string_view property_name) -> std::optional<minifi::utils::Regex> {
     try {
       std::string filter_str;
       context.getProperty(property_name, filter_str);
@@ -85,23 +84,22 @@ std::optional<storage::ListAzureDataLakeStorageParameters> ListAzureDataLakeStor
 
       return std::nullopt;
     } catch (const minifi::Exception&) {
-      throw Exception(PROCESS_SCHEDULE_EXCEPTION, property_name + " regex is invalid");
+      throw Exception(PROCESS_SCHEDULE_EXCEPTION, std::string(property_name) + " regex is invalid");
     }
   };
 
-  params.file_regex = createFilterRegex(FileFilter.getName());
-  params.path_regex = createFilterRegex(PathFilter.getName());
+  params.file_regex = createFilterRegex(FileFilter.name);
+  params.path_regex = createFilterRegex(PathFilter.name);
 
   return params;
 }
 
-void ListAzureDataLakeStorage::onTrigger(const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSession>& session) {
-  gsl_Expects(context && session);
+void ListAzureDataLakeStorage::onTrigger(core::ProcessContext& context, core::ProcessSession& session) {
   logger_->log_trace("ListAzureDataLakeStorage onTrigger");
 
   auto list_result = azure_data_lake_storage_.listDirectory(list_parameters_);
   if (!list_result || list_result->empty()) {
-    context->yield();
+    context.yield();
     return;
   }
 
@@ -110,25 +108,27 @@ void ListAzureDataLakeStorage::onTrigger(const std::shared_ptr<core::ProcessCont
   std::size_t files_transferred = 0;
 
   for (const auto& element : *list_result) {
-    if (tracking_strategy_ == EntityTracking::TIMESTAMPS && stored_listing_state.wasObjectListedAlready(element)) {
+    if (tracking_strategy_ == azure::EntityTracking::timestamps && stored_listing_state.wasObjectListedAlready(element)) {
       continue;
     }
 
-    auto flow_file = createNewFlowFile(*session, element);
-    session->transfer(flow_file, Success);
+    auto flow_file = createNewFlowFile(session, element);
+    session.transfer(flow_file, Success);
     ++files_transferred;
     latest_listing_state.updateState(element);
   }
 
   state_manager_->storeState(latest_listing_state);
 
-  logger_->log_debug("ListAzureDataLakeStorage transferred %zu flow files", files_transferred);
+  logger_->log_debug("ListAzureDataLakeStorage transferred {} flow files", files_transferred);
 
   if (files_transferred == 0) {
-    logger_->log_debug("No new Azure Data Lake Storage files were found in directory '%s' of filesystem '%s'", list_parameters_.directory_name, list_parameters_.file_system_name);
-    context->yield();
+    logger_->log_debug("No new Azure Data Lake Storage files were found in directory '{}' of filesystem '{}'", list_parameters_.directory_name, list_parameters_.file_system_name);
+    context.yield();
     return;
   }
 }
+
+REGISTER_RESOURCE(ListAzureDataLakeStorage, Processor);
 
 }  // namespace org::apache::nifi::minifi::azure::processors

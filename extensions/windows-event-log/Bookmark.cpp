@@ -23,14 +23,14 @@
 #include <utility>
 #include <fstream>
 
-#include "wel/UnicodeConversion.h"
 #include "utils/file/FileUtils.h"
 #include "utils/OsUtils.h"
+#include "utils/UnicodeConversion.h"
 
 namespace org::apache::nifi::minifi::processors {
 static const std::string BOOKMARK_KEY = "bookmark";
 
-Bookmark::Bookmark(const std::wstring& channel,
+Bookmark::Bookmark(const wel::EventPath& path,
     const std::wstring& query,
     const std::filesystem::path& bookmarkRootDir,
     const utils::Identifier& uuid,
@@ -41,7 +41,7 @@ Bookmark::Bookmark(const std::wstring& channel,
       state_manager_(state_manager) {
   std::unordered_map<std::string, std::string> state_map;
   if (state_manager_->get(state_map) && state_map.count(BOOKMARK_KEY) == 1U) {
-    bookmarkXml_ = wel::to_wstring(state_map[BOOKMARK_KEY].c_str());
+    bookmarkXml_ = utils::to_wstring(state_map[BOOKMARK_KEY]);
   } else if (!bookmarkRootDir.empty()) {
     filePath_ = bookmarkRootDir / "uuid" / uuid.to_string().view() / "Bookmark.txt";
 
@@ -53,7 +53,7 @@ Bookmark::Bookmark(const std::wstring& channel,
         migrated_path += "-migrated";
         std::filesystem::rename(filePath_, migrated_path);
       } else {
-        logger_->log_warn("Could not migrate state from specified State Directory %s", bookmarkRootDir.string());
+        logger_->log_warn("Could not migrate state from specified State Directory {}", bookmarkRootDir);
       }
     }
   } else {
@@ -80,7 +80,7 @@ Bookmark::Bookmark(const std::wstring& channel,
     return;
   }
 
-  const auto hEventResults = unique_evt_handle{ EvtQuery(nullptr, channel.c_str(), query.c_str(), EvtQueryChannelPath) };
+  const auto hEventResults = unique_evt_handle{ EvtQuery(nullptr, path.wstr().c_str(), query.c_str(), path.getQueryFlags()) };
   if (!hEventResults) {
     LOG_LAST_ERROR(EvtQuery);
     return;
@@ -122,7 +122,7 @@ bool Bookmark::saveBookmarkXml(const std::wstring& bookmarkXml) {
   bookmarkXml_ = bookmarkXml;
 
   std::unordered_map<std::string, std::string> state_map;
-  state_map[BOOKMARK_KEY] = wel::to_string(bookmarkXml_.c_str());
+  state_map[BOOKMARK_KEY] = utils::to_string(bookmarkXml_);
 
   return state_manager_->set(state_map);
 }
@@ -130,7 +130,7 @@ bool Bookmark::saveBookmarkXml(const std::wstring& bookmarkXml) {
 bool Bookmark::saveBookmark(EVT_HANDLE event_handle) {
   auto bookmark_xml = getNewBookmarkXml(event_handle);
   if (!bookmark_xml) {
-    logger_->log_error("%s", bookmark_xml.error());
+    logger_->log_error("{}", bookmark_xml.error());
     return false;
   }
 
@@ -139,7 +139,7 @@ bool Bookmark::saveBookmark(EVT_HANDLE event_handle) {
 
 nonstd::expected<std::wstring, std::string> Bookmark::getNewBookmarkXml(EVT_HANDLE hEvent) {
   if (!EvtUpdateBookmark(hBookmark_.get(), hEvent)) {
-    return nonstd::make_unexpected(fmt::format("EvtUpdateBookmark failed due to %s", utils::OsUtils::windowsErrorToErrorCode(GetLastError()).message()));
+    return nonstd::make_unexpected(fmt::format("EvtUpdateBookmark failed due to {}", utils::OsUtils::windowsErrorToErrorCode(GetLastError()).message()));
   }
   // Render the bookmark as an XML string that can be persisted.
   logger_->log_trace("Rendering new bookmark");
@@ -152,13 +152,13 @@ nonstd::expected<std::wstring, std::string> Bookmark::getNewBookmarkXml(EVT_HAND
 
   auto last_error = GetLastError();
   if (last_error != ERROR_INSUFFICIENT_BUFFER)
-    return nonstd::make_unexpected(fmt::format("EvtRender failed due to %s", utils::OsUtils::windowsErrorToErrorCode(last_error).message()));
+    return nonstd::make_unexpected(fmt::format("EvtRender failed due to {}", utils::OsUtils::windowsErrorToErrorCode(last_error).message()));
 
   bufferSize = bufferUsed;
   std::vector<wchar_t> buf(bufferSize / 2 + 1);
 
   if (!EvtRender(nullptr, hBookmark_.get(), EvtRenderBookmark, bufferSize, buf.data(), &bufferUsed, &propertyCount)) {
-    return nonstd::make_unexpected(fmt::format("EvtRender failed due to %s", utils::OsUtils::windowsErrorToErrorCode(GetLastError()).message()));
+    return nonstd::make_unexpected(fmt::format("EvtRender failed due to {}", utils::OsUtils::windowsErrorToErrorCode(GetLastError()).message()));
   }
 
   return std::wstring(buf.data());
@@ -192,7 +192,7 @@ bool Bookmark::getBookmarkXmlFromFile(std::wstring& bookmarkXml) {
   // '!' should be at the end of bookmark.
   auto pos = bookmarkXml.find(L'!');
   if (std::wstring::npos == pos) {
-    logger_->log_error("No '!' in bookmarXml '%ls'", bookmarkXml.c_str());
+    logger_->log_error("No '!' in bookmarXml '{}'", utils::to_string(bookmarkXml));
     bookmarkXml.clear();
     return false;
   }

@@ -19,7 +19,6 @@
 #undef NDEBUG
 
 #include "TestBase.h"
-#include "Catch.h"
 
 #include "c2/C2Agent.h"
 #include "c2/HeartbeatLogger.h"
@@ -35,6 +34,7 @@
 #include "range/v3/view/transform.hpp"
 #include "utils/IntegrationTestUtils.h"
 #include "utils/StringUtils.h"
+#include "utils/span.h"
 #include "properties/Configuration.h"
 #include "io/ZlibStream.h"
 
@@ -50,10 +50,10 @@ class CompressedHeartbeatHandler : public HeartbeatHandler {
     minifi::io::BufferStream output;
     {
       minifi::io::ZlibDecompressStream decompressor(gsl::make_not_null(&output));
-      auto ret = decompressor.write(gsl::span<const char>(payload).as_span<const std::byte>());
+      auto ret = decompressor.write(as_bytes(std::span(payload)));
       assert(ret == payload.size());
     }
-    auto str_span = output.getBuffer().as_span<const char>();
+    auto str_span = utils::as_span<const char>(output.getBuffer());
     return {str_span.data(), str_span.size()};
   }
 

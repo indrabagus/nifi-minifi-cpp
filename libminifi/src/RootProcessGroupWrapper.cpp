@@ -124,12 +124,12 @@ void RootProcessGroupWrapper::clearConnection(const std::string &connection) {
   if (root_ == nullptr) {
     return;
   }
-  logger_->log_info("Attempting to clear connection %s", connection);
+  logger_->log_info("Attempting to clear connection {}", connection);
   std::map<std::string, Connection*> connections;
   root_->getConnections(connections);
   auto conn = connections.find(connection);
   if (conn != connections.end()) {
-    logger_->log_info("Clearing connection %s", connection);
+    logger_->log_info("Clearing connection {}", connection);
     conn->second->drain(true);
   }
 }
@@ -162,16 +162,16 @@ state::StateController* RootProcessGroupWrapper::getProcessorController(const st
   }
 
   return utils::Identifier::parse(id_or_name)
-    | utils::flatMap([this](utils::Identifier id) { return utils::optional_from_ptr(root_->findProcessorById(id)); })
+    | utils::andThen([this](utils::Identifier id) { return utils::optional_from_ptr(root_->findProcessorById(id)); })
     | utils::orElse([this, &id_or_name] { return utils::optional_from_ptr(root_->findProcessorByName(id_or_name)); })
-    | utils::map([this, &controllerFactory](gsl::not_null<core::Processor*> proc) -> gsl::not_null<state::ProcessorController*> {
+    | utils::transform([this, &controllerFactory](gsl::not_null<core::Processor*> proc) -> gsl::not_null<state::ProcessorController*> {
       return utils::optional_from_ptr(processor_to_controller_[proc->getUUID()].get())
           | utils::valueOrElse([this, proc, &controllerFactory] {
             return gsl::make_not_null((processor_to_controller_[proc->getUUID()] = controllerFactory(*proc)).get());
           });
     })
     | utils::valueOrElse([this, &id_or_name]() -> state::ProcessorController* {
-      logger_->log_error("Could not get processor controller for requested id/name \"%s\", because the processor was not found", id_or_name);
+      logger_->log_error("Could not get processor controller for requested id/name \"{}\", because the processor was not found", id_or_name);
       return nullptr;
     });
 }

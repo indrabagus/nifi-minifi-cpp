@@ -44,7 +44,6 @@
 #include "FlowController.h"
 #include "properties/Configure.h"
 #include "unit/ProvenanceTestHelper.h"
-#include "io/StreamFactory.h"
 #include "processors/FetchSFTP.h"
 #include "processors/ListSFTP.h"
 #include "processors/GenerateFlowFile.h"
@@ -139,16 +138,21 @@ class ListThenFetchSFTPTestsFixture {
 
     // Configure PutFile processor
     plan->setProperty(put_file, "Directory", (dst_dir / "${path}").string());
-    plan->setProperty(put_file, "Conflict Resolution Strategy", minifi::processors::PutFile::CONFLICT_RESOLUTION_STRATEGY_FAIL);
+    plan->setProperty(put_file, "Conflict Resolution Strategy", magic_enum::enum_name(minifi::processors::PutFile::FileExistsResolutionStrategy::fail));
     plan->setProperty(put_file, "Create Missing Directories", "true");
   }
+
+  ListThenFetchSFTPTestsFixture(ListThenFetchSFTPTestsFixture&&) = delete;
+  ListThenFetchSFTPTestsFixture(const ListThenFetchSFTPTestsFixture&) = delete;
+  ListThenFetchSFTPTestsFixture& operator=(ListThenFetchSFTPTestsFixture&&) = delete;
+  ListThenFetchSFTPTestsFixture& operator=(const ListThenFetchSFTPTestsFixture&) = delete;
 
   virtual ~ListThenFetchSFTPTestsFixture() {
     LogTestController::getInstance().reset();
   }
 
   // Create source file
-  void createFile(const std::string& relative_path, const std::string& content, std::optional<std::filesystem::file_time_type> modification_time) {
+  void createFile(const std::string& relative_path, const std::string& content, std::optional<std::chrono::file_clock::time_point> modification_time) {
     std::fstream file;
     std::filesystem::path full_path = src_dir / "vfs" / relative_path;
     std::filesystem::create_directories(full_path.parent_path());
@@ -179,7 +183,7 @@ class ListThenFetchSFTPTestsFixture {
     std::stringstream content;
     std::vector<char> buffer(1024U);
     while (file) {
-      file.read(buffer.data(), buffer.size());
+      file.read(buffer.data(), gsl::narrow<std::streamsize>(buffer.size()));
       content << std::string(buffer.data(), file.gcount());
     }
     CHECK(expected_content == content.str());

@@ -23,28 +23,30 @@
 #include "io/StreamPipe.h"
 #include "core/ProcessContext.h"
 #include "core/ProcessSession.h"
+#include "core/Resource.h"
 #include "Exception.h"
+#include "utils/ProcessorConfigUtils.h"
 
 namespace org::apache::nifi::minifi::processors {
 
 const std::string ExecuteSQL::RESULT_ROW_COUNT = "executesql.row.count";
 const std::string ExecuteSQL::INPUT_FLOW_FILE_UUID = "input.flowfile.uuid";
 
-ExecuteSQL::ExecuteSQL(std::string name, const utils::Identifier& uuid)
-  : SQLProcessor(std::move(name), uuid, core::logging::LoggerFactory<ExecuteSQL>::getLogger(uuid)) {
+ExecuteSQL::ExecuteSQL(std::string_view name, const utils::Identifier& uuid)
+  : SQLProcessor(name, uuid, core::logging::LoggerFactory<ExecuteSQL>::getLogger(uuid)) {
 }
 
 void ExecuteSQL::initialize() {
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
 void ExecuteSQL::processOnSchedule(core::ProcessContext& context) {
-  context.getProperty(OutputFormat.getName(), output_format_);
+  output_format_ = utils::parseEnumProperty<flow_file_source::OutputType>(context, OutputFormat);
 
   max_rows_ = [&] {
     uint64_t max_rows = 0;
-    context.getProperty(MaxRowsPerFlowFile.getName(), max_rows);
+    context.getProperty(MaxRowsPerFlowFile, max_rows);
     return gsl::narrow<size_t>(max_rows);
   }();
 }
@@ -56,7 +58,7 @@ void ExecuteSQL::processOnTrigger(core::ProcessContext& context, core::ProcessSe
   if (!context.getProperty(SQLSelectQuery, query, input_flow_file)) {
     if (!input_flow_file) {
       throw Exception(PROCESSOR_EXCEPTION,
-                      "No incoming FlowFile and the \"" + SQLSelectQuery.getName() + "\" processor property is not specified");
+                      "No incoming FlowFile and the \"" + std::string{SQLSelectQuery.name} + "\" processor property is not specified");
     }
     logger_->log_debug("Using the contents of the flow file as the SQL statement");
     query = to_string(session.readBuffer(input_flow_file));
@@ -74,12 +76,12 @@ void ExecuteSQL::processOnTrigger(core::ProcessContext& context, core::ProcessSe
   try {
     row_set = connection_->prepareStatement(query)->execute(collectArguments(input_flow_file));
   } catch (const sql::StatementError& ex) {
-    logger_->log_error("Error while executing sql statement: %s", ex.what());
+    logger_->log_error("Error while executing sql statement: {}", ex.what());
     session.transfer(input_flow_file, Failure);
     return;
   }
 
-  sql::JSONSQLWriter json_writer{output_format_ == OutputType::JSONPretty};
+  sql::JSONSQLWriter json_writer{output_format_ == flow_file_source::OutputType::JSONPretty};
   FlowFileGenerator flow_file_creator{session, json_writer};
   sql::SQLRowsetProcessor sql_rowset_processor(std::move(row_set), {json_writer, flow_file_creator});
 
@@ -101,5 +103,7 @@ void ExecuteSQL::processOnTrigger(core::ProcessContext& context, core::ProcessSe
     session.transfer(new_file, Success);
   }
 }
+
+REGISTER_RESOURCE(ExecuteSQL, Processor);
 
 }  // namespace org::apache::nifi::minifi::processors

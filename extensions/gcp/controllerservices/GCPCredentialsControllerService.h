@@ -23,33 +23,70 @@
 #include "core/controller/ControllerService.h"
 #include "core/logging/Logger.h"
 #include "core/logging/LoggerConfiguration.h"
+#include "core/PropertyDefinition.h"
+#include "core/PropertyDefinitionBuilder.h"
 #include "utils/Enum.h"
 
 #include "google/cloud/storage/oauth2/credentials.h"
 
 namespace org::apache::nifi::minifi::extensions::gcp {
+enum class CredentialsLocation {
+  USE_DEFAULT_CREDENTIALS,
+  USE_COMPUTE_ENGINE_CREDENTIALS,
+  USE_JSON_FILE,
+  USE_JSON_CONTENTS,
+  USE_ANONYMOUS_CREDENTIALS
+};
+}  // namespace org::apache::nifi::minifi::extensions::gcp
+
+namespace magic_enum::customize {
+using CredentialsLocation = org::apache::nifi::minifi::extensions::gcp::CredentialsLocation;
+
+template <>
+constexpr customize_t enum_name<CredentialsLocation>(CredentialsLocation value) noexcept {
+  switch (value) {
+    case CredentialsLocation::USE_DEFAULT_CREDENTIALS:
+      return "Google Application Default Credentials";
+    case CredentialsLocation::USE_COMPUTE_ENGINE_CREDENTIALS:
+      return "Use Compute Engine Credentials";
+    case CredentialsLocation::USE_JSON_FILE:
+      return "Service Account JSON File";
+    case CredentialsLocation::USE_JSON_CONTENTS:
+      return "Service Account JSON";
+    case CredentialsLocation::USE_ANONYMOUS_CREDENTIALS:
+      return "Use Anonymous credentials";
+  }
+  return invalid_tag;
+}
+}  // namespace magic_enum::customize
+
+namespace org::apache::nifi::minifi::extensions::gcp {
 
 class GCPCredentialsControllerService : public core::controller::ControllerService {
  public:
-  SMART_ENUM(CredentialsLocation,
-             (USE_DEFAULT_CREDENTIALS, "Google Application Default Credentials"),
-             (USE_COMPUTE_ENGINE_CREDENTIALS, "Use Compute Engine Credentials"),
-             (USE_JSON_FILE, "Service Account JSON File"),
-             (USE_JSON_CONTENTS, "Service Account JSON"),
-             (USE_ANONYMOUS_CREDENTIALS, "Use Anonymous credentials"));
+  EXTENSIONAPI static constexpr const char* Description = "Manages the credentials for Google Cloud Platform. This allows for multiple Google Cloud Platform related processors "
+      "to reference this single controller service so that Google Cloud Platform credentials can be managed and controlled in a central location.";
 
-  EXTENSIONAPI static constexpr const char* Description = "Google Cloud Platform Credentials Controller Service";
-
-  EXTENSIONAPI static const core::Property CredentialsLoc;
-  EXTENSIONAPI static const core::Property JsonFilePath;
-  EXTENSIONAPI static const core::Property JsonContents;
-  static auto properties() {
-    return std::array{
+  EXTENSIONAPI static constexpr auto CredentialsLoc = core::PropertyDefinitionBuilder<magic_enum::enum_count<CredentialsLocation>()>::createProperty("Credentials Location")
+      .withDescription("The location of the credentials.")
+      .withDefaultValue(magic_enum::enum_name(CredentialsLocation::USE_DEFAULT_CREDENTIALS))
+      .withAllowedValues(magic_enum::enum_names<CredentialsLocation>())
+      .isRequired(true)
+      .build();
+  EXTENSIONAPI static constexpr auto JsonFilePath = core::PropertyDefinitionBuilder<>::createProperty("Service Account JSON File")
+      .withDescription("Path to a file containing a Service Account key file in JSON format.")
+      .isRequired(false)
+      .build();
+  EXTENSIONAPI static constexpr auto JsonContents = core::PropertyDefinitionBuilder<>::createProperty("Service Account JSON")
+      .withDescription("The raw JSON containing a Service Account keyfile.")
+      .isRequired(false)
+      .build();
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 3>{
       CredentialsLoc,
       JsonFilePath,
       JsonContents
-    };
-  }
+  };
+
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_CONTROLLER_SERVICES

@@ -21,8 +21,12 @@
 #include <string>
 #include <utility>
 
+#include "../GCPAttributes.h"
 #include "GCSProcessor.h"
+#include "PropertyDefinition.h"
+#include "RelationshipDefinition.h"
 #include "google/cloud/storage/well_known_headers.h"
+#include "RelationshipDefinition.h"
 #include "core/logging/LoggerConfiguration.h"
 #include "utils/ArrayUtils.h"
 
@@ -30,34 +34,48 @@ namespace org::apache::nifi::minifi::extensions::gcp {
 
 class FetchGCSObject : public GCSProcessor {
  public:
-  explicit FetchGCSObject(std::string name, const utils::Identifier& uuid = {})
-      : GCSProcessor(std::move(name), uuid, core::logging::LoggerFactory<FetchGCSObject>::getLogger(uuid)) {
+  explicit FetchGCSObject(std::string_view name, const utils::Identifier& uuid = {})
+      : GCSProcessor(name, uuid, core::logging::LoggerFactory<FetchGCSObject>::getLogger(uuid)) {
   }
   ~FetchGCSObject() override = default;
 
   EXTENSIONAPI static constexpr const char* Description = "Fetches a file from a Google Cloud Bucket. Designed to be used in tandem with ListGCSBucket.";
 
-  EXTENSIONAPI static const core::Property Bucket;
-  EXTENSIONAPI static const core::Property Key;
-  EXTENSIONAPI static const core::Property EncryptionKey;
-  EXTENSIONAPI static const core::Property ObjectGeneration;
-  static auto properties() {
-    return utils::array_cat(GCSProcessor::properties(), std::array{
+  EXTENSIONAPI static constexpr auto Bucket = core::PropertyDefinitionBuilder<>::createProperty("Bucket")
+      .withDescription("Bucket of the object.")
+      .withDefaultValue("${gcs.bucket}")
+      .supportsExpressionLanguage(true)
+      .build();
+  EXTENSIONAPI static constexpr auto Key = core::PropertyDefinitionBuilder<>::createProperty("Key")
+      .withDescription("Name of the object.")
+      .withDefaultValue("${filename}")
+      .supportsExpressionLanguage(true)
+      .build();
+  EXTENSIONAPI static constexpr auto EncryptionKey = core::PropertyDefinitionBuilder<>::createProperty("Server Side Encryption Key")
+      .withDescription("The AES256 Encryption Key (encoded in base64) for server-side decryption of the object.")
+      .isRequired(false)
+      .supportsExpressionLanguage(true)
+      .build();
+  EXTENSIONAPI static constexpr auto ObjectGeneration = core::PropertyDefinitionBuilder<>::createProperty("Object Generation")
+      .withDescription("The generation of the Object to download. If left empty, then it will download the latest generation.")
+      .supportsExpressionLanguage(true)
+      .build();
+  EXTENSIONAPI static constexpr auto Properties = utils::array_cat(GCSProcessor::Properties, std::array<core::PropertyReference, 4>{
       Bucket,
       Key,
       EncryptionKey,
       ObjectGeneration
-    });
-  }
+  });
 
-  EXTENSIONAPI static const core::Relationship Success;
-  EXTENSIONAPI static const core::Relationship Failure;
-  static auto relationships() { return std::array{Success, Failure}; }
 
-  EXTENSIONAPI static const core::OutputAttribute Message;
-  EXTENSIONAPI static const core::OutputAttribute Reason;
-  EXTENSIONAPI static const core::OutputAttribute Domain;
-  static auto outputAttributes() { return std::array{Message, Reason, Domain}; }
+  EXTENSIONAPI static constexpr auto Success = core::RelationshipDefinition{"success", "FlowFiles are routed to this relationship after a successful Google Cloud Storage operation."};
+  EXTENSIONAPI static constexpr auto Failure = core::RelationshipDefinition{"failure", "FlowFiles are routed to this relationship if the Google Cloud Storage operation fails."};
+  EXTENSIONAPI static constexpr auto Relationships = std::array{Success, Failure};
+
+  EXTENSIONAPI static constexpr auto Message = core::OutputAttributeDefinition<>{GCS_STATUS_MESSAGE, { Failure }, "The status message received from google cloud."};
+  EXTENSIONAPI static constexpr auto Reason = core::OutputAttributeDefinition<>{GCS_ERROR_REASON, { Failure }, "The description of the error occurred during operation."};
+  EXTENSIONAPI static constexpr auto Domain = core::OutputAttributeDefinition<>{GCS_ERROR_DOMAIN, { Failure }, "The domain of the error occurred during operation."};
+  EXTENSIONAPI static constexpr auto OutputAttributes = std::array<core::OutputAttributeReference, 3>{Message, Reason, Domain};
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
@@ -67,8 +85,8 @@ class FetchGCSObject : public GCSProcessor {
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
   void initialize() override;
-  void onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &session_factory) override;
-  void onTrigger(const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSession>& session) override;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& session_factory) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
 
  private:
   google::cloud::storage::EncryptionKey encryption_key_;

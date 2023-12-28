@@ -30,9 +30,9 @@ namespace org::apache::nifi::minifi::extensions::lua {
 
 class LuaScriptExecutor : public script::ScriptExecutor {
  public:
-  explicit LuaScriptExecutor(std::string name, const utils::Identifier& uuid = {});
+  explicit LuaScriptExecutor(std::string_view name, const utils::Identifier& uuid = {});
 
-  void onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) override;
+  void onTrigger(const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSession>& session) override;
   void initialize(std::filesystem::path script_file,
       std::string script_body,
       std::optional<std::string> module_directory,
@@ -42,7 +42,7 @@ class LuaScriptExecutor : public script::ScriptExecutor {
       const std::shared_ptr<core::logging::Logger>& logger) override;
 
 
-  static auto properties() { return std::array<core::Property, 0>{}; }
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 0>{};
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
  private:

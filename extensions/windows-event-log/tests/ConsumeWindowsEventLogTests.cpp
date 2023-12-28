@@ -65,6 +65,28 @@ class SimpleFormatTestController : public OutputFormatTestController {
   }
 };
 
+class LogFileTestController : public OutputFormatTestController {
+ public:
+  LogFileTestController(): OutputFormatTestController("", "*", "JSON", "Simple") {
+    log_file_ = createTempDirectory() / "cwel-events.evtx";
+    channel_ = "SavedLog:" + log_file_.string();
+  }
+
+ protected:
+  void dispatchBookmarkEvent() override {
+    reportEvent(APPLICATION_CHANNEL, "Event zero from file: this is in the past");
+    generateLogFile(std::wstring{APPLICATION_CHANNEL.begin(), APPLICATION_CHANNEL.end()}, log_file_);
+  }
+  void dispatchCollectedEvent() override {
+    reportEvent(APPLICATION_CHANNEL, "Event one from file");
+    std::filesystem::remove(log_file_);
+    generateLogFile(std::wstring{APPLICATION_CHANNEL.begin(), APPLICATION_CHANNEL.end()}, log_file_);
+    reportEvent(APPLICATION_CHANNEL, "Event not processed after log file export");
+  }
+
+  std::filesystem::path log_file_;
+};
+
 }  // namespace
 
 TEST_CASE("ConsumeWindowsEventLog constructor works", "[create]") {
@@ -85,7 +107,7 @@ TEST_CASE("ConsumeWindowsEventLog properties work with default values", "[create
   auto processor = test_plan->addProcessor("ConsumeWindowsEventLog", "cwel");
   TestController::runSession(test_plan);
 
-  auto properties_required_or_with_default_value = {
+  auto properties_required_or_with_default_value = std::array<core::PropertyReference, 12>{
     ConsumeWindowsEventLog::Channel,
     ConsumeWindowsEventLog::Query,
     // ConsumeWindowsEventLog::RenderFormatXML,  // FIXME(fgerlits): not defined, does not exist in NiFi either; should be removed
@@ -101,18 +123,18 @@ TEST_CASE("ConsumeWindowsEventLog properties work with default values", "[create
     ConsumeWindowsEventLog::ProcessOldEvents,
     ConsumeWindowsEventLog::CacheSidLookups
   };
-  for (const core::Property& property : properties_required_or_with_default_value) {
-    if (!LogTestController::getInstance().contains("property name " + property.getName() + " value ")) {
-      FAIL("Property did not get queried: " << property.getName());
+  for (const auto& property : properties_required_or_with_default_value) {
+    if (!LogTestController::getInstance().contains("property name " + std::string(property.name) + " value ")) {
+      FAIL("Property did not get queried: " << property.name);
     }
   }
 
-  auto properties_optional_without_default_value = {
+  auto properties_optional_without_default_value = std::array<core::PropertyReference, 1>{
     ConsumeWindowsEventLog::EventHeaderDelimiter
   };
-  for (const core::Property& property : properties_optional_without_default_value) {
-    if (!LogTestController::getInstance().contains("property name " + property.getName() + ", empty value")) {
-      FAIL("Optional property did not get queried: " << property.getName());
+  for (const auto& property : properties_optional_without_default_value) {
+    if (!LogTestController::getInstance().contains("property name " + std::string(property.name) + ", empty value")) {
+      FAIL("Optional property did not get queried: " << property.name);
     }
   }
 
@@ -124,7 +146,7 @@ TEST_CASE("ConsumeWindowsEventLog onSchedule throws if it cannot create the book
   std::shared_ptr<TestPlan> test_plan = test_controller.createPlan();
 
   auto processor = test_plan->addProcessor("ConsumeWindowsEventLog", "cwel");
-  test_plan->setProperty(processor, ConsumeWindowsEventLog::Channel.getName(), "NonexistentChannel1234981");
+  test_plan->setProperty(processor, ConsumeWindowsEventLog::Channel, "NonexistentChannel1234981");
 
   REQUIRE_THROWS_AS(test_controller.runSession(test_plan), minifi::Exception);
 }
@@ -136,13 +158,13 @@ TEST_CASE("ConsumeWindowsEventLog can consume new events", "[onTrigger]") {
   std::shared_ptr<TestPlan> test_plan = test_controller.createPlan();
 
   auto cwel_processor = test_plan->addProcessor("ConsumeWindowsEventLog", "cwel");
-  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Channel.getName(), APPLICATION_CHANNEL);
-  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Query.getName(), QUERY);
+  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Channel, APPLICATION_CHANNEL);
+  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Query, QUERY);
 
   auto logger_processor = test_plan->addProcessor("LogAttribute", "logger", Success, true);
-  test_plan->setProperty(logger_processor, LogAttribute::FlowFilesToLog.getName(), "0");
-  test_plan->setProperty(logger_processor, LogAttribute::LogPayload.getName(), "true");
-  test_plan->setProperty(logger_processor, LogAttribute::MaxPayloadLineLength.getName(), "1024");
+  test_plan->setProperty(logger_processor, LogAttribute::FlowFilesToLog, "0");
+  test_plan->setProperty(logger_processor, LogAttribute::LogPayload, "true");
+  test_plan->setProperty(logger_processor, LogAttribute::MaxPayloadLineLength, "1024");
 
   reportEvent(APPLICATION_CHANNEL, "Event zero");
 
@@ -187,11 +209,11 @@ TEST_CASE("ConsumeWindowsEventLog bookmarking works", "[onTrigger]") {
   std::shared_ptr<TestPlan> test_plan = test_controller.createPlan();
 
   auto cwel_processor = test_plan->addProcessor("ConsumeWindowsEventLog", "cwel");
-  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Channel.getName(), APPLICATION_CHANNEL);
-  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Query.getName(), QUERY);
+  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Channel, APPLICATION_CHANNEL);
+  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Query, QUERY);
 
   auto logger_processor = test_plan->addProcessor("LogAttribute", "logger", Success, true);
-  test_plan->setProperty(logger_processor, LogAttribute::FlowFilesToLog.getName(), "0");
+  test_plan->setProperty(logger_processor, LogAttribute::FlowFilesToLog, "0");
 
   reportEvent(APPLICATION_CHANNEL, "Event zero");
 
@@ -234,22 +256,22 @@ TEST_CASE("ConsumeWindowsEventLog extracts some attributes by default", "[onTrig
   std::shared_ptr<TestPlan> test_plan = test_controller.createPlan();
 
   auto cwel_processor = test_plan->addProcessor("ConsumeWindowsEventLog", "cwel");
-  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Channel.getName(), APPLICATION_CHANNEL);
-  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Query.getName(), QUERY);
+  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Channel, APPLICATION_CHANNEL);
+  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Query, QUERY);
 
   auto logger_processor = test_plan->addProcessor("LogAttribute", "logger", Success, true);
-  test_plan->setProperty(logger_processor, LogAttribute::FlowFilesToLog.getName(), "0");
+  test_plan->setProperty(logger_processor, LogAttribute::FlowFilesToLog, "0");
 
   SECTION("XML output") {
-    REQUIRE(test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::OutputFormatProperty.getName(), "XML"));
+    REQUIRE(test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::OutputFormatProperty, "XML"));
   }
 
   SECTION("Json output") {
-    REQUIRE(test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::OutputFormatProperty.getName(), "JSON"));
+    REQUIRE(test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::OutputFormatProperty, "JSON"));
   }
 
   SECTION("Plaintext output") {
-    REQUIRE(test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::OutputFormatProperty.getName(), "Plaintext"));
+    REQUIRE(test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::OutputFormatProperty, "Plaintext"));
   }
 
   // 0th event, only to create a bookmark
@@ -295,12 +317,12 @@ void outputFormatSetterTestHelper(const std::string &output_format, int expected
   std::shared_ptr<TestPlan> test_plan = test_controller.createPlan();
 
   auto cwel_processor = test_plan->addProcessor("ConsumeWindowsEventLog", "cwel");
-  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Channel.getName(), APPLICATION_CHANNEL);
-  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Query.getName(), QUERY);
-  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::OutputFormatProperty.getName(), output_format);
+  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Channel, APPLICATION_CHANNEL);
+  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Query, QUERY);
+  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::OutputFormatProperty, output_format);
 
   auto logger_processor = test_plan->addProcessor("LogAttribute", "logger", Success, true);
-  test_plan->setProperty(logger_processor, LogAttribute::FlowFilesToLog.getName(), "0");
+  test_plan->setProperty(logger_processor, LogAttribute::FlowFilesToLog, "0");
 
   {
     reportEvent(APPLICATION_CHANNEL, "Event zero: this is in the past");
@@ -424,10 +446,10 @@ void batchCommitSizeTestHelper(std::size_t num_events_read, std::size_t batch_co
   std::shared_ptr<TestPlan> test_plan = test_controller.createPlan();
 
   auto cwel_processor = test_plan->addProcessor("ConsumeWindowsEventLog", "cwel");
-  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Channel.getName(), APPLICATION_CHANNEL);
-  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Query.getName(), QUERY);
-  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::OutputFormatProperty.getName(), "XML");
-  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::BatchCommitSize.getName(), std::to_string(batch_commit_size));
+  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Channel, APPLICATION_CHANNEL);
+  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Query, QUERY);
+  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::OutputFormatProperty, "XML");
+  test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::BatchCommitSize, std::to_string(batch_commit_size));
 
   {
     reportEvent(APPLICATION_CHANNEL, "Event zero: this is in the past");
@@ -517,14 +539,33 @@ TEST_CASE("ConsumeWindowsEventLog Simple JSON works with UserData", "[cwel][json
   REQUIRE(doc.load_string(event_xml));
   SECTION("simple") {
     const auto simple_json = jsonToString(toSimpleJSON(doc));
-    const auto expected_json = R"json({"System":{"Provider":{"Name":"Microsoft-Windows-AppLocker","Guid":"CBDA4DBF-8D5D-4F69-9578-BE14AA540D22"},"EventID":"8002","Version":"0","Level":"4","Task":"0","Opcode":"0","Keywords":"0x8000000000000000","TimeCreated":{"SystemTime":"2023-02-06T16:58:09.008534Z"},"EventRecordID":"46","Correlation":{},"Execution":{"ProcessID":"1234","ThreadID":"1235"},"Channel":"Microsoft-Windows-AppLocker/EXE and DLL","Computer":"example.local"},"EventData":[],"UserData":{"RuleAndFileData":{"PolicyNameLength":"3","PolicyName":"EXE","RuleNameLength":"9","RuleName":"All files","RuleSddlLength":"48","RuleSddl":"D:(XA;;FX;;;S-1-1-0;(APPID://PATH Contains \"*\"))","TargetUser":"S-1-1-0","TargetProcessId":"1234","FilePathLength":"22","FilePath":"%SYSTEM32%\\CSCRIPT.EXE","FileHashLength":"0","FileHash":"","FqbnLength":"1","Fqbn":"-","Parent":{"foo":"bar","Child":""},"Leaf":"","AltLeaf":""}}})json";  // NOLINT(whitespace/line_length): long raw string, impractical to split
+    const auto expected_json = R"json({"System":{"Provider":{"Name":"Microsoft-Windows-AppLocker","Guid":"CBDA4DBF-8D5D-4F69-9578-BE14AA540D22"},"EventID":"8002","Version":"0","Level":"4","Task":"0","Opcode":"0","Keywords":"0x8000000000000000","TimeCreated":{"SystemTime":"2023-02-06T16:58:09.008534Z"},"EventRecordID":"46","Correlation":{},"Execution":{"ProcessID":"1234","ThreadID":"1235"},"Channel":"Microsoft-Windows-AppLocker/EXE and DLL","Computer":"example.local","Security":{"UserID":"S-1-1-0"}},"EventData":[],"UserData":{"RuleAndFileData":{"PolicyNameLength":"3","PolicyName":"EXE","RuleNameLength":"9","RuleName":"All files","RuleSddlLength":"48","RuleSddl":"D:(XA;;FX;;;S-1-1-0;(APPID://PATH Contains \"*\"))","TargetUser":"S-1-1-0","TargetProcessId":"1234","FilePathLength":"22","FilePath":"%SYSTEM32%\\CSCRIPT.EXE","FileHashLength":"0","FileHash":"","FqbnLength":"1","Fqbn":"-","Parent":{"foo":"bar","Child":""},"Leaf":"","AltLeaf":""}}})json";  // NOLINT(whitespace/line_length): long raw string, impractical to split
     CHECK(expected_json == simple_json);
   }
   SECTION("flattened") {
     const auto flattened_json = jsonToString(toFlattenedJSON(doc));
-    const auto expected_json = R"json({"Name":"Microsoft-Windows-AppLocker","Guid":"CBDA4DBF-8D5D-4F69-9578-BE14AA540D22","EventID":"8002","Version":"0","Level":"4","Task":"0","Opcode":"0","Keywords":"0x8000000000000000","SystemTime":"2023-02-06T16:58:09.008534Z","EventRecordID":"46","ProcessID":"1234","ThreadID":"1235","Channel":"Microsoft-Windows-AppLocker/EXE and DLL","Computer":"example.local","UserData.RuleAndFileData.PolicyNameLength":"3","UserData.RuleAndFileData.PolicyName":"EXE","UserData.RuleAndFileData.RuleNameLength":"9","UserData.RuleAndFileData.RuleName":"All files","UserData.RuleAndFileData.RuleSddlLength":"48","UserData.RuleAndFileData.RuleSddl":"D:(XA;;FX;;;S-1-1-0;(APPID://PATH Contains \"*\"))","UserData.RuleAndFileData.TargetUser":"S-1-1-0","UserData.RuleAndFileData.TargetProcessId":"1234","UserData.RuleAndFileData.FilePathLength":"22","UserData.RuleAndFileData.FilePath":"%SYSTEM32%\\CSCRIPT.EXE","UserData.RuleAndFileData.FileHashLength":"0","UserData.RuleAndFileData.FileHash":"","UserData.RuleAndFileData.FqbnLength":"1","UserData.RuleAndFileData.Fqbn":"-","UserData.RuleAndFileData.Parent.foo":"bar","UserData.RuleAndFileData.Parent.Child":"","UserData.RuleAndFileData.Leaf":"","UserData.RuleAndFileData.AltLeaf":""})json";  // NOLINT(whitespace/line_length): long raw string, impractical to split
+    const auto expected_json = R"json({"Name":"Microsoft-Windows-AppLocker","Guid":"CBDA4DBF-8D5D-4F69-9578-BE14AA540D22","EventID":"8002","Version":"0","Level":"4","Task":"0","Opcode":"0","Keywords":"0x8000000000000000","SystemTime":"2023-02-06T16:58:09.008534Z","EventRecordID":"46","ProcessID":"1234","ThreadID":"1235","Channel":"Microsoft-Windows-AppLocker/EXE and DLL","Computer":"example.local","UserID":"S-1-1-0","UserData.RuleAndFileData.PolicyNameLength":"3","UserData.RuleAndFileData.PolicyName":"EXE","UserData.RuleAndFileData.RuleNameLength":"9","UserData.RuleAndFileData.RuleName":"All files","UserData.RuleAndFileData.RuleSddlLength":"48","UserData.RuleAndFileData.RuleSddl":"D:(XA;;FX;;;S-1-1-0;(APPID://PATH Contains \"*\"))","UserData.RuleAndFileData.TargetUser":"S-1-1-0","UserData.RuleAndFileData.TargetProcessId":"1234","UserData.RuleAndFileData.FilePathLength":"22","UserData.RuleAndFileData.FilePath":"%SYSTEM32%\\CSCRIPT.EXE","UserData.RuleAndFileData.FileHashLength":"0","UserData.RuleAndFileData.FileHash":"","UserData.RuleAndFileData.FqbnLength":"1","UserData.RuleAndFileData.Fqbn":"-","UserData.RuleAndFileData.Parent.foo":"bar","UserData.RuleAndFileData.Parent.Child":"","UserData.RuleAndFileData.Leaf":"","UserData.RuleAndFileData.AltLeaf":""})json";  // NOLINT(whitespace/line_length): long raw string, impractical to split
     CHECK(expected_json == flattened_json);
   }
+}
+
+TEST_CASE("ConsumeWindowsEventLog can process events from a log file", "[cwel][logfile]") {
+  std::string event = LogFileTestController{}.run();
+  utils::verifyJSON(event, R"json(
+    {
+      "System": {
+        "Provider": {
+          "Name": "Application"
+        },
+        "Channel": "Application"
+      },
+      "EventData": [{
+          "Type": "Data",
+          "Content": "Event one from file",
+          "Name": ""
+      }]
+    }
+  )json");
 }
 
 }  // namespace org::apache::nifi::minifi::test

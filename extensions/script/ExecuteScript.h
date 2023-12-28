@@ -26,6 +26,9 @@
 
 #include "concurrentqueue.h"
 #include "core/Processor.h"
+#include "core/PropertyDefinition.h"
+#include "core/PropertyDefinitionBuilder.h"
+#include "core/RelationshipDefinition.h"
 
 #include "ScriptExecutor.h"
 #include "utils/Enum.h"
@@ -34,15 +37,17 @@
 
 namespace org::apache::nifi::minifi::processors {
 
+namespace execute_script {
+enum class ScriptEngineOption {
+  lua,
+  python
+};
+}  // namespace execute_script
+
 class ExecuteScript : public core::Processor {
  public:
-  SMART_ENUM(ScriptEngineOption,
-    (LUA, "lua"),
-    (PYTHON, "python")
-  )
-
-  explicit ExecuteScript(std::string name, const utils::Identifier &uuid = {})
-      : Processor(std::move(name), uuid) {
+  explicit ExecuteScript(std::string_view name, const utils::Identifier &uuid = {})
+      : Processor(name, uuid) {
   }
 
   EXTENSIONAPI static constexpr const char* Description = "Executes a script given the flow file and a process session. "
@@ -52,22 +57,32 @@ class ExecuteScript : public core::Processor {
       "if they wish, although there will be a script context per concurrent task of the processor. In order to, e.g., compute an arithmetic sum based on incoming flow file information, set the "
       "concurrent tasks to 1.";
 
-  EXTENSIONAPI static const core::Property ScriptEngine;
-  EXTENSIONAPI static const core::Property ScriptFile;
-  EXTENSIONAPI static const core::Property ScriptBody;
-  EXTENSIONAPI static const core::Property ModuleDirectory;
-  static auto properties() {
-    return std::array{
+  EXTENSIONAPI static constexpr auto ScriptEngine = core::PropertyDefinitionBuilder<2>::createProperty("Script Engine")
+      .withDescription(R"(The engine to execute scripts (python, lua))")
+      .isRequired(true)
+      .withAllowedValues(magic_enum::enum_names<execute_script::ScriptEngineOption>())
+      .withDefaultValue(magic_enum::enum_name(execute_script::ScriptEngineOption::python))
+      .build();
+  EXTENSIONAPI static constexpr auto ScriptFile = core::PropertyDefinitionBuilder<>::createProperty("Script File")
+      .withDescription(R"(Path to script file to execute. Only one of Script File or Script Body may be used)")
+      .build();
+  EXTENSIONAPI static constexpr auto ScriptBody = core::PropertyDefinitionBuilder<>::createProperty("Script Body")
+      .withDescription(R"(Body of script to execute. Only one of Script File or Script Body may be used)")
+      .build();
+  EXTENSIONAPI static constexpr auto ModuleDirectory = core::PropertyDefinitionBuilder<>::createProperty("Module Directory")
+      .withDescription(R"(Comma-separated list of paths to files and/or directories which contain modules required by the script)")
+      .build();
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 4>{
       ScriptEngine,
       ScriptFile,
       ScriptBody,
       ModuleDirectory
-    };
-  }
+  };
 
-  EXTENSIONAPI static const core::Relationship Success;
-  EXTENSIONAPI static const core::Relationship Failure;
-  static auto relationships() { return std::array{Success, Failure}; }
+
+  EXTENSIONAPI static constexpr auto Success = core::RelationshipDefinition{"success", "Script successes"};
+  EXTENSIONAPI static constexpr auto Failure = core::RelationshipDefinition{"failure", "Script failures"};
+  EXTENSIONAPI static constexpr auto Relationships = std::array{Success, Failure};
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
@@ -76,12 +91,8 @@ class ExecuteScript : public core::Processor {
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
   void initialize() override;
-  void onSchedule(core::ProcessContext *context, core::ProcessSessionFactory *sessionFactory) override;
-  void onTrigger(core::ProcessContext* /*context*/, core::ProcessSession* /*session*/) override {
-    logger_->log_error("onTrigger invocation with raw pointers is not implemented");
-  }
-  void onTrigger(const std::shared_ptr<core::ProcessContext> &context,
-                 const std::shared_ptr<core::ProcessSession> &session) override;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& session_factory) override;
+  void onTriggerSharedPtr(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) override;
 
  private:
   std::shared_ptr<core::logging::Logger> logger_ = core::logging::LoggerFactory<ExecuteScript>::getLogger(uuid_);

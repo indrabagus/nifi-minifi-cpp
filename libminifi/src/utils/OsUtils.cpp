@@ -21,11 +21,13 @@
 #include <iostream>
 #include <map>
 
+#include "fmt/format.h"
 #include "utils/gsl.h"
 #include "Exception.h"
 
 #ifdef __linux__
 #include <sys/sysinfo.h>
+#include <cstdlib>
 #include <optional>
 #include <sstream>
 #endif
@@ -88,31 +90,32 @@ std::string OsUtils::userIdToUsername(const std::string &uid) {
   name = uid;
   if (!name.empty()) {
 #ifdef _WIN32
-    const auto resolved_name = resolve_common_identifiers(name);
+    auto resolved_name = resolve_common_identifiers(name);
     if (!resolved_name.empty()) {
       return resolved_name;
     }
     // First call to LookupAccountSid to get the buffer sizes.
-    PSID pSidOwner = NULL;
-    const auto guard_pSidOwner = gsl::finally([&pSidOwner]() { if (pSidOwner != NULL) { LocalFree(pSidOwner); } });
+    PSID pSidOwner = nullptr;
+    const auto guard_pSidOwner = gsl::finally([&pSidOwner]() { if (pSidOwner != nullptr) { LocalFree(pSidOwner); } });
     if (ConvertStringSidToSidA(name.c_str(), &pSidOwner)) {
       SID_NAME_USE sidType = SidTypeUnknown;
-      DWORD windowsAccountNameSize = 0, dwwindowsDomainSize = 0;
+      DWORD windowsAccountNameSize = 0;
+      DWORD dwwindowsDomainSize = 0;
       /*
        We can use a unique ptr with a deleter here but some of the calls
        below require we use global alloc -- so a global deleter to call GlobalFree
        won't buy us a ton unless we anticipate requiring more of this. If we do
        I suggest we break this out until a subset of OsUtils into our own convenience functions.
        */
-      LPTSTR windowsDomain = NULL;
-      LPTSTR windowsAccount = NULL;
+      LPTSTR windowsDomain = nullptr;
+      LPTSTR windowsAccount = nullptr;
 
       /*
        The first call will be to obtain sizes for domain and account,
        after which we will allocate the memory and free it after.
        In some cases youc an replace GlobalAlloc with
        */
-      LookupAccountSid(NULL /** local computer **/, pSidOwner,
+      LookupAccountSid(nullptr /** local computer **/, pSidOwner,
           windowsAccount,
           (LPDWORD)&windowsAccountNameSize,
           windowsDomain,
@@ -131,7 +134,7 @@ std::string OsUtils::userIdToUsername(const std::string &uid) {
         }
 
         if (LookupAccountSid(
-                NULL,
+                nullptr,
                 pSidOwner,
                 windowsAccount,
                 (LPDWORD)&windowsAccountNameSize,
@@ -155,10 +158,10 @@ std::string OsUtils::userIdToUsername(const std::string &uid) {
     char *end = nullptr;  // it will be unused
     uid_t ret = std::strtol(ptr, &end, 10);
     if (ret > 0) {
-      struct passwd pass;
-      struct passwd *result;
-      char localbuf[1024];
-      if (!getpwuid_r(ret, &pass, localbuf, sizeof localbuf, &result)) {
+      struct passwd pass{};
+      struct passwd *result = nullptr;
+      std::array<char, 1024> localbuf{};
+      if (!getpwuid_r(ret, &pass, localbuf.data(), localbuf.size(), &result)) {
         name = pass.pw_name;
       }
     }
@@ -176,9 +179,9 @@ int64_t OsUtils::getCurrentProcessPhysicalMemoryUsage() {
   while (std::getline(status_file, line)) {
     if (line.rfind(resident_set_size_prefix, 0) == 0) {
       std::istringstream resident_set_size_value(line.substr(resident_set_size_prefix.length()));
-      uint64_t memory_usage_in_kBytes;
+      uint64_t memory_usage_in_kBytes = 0;
       resident_set_size_value >> memory_usage_in_kBytes;
-      return memory_usage_in_kBytes * 1024;
+      return gsl::narrow<int64_t>(memory_usage_in_kBytes * 1024);
     }
   }
 
@@ -197,6 +200,14 @@ int64_t OsUtils::getCurrentProcessPhysicalMemoryUsage() {
 #else
 #warning "Unsupported platform"
   return -1;
+#endif
+}
+
+int64_t OsUtils::getCurrentProcessId() {
+#ifdef WIN32
+  return int64_t{GetCurrentProcessId()};
+#else
+  return int64_t{getpid()};
 #endif
 }
 
@@ -309,7 +320,7 @@ std::string OsUtils::getMachineArchitecture() {
       return "unknown";
   }
 #else
-  utsname buf;
+  utsname buf{};
   if (uname(&buf) == -1)
     return "unknown";
   else
@@ -320,12 +331,24 @@ std::string OsUtils::getMachineArchitecture() {
 }
 
 std::optional<std::string> OsUtils::getHostName() {
-  char hostname[1024];
-  hostname[1023] = '\0';
-  if (gethostname(hostname, 1023) != 0) {
+  std::array<char, 1024> hostname{};
+  if (gethostname(hostname.data(), 1023) != 0) {
     return std::nullopt;
   }
-  return {hostname};
+  return {hostname.data()};
+}
+
+std::optional<double> OsUtils::getSystemLoadAverage() {
+#ifndef WIN32
+  std::array<double, 1> load_avg{};
+  auto numSamples = getloadavg(load_avg.data(), 1);
+  if (numSamples == -1) {
+    return std::nullopt;
+  }
+  return load_avg[0];
+#else
+  return std::nullopt;
+#endif
 }
 
 }  // namespace org::apache::nifi::minifi::utils

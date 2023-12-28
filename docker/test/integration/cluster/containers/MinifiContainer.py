@@ -16,9 +16,10 @@
 
 import os
 import logging
-import uuid
+import shortuuid
 import shutil
 import copy
+
 from .FlowContainer import FlowContainer
 from minifi.flow_serialization.Minifi_flow_yaml_serializer import Minifi_flow_yaml_serializer
 from minifi.flow_serialization.Minifi_flow_json_serializer import Minifi_flow_json_serializer
@@ -30,11 +31,13 @@ class MinifiOptions:
         self.enable_c2_with_ssl = False
         self.enable_provenance = False
         self.enable_prometheus = False
+        self.enable_prometheus_with_ssl = False
         self.enable_sql = False
         self.config_format = "json"
         self.use_flow_config_from_url = False
         self.set_ssl_context_properties = False
         self.enable_controller_socket = False
+        self.enable_log_metrics_publisher = False
 
 
 class MinifiContainer(FlowContainer):
@@ -42,15 +45,22 @@ class MinifiContainer(FlowContainer):
     MINIFI_VERSION = os.environ['MINIFI_VERSION']
     MINIFI_ROOT = '/opt/minifi/nifi-minifi-cpp-' + MINIFI_VERSION
 
-    def __init__(self, config_dir, options, name, vols, network, image_store, command=None):
+    def __init__(self, feature_context, config_dir, options, name, vols, network, image_store, command=None):
         self.options = options
 
-        super().__init__(config_dir, name, 'minifi-cpp', copy.copy(vols), network, image_store, command)
+        super().__init__(feature_context=feature_context,
+                         config_dir=config_dir,
+                         name=name,
+                         engine='minifi-cpp',
+                         vols=copy.copy(vols),
+                         network=network,
+                         image_store=image_store,
+                         command=command)
         self.container_specific_config_dir = self._create_container_config_dir(self.config_dir)
         os.chmod(self.container_specific_config_dir, 0o777)
 
     def _create_container_config_dir(self, config_dir):
-        container_config_dir = os.path.join(config_dir, str(uuid.uuid4()))
+        container_config_dir = os.path.join(config_dir, str(shortuuid.uuid()))
         os.makedirs(container_config_dir)
         for file_name in os.listdir(config_dir):
             source = os.path.join(config_dir, file_name)
@@ -81,19 +91,19 @@ class MinifiContainer(FlowContainer):
         with open(properties_file_path, 'a') as f:
             if self.options.enable_c2:
                 f.write("nifi.c2.enable=true\n")
-                f.write("nifi.c2.rest.url=http://minifi-c2-server:10090/c2/config/heartbeat\n")
-                f.write("nifi.c2.rest.url.ack=http://minifi-c2-server:10090/c2/config/acknowledge\n")
-                f.write("nifi.c2.flow.base.url=http://minifi-c2-server:10090/c2/config/\n")
+                f.write(f"nifi.c2.rest.url=http://minifi-c2-server-{self.feature_context.id}:10090/c2/config/heartbeat\n")
+                f.write(f"nifi.c2.rest.url.ack=http://minifi-c2-server-{self.feature_context.id}:10090/c2/config/acknowledge\n")
+                f.write(f"nifi.c2.flow.base.url=http://minifi-c2-server-{self.feature_context.id}:10090/c2/config/\n")
                 f.write("nifi.c2.root.classes=DeviceInfoNode,AgentInformation,FlowInformation\n")
                 f.write("nifi.c2.full.heartbeat=false\n")
                 f.write("nifi.c2.agent.class=minifi-test-class\n")
                 f.write("nifi.c2.agent.identifier=minifi-test-id\n")
             elif self.options.enable_c2_with_ssl:
                 f.write("nifi.c2.enable=true\n")
-                f.write("nifi.c2.rest.url=https://minifi-c2-server:10090/c2/config/heartbeat\n")
-                f.write("nifi.c2.rest.url.ack=https://minifi-c2-server:10090/c2/config/acknowledge\n")
+                f.write(f"nifi.c2.rest.url=https://minifi-c2-server-{self.feature_context.id}:10090/c2/config/heartbeat\n")
+                f.write(f"nifi.c2.rest.url.ack=https://minifi-c2-server-{self.feature_context.id}:10090/c2/config/acknowledge\n")
                 f.write("nifi.c2.rest.ssl.context.service=SSLContextService\n")
-                f.write("nifi.c2.flow.base.url=https://minifi-c2-server:10090/c2/config/\n")
+                f.write(f"nifi.c2.flow.base.url=https://minifi-c2-server-{self.feature_context.id}:10090/c2/config/\n")
                 f.write("nifi.c2.root.classes=DeviceInfoNode,AgentInformation,FlowInformation\n")
                 f.write("nifi.c2.full.heartbeat=false\n")
                 f.write("nifi.c2.agent.class=minifi-test-class\n")
@@ -101,22 +111,35 @@ class MinifiContainer(FlowContainer):
 
             if self.options.set_ssl_context_properties:
                 f.write("nifi.remote.input.secure=true\n")
-                f.write("nifi.security.client.certificate=/tmp/resources/minifi-c2-server-ssl/minifi-cpp-flow.crt\n")
-                f.write("nifi.security.client.private.key=/tmp/resources/minifi-c2-server-ssl/minifi-cpp-flow.key\n")
+                f.write("nifi.security.client.certificate=/tmp/resources/minifi-cpp-flow.crt\n")
+                f.write("nifi.security.client.private.key=/tmp/resources/minifi-cpp-flow.key\n")
                 f.write("nifi.security.client.pass.phrase=abcdefgh\n")
-                f.write("nifi.security.client.ca.certificate=/tmp/resources/minifi-c2-server-ssl/root-ca.pem\n")
+                f.write("nifi.security.client.ca.certificate=/tmp/resources/root_ca.crt\n")
 
             if not self.options.enable_provenance:
                 f.write("nifi.provenance.repository.class.name=NoOpRepository\n")
 
-            if self.options.enable_prometheus:
+            metrics_publisher_classes = []
+            if self.options.enable_prometheus or self.options.enable_prometheus_with_ssl:
                 f.write("nifi.metrics.publisher.agent.identifier=Agent1\n")
-                f.write("nifi.metrics.publisher.class=PrometheusMetricsPublisher\n")
                 f.write("nifi.metrics.publisher.PrometheusMetricsPublisher.port=9936\n")
-                f.write("nifi.metrics.publisher.metrics=RepositoryMetrics,QueueMetrics,PutFileMetrics,processorMetrics/Get.*,FlowInformation,DeviceInfoNode,AgentStatus\n")
+                f.write("nifi.metrics.publisher.PrometheusMetricsPublisher.metrics=RepositoryMetrics,QueueMetrics,PutFileMetrics,processorMetrics/Get.*,FlowInformation,DeviceInfoNode,AgentStatus\n")
+                metrics_publisher_classes.append("PrometheusMetricsPublisher")
+
+            if self.options.enable_prometheus_with_ssl:
+                f.write("nifi.metrics.publisher.PrometheusMetricsPublisher.certificate=/tmp/resources/minifi_merged_cert.crt\n")
+                f.write("nifi.metrics.publisher.PrometheusMetricsPublisher.ca.certificate=/tmp/resources/root_ca.crt\n")
+
+            if self.options.enable_log_metrics_publisher:
+                f.write("nifi.metrics.publisher.LogMetricsPublisher.metrics=RepositoryMetrics\n")
+                f.write("nifi.metrics.publisher.LogMetricsPublisher.logging.interval=1s\n")
+                metrics_publisher_classes.append("LogMetricsPublisher")
+
+            if metrics_publisher_classes:
+                f.write("nifi.metrics.publisher.class=" + ",".join(metrics_publisher_classes) + "\n")
 
             if self.options.use_flow_config_from_url:
-                f.write("nifi.c2.flow.url=http://minifi-c2-server:10090/c2/config?class=minifi-test-class\n")
+                f.write(f"nifi.c2.flow.url=http://minifi-c2-server-{self.feature_context.id}:10090/c2/config?class=minifi-test-class\n")
 
             if self.options.enable_controller_socket:
                 f.write("controller.socket.enable=true\n")

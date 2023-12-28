@@ -19,9 +19,11 @@
 #include <memory>
 #include <utility>
 
+#include "core/Core.h"
 #include "core/Processor.h"
 #include "core/ProcessSession.h"
-#include "core/Core.h"
+#include "core/PropertyDefinition.h"
+#include "core/RelationshipDefinition.h"
 #include "core/Resource.h"
 #include "core/logging/Logger.h"
 #include "core/logging/LoggerConfiguration.h"
@@ -36,14 +38,14 @@ class WriteToFlowFileTestProcessor : public core::Processor {
   static constexpr const char* ON_TRIGGER_LOG_STR = "WriteToFlowFileTestProcessor::onTrigger executed";
   static constexpr const char* ON_UNSCHEDULE_LOG_STR = "WriteToFlowFileTestProcessor::onUnSchedule executed";
 
-  explicit WriteToFlowFileTestProcessor(std::string name, const utils::Identifier& uuid = utils::Identifier())
-      : Processor(std::move(name), uuid) {
+  explicit WriteToFlowFileTestProcessor(std::string_view name, const utils::Identifier& uuid = utils::Identifier())
+      : Processor(name, uuid) {
   }
 
   static constexpr const char* Description = "WriteToFlowFileTestProcessor (only for testing purposes)";
-  static auto properties() { return std::array<core::Property, 0>{}; }
-  static const core::Relationship Success;
-  static auto relationships() { return std::array{Success}; }
+  static constexpr auto Properties = std::array<core::PropertyReference, 0>{};
+  static constexpr auto Success = core::RelationshipDefinition{"success", "success operational on the flow record"};
+  static constexpr auto Relationships = std::array{Success};
   static constexpr bool SupportsDynamicProperties = false;
   static constexpr bool SupportsDynamicRelationships = false;
   static constexpr core::annotation::Input InputRequirement = core::annotation::Input::INPUT_ALLOWED;
@@ -51,8 +53,8 @@ class WriteToFlowFileTestProcessor : public core::Processor {
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  void onSchedule(core::ProcessContext *context, core::ProcessSessionFactory *sessionFactory) override;
-  void onTrigger(core::ProcessContext *context, core::ProcessSession *session) override;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& sessionFactory) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
   void initialize() override;
   void onUnSchedule() override;
 

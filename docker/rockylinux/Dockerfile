@@ -15,7 +15,9 @@
 # specific language governing permissions and limitations
 # under the License.
 #
-FROM rockylinux:8
+ARG BASE_IMAGE="rockylinux:8"
+
+FROM ${BASE_IMAGE} AS build
 LABEL maintainer="Apache NiFi <dev@nifi.apache.org>"
 
 ARG MINIFI_VERSION
@@ -38,12 +40,11 @@ COPY . ${MINIFI_BASE_DIR}
 
 # Install the system dependencies needed for a build
 # gpsd-devel and ccache are in EPEL
-RUN dnf -y install epel-release && dnf -y install sudo git which make libarchive ccache ca-certificates cmake && \
+RUN dnf -y install epel-release && dnf -y install sudo git which make libarchive ccache ca-certificates perl && \
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_GPS=ON"; then dnf -y install gpsd-devel; fi && \
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_JNI=ON"; then dnf -y install java-1.8.0-openjdk maven; fi && \
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_PCAP=ON"; then dnf -y install libpcap-devel; fi && \
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_USB_CAMERA=ON"; then dnf -y install libpng-devel libusbx-devel; fi && \
-    if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_OPENCV=ON" || echo "$MINIFI_OPTIONS" | grep -q "ENABLE_BUSTACHE=ON"; then dnf -y install boost-devel; fi && \
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_LUA_SCRIPTING=ON"; then dnf -y --enablerepo=powertools install lua-devel; fi && \
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_PYTHON_SCRIPTING=ON"; then dnf -y install python3-devel; fi && \
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_SFTP=ON" && [ "${DOCKER_SKIP_TESTS}" == "OFF" ]; then dnf -y install java-1.8.0-openjdk maven; fi
@@ -64,5 +65,5 @@ RUN cd $MINIFI_BASE_DIR && \
     source /opt/rh/gcc-toolset-12/enable && \
     export PATH=/usr/lib64/ccache${PATH:+:${PATH}} && \
     export CCACHE_DIR=${MINIFI_BASE_DIR}/.ccache && \
-    cmake3 -DSTATIC_BUILD= -DSKIP_TESTS=${DOCKER_SKIP_TESTS} ${MINIFI_OPTIONS} -DAWS_ENABLE_UNITY_BUILD=OFF -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" .. && \
+    cmake -DSTATIC_BUILD= -DSKIP_TESTS=${DOCKER_SKIP_TESTS} ${MINIFI_OPTIONS} -DAWS_ENABLE_UNITY_BUILD=OFF -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" .. && \
     make -j "$(nproc)" ${DOCKER_MAKE_TARGET}

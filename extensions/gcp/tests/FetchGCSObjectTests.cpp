@@ -36,7 +36,7 @@ class FetchGCSObjectMocked : public FetchGCSObject {
   static constexpr const char* Description = "FetchGCSObjectMocked";
 
   gcs::Client getClient() const override {
-    return gcs::testing::ClientFromMock(mock_client_, *retry_policy_);
+    return gcs::testing::UndecoratedClientFromMock(mock_client_);
   }
   std::shared_ptr<gcs::testing::MockClient> mock_client_ = std::make_shared<gcs::testing::MockClient>();
 };
@@ -48,10 +48,10 @@ class FetchGCSObjectTests : public ::testing::Test {
   void SetUp() override {
     gcp_credentials_node_ = test_controller_.plan->addController("GCPCredentialsControllerService", "gcp_credentials_controller_service");
     test_controller_.plan->setProperty(gcp_credentials_node_,
-                                       GCPCredentialsControllerService::CredentialsLoc.getName(),
-                                       toString(GCPCredentialsControllerService::CredentialsLocation::USE_ANONYMOUS_CREDENTIALS));
+                                       GCPCredentialsControllerService::CredentialsLoc,
+                                       magic_enum::enum_name(minifi_gcp::CredentialsLocation::USE_ANONYMOUS_CREDENTIALS));
     test_controller_.plan->setProperty(fetch_gcs_object_,
-                                       FetchGCSObject::GCPCredentials.getName(),
+                                       FetchGCSObject::GCPCredentials,
                                        "gcp_credentials_controller_service");
   }
   std::shared_ptr<FetchGCSObjectMocked> fetch_gcs_object_ = std::make_shared<FetchGCSObjectMocked>("FetchGCSObjectMocked");
@@ -60,8 +60,8 @@ class FetchGCSObjectTests : public ::testing::Test {
 };
 
 TEST_F(FetchGCSObjectTests, MissingBucket) {
-  EXPECT_CALL(*fetch_gcs_object_->mock_client_, CreateResumableSession).Times(0);
-  EXPECT_TRUE(test_controller_.plan->setProperty(fetch_gcs_object_, FetchGCSObject::Bucket.getName(), ""));
+  EXPECT_CALL(*fetch_gcs_object_->mock_client_, CreateResumableUpload).Times(0);
+  EXPECT_TRUE(test_controller_.plan->setProperty(fetch_gcs_object_, FetchGCSObject::Bucket, ""));
   const auto& result = test_controller_.trigger("hello world");
   EXPECT_EQ(0, result.at(FetchGCSObject::Success).size());
   ASSERT_EQ(1, result.at(FetchGCSObject::Failure).size());
@@ -74,7 +74,7 @@ TEST_F(FetchGCSObjectTests, ServerError) {
   EXPECT_CALL(*fetch_gcs_object_->mock_client_, ReadObject)
       .WillOnce([](gcs::internal::ReadObjectRangeRequest const& request) {
         EXPECT_EQ(request.bucket_name(), "bucket-from-property") << request;
-        auto* mock_source = new gcs::testing::MockObjectReadSource;
+        auto mock_source = std::make_unique<gcs::testing::MockObjectReadSource>();
         ::testing::InSequence seq;
         EXPECT_CALL(*mock_source, IsOpen).WillRepeatedly(testing::Return(true));
         EXPECT_CALL(*mock_source, Read)
@@ -83,12 +83,11 @@ TEST_F(FetchGCSObjectTests, ServerError) {
                 "Invalid Argument")));
         EXPECT_CALL(*mock_source, IsOpen).WillRepeatedly(testing::Return(false));
 
-        std::unique_ptr<gcs::internal::ObjectReadSource> result(mock_source);
-
-        return google::cloud::make_status_or(std::move(result));
+        std::unique_ptr<gcs::internal::ObjectReadSource> object_read_source = std::move(mock_source);
+        return google::cloud::make_status_or(std::move(object_read_source));
       });
-  EXPECT_TRUE(test_controller_.plan->setProperty(fetch_gcs_object_, FetchGCSObject::Bucket.getName(), "bucket-from-property"));
-  const auto& result = test_controller_.trigger("hello world", {{minifi_gcp::GCS_BUCKET_ATTR, "bucket-from-attribute"}});
+  EXPECT_TRUE(test_controller_.plan->setProperty(fetch_gcs_object_, FetchGCSObject::Bucket, "bucket-from-property"));
+  const auto& result = test_controller_.trigger("hello world", {{std::string(minifi_gcp::GCS_BUCKET_ATTR), "bucket-from-attribute"}});
   EXPECT_EQ(0, result.at(FetchGCSObject::Success).size());
   ASSERT_EQ(1, result.at(FetchGCSObject::Failure).size());
   EXPECT_NE(std::nullopt, result.at(FetchGCSObject::Failure)[0]->getAttribute(minifi_gcp::GCS_ERROR_DOMAIN));
@@ -122,8 +121,8 @@ TEST_F(FetchGCSObjectTests, HappyPath) {
             std::unique_ptr<gcs::internal::ObjectReadSource>(
                 std::move(mock_source)));
       });
-  EXPECT_TRUE(test_controller_.plan->setProperty(fetch_gcs_object_, FetchGCSObject::ObjectGeneration.getName(), "${gcs.generation}"));
-  const auto& result = test_controller_.trigger("hello world", {{minifi_gcp::GCS_BUCKET_ATTR, "bucket-from-attribute"}, {minifi_gcp::GCS_GENERATION, "23"}});
+  EXPECT_TRUE(test_controller_.plan->setProperty(fetch_gcs_object_, FetchGCSObject::ObjectGeneration, "${gcs.generation}"));
+  const auto& result = test_controller_.trigger("hello world", {{std::string(minifi_gcp::GCS_BUCKET_ATTR), "bucket-from-attribute"}, {std::string(minifi_gcp::GCS_GENERATION), "23"}});
   ASSERT_EQ(1, result.at(FetchGCSObject::Success).size());
   EXPECT_EQ(0, result.at(FetchGCSObject::Failure).size());
   EXPECT_EQ("stored text", test_controller_.plan->getContent(result.at(FetchGCSObject::Success)[0]));
@@ -154,16 +153,16 @@ TEST_F(FetchGCSObjectTests, EmptyGeneration) {
             std::unique_ptr<gcs::internal::ObjectReadSource>(
                 std::move(mock_source)));
       });
-  EXPECT_TRUE(test_controller_.plan->setProperty(fetch_gcs_object_, FetchGCSObject::ObjectGeneration.getName(), "${gcs.generation}"));
-  const auto& result = test_controller_.trigger("hello world", {{minifi_gcp::GCS_BUCKET_ATTR, "bucket-from-attribute"}});
+  EXPECT_TRUE(test_controller_.plan->setProperty(fetch_gcs_object_, FetchGCSObject::ObjectGeneration, "${gcs.generation}"));
+  const auto& result = test_controller_.trigger("hello world", {{std::string(minifi_gcp::GCS_BUCKET_ATTR), "bucket-from-attribute"}});
   ASSERT_EQ(1, result.at(FetchGCSObject::Success).size());
   EXPECT_EQ(0, result.at(FetchGCSObject::Failure).size());
   EXPECT_EQ("stored text", test_controller_.plan->getContent(result.at(FetchGCSObject::Success)[0]));
 }
 
 TEST_F(FetchGCSObjectTests, InvalidGeneration) {
-  EXPECT_TRUE(test_controller_.plan->setProperty(fetch_gcs_object_, FetchGCSObject::ObjectGeneration.getName(), "${gcs.generation}"));
-  const auto& result = test_controller_.trigger("hello world", {{minifi_gcp::GCS_BUCKET_ATTR, "bucket-from-attribute"}, {minifi_gcp::GCS_GENERATION, "23 banana"}});
+  EXPECT_TRUE(test_controller_.plan->setProperty(fetch_gcs_object_, FetchGCSObject::ObjectGeneration, "${gcs.generation}"));
+  const auto& result = test_controller_.trigger("hello world", {{std::string(minifi_gcp::GCS_BUCKET_ATTR), "bucket-from-attribute"}, {std::string(minifi_gcp::GCS_GENERATION), "23 banana"}});
   ASSERT_EQ(0, result.at(FetchGCSObject::Success).size());
   EXPECT_EQ(1, result.at(FetchGCSObject::Failure).size());
   EXPECT_EQ("hello world", test_controller_.plan->getContent(result.at(FetchGCSObject::Failure)[0]));

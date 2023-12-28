@@ -24,6 +24,7 @@
 #include <regex>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 #include <mutex>
@@ -69,9 +70,6 @@ class FlowVersion;
 namespace provenance {
 class ProvenanceEventRecord;
 }  // namespace provenance
-namespace io {
-class StreamFactory;
-}  // namespace io
 }  // namespace org::apache::nifi::minifi
 
 class LogTestController {
@@ -119,16 +117,16 @@ class LogTestController {
    * of changeable test formats
    */
   template<typename T>
-  std::shared_ptr<logging::Logger> getLogger(const std::optional<utils::Identifier>& id = {}) { return getLoggerByClassName(minifi::core::getClassName<T>(), id); }
+  std::shared_ptr<logging::Logger> getLogger(const std::optional<utils::Identifier>& id = {}) { return getLoggerByClassName(minifi::core::className<T>(), id); }
 
-  std::shared_ptr<logging::Logger> getLoggerByClassName(const std::string& class_name, const std::optional<utils::Identifier>& id = {});
+  std::shared_ptr<logging::Logger> getLoggerByClassName(std::string_view class_name, const std::optional<utils::Identifier>& id = {});
 
   template<typename T>
   void setLevel(spdlog::level::level_enum level) {
-    setLevelByClassName(level, minifi::core::getClassName<T>());
+    setLevelByClassName(level, minifi::core::className<T>());
   }
 
-  void setLevelByClassName(spdlog::level::level_enum level, const std::string& class_name);
+  void setLevelByClassName(spdlog::level::level_enum level, std::string_view class_name);
 
   bool contains(const std::string &ending, std::chrono::milliseconds timeout = std::chrono::seconds(3), std::chrono::milliseconds sleep_interval = std::chrono::milliseconds(200)) const;
 
@@ -163,7 +161,8 @@ class LogTestController {
 
   explicit LogTestController(const std::shared_ptr<logging::LoggerProperties> &loggerProps);
 
-  void setLevel(const std::string& name, spdlog::level::level_enum level);
+  void init(const std::shared_ptr<logging::LoggerProperties>& logger_props);
+  void setLevel(std::string_view name, spdlog::level::level_enum level);
   bool contains(const std::function<std::string()>& log_string_getter, const std::string& ending, std::chrono::milliseconds timeout, std::chrono::milliseconds sleep_interval) const;
 
   mutable std::shared_ptr<std::mutex> log_output_mutex_ = std::make_shared<std::mutex>();
@@ -225,9 +224,13 @@ class TestPlan {
 
   std::shared_ptr<minifi::core::controller::ControllerServiceNode> addController(const std::string &controller_name, const std::string &name);
 
-  bool setProperty(const std::shared_ptr<minifi::core::Processor>& proc, const std::string &prop, const std::string &value, bool dynamic = false);
+  bool setProperty(const std::shared_ptr<minifi::core::Processor>& processor, const core::PropertyReference& property, std::string_view value);
+  bool setProperty(const std::shared_ptr<minifi::core::Processor>& processor, std::string_view property, std::string_view value);
+  bool setDynamicProperty(const std::shared_ptr<minifi::core::Processor>& processor, std::string_view property, std::string_view value);
 
-  static bool setProperty(const std::shared_ptr<minifi::core::controller::ControllerServiceNode>& controller_service_node, const std::string &prop, const std::string &value, bool dynamic = false);
+  static bool setProperty(const std::shared_ptr<minifi::core::controller::ControllerServiceNode>& controller_service_node, const core::PropertyReference& property, std::string_view value);
+  static bool setProperty(const std::shared_ptr<minifi::core::controller::ControllerServiceNode>& controller_service_node, std::string_view property, std::string_view value);
+  static bool setDynamicProperty(const std::shared_ptr<minifi::core::controller::ControllerServiceNode>& controller_service_node, std::string_view property, std::string_view value);
 
   void reset(bool reschedule = false);
   void increment_location() { ++location; }
@@ -242,12 +245,10 @@ class TestPlan {
   void scheduleProcessor(const std::shared_ptr<minifi::core::Processor>& processor);
   void scheduleProcessors();
 
-  // Note: all this verify logic is only used in TensorFlow tests as a replacement for UpdateAttribute
-  // It should probably not be the part of the standard way of running processors
   bool runProcessor(const std::shared_ptr<minifi::core::Processor>& processor, const PreTriggerVerifier& verify = nullptr);
   bool runProcessor(size_t target_location, const PreTriggerVerifier& verify = nullptr);
   bool runNextProcessor(const PreTriggerVerifier& verify = nullptr);
-  bool runCurrentProcessor(const PreTriggerVerifier& verify = nullptr);
+  bool runCurrentProcessor();
   bool runCurrentProcessorUntilFlowfileIsProduced(std::chrono::milliseconds wait_duration);
 
   std::set<std::shared_ptr<minifi::provenance::ProvenanceEventRecord>> getProvenanceRecords();
@@ -296,8 +297,6 @@ class TestPlan {
 
   std::unique_ptr<minifi::Connection> buildFinalConnection(const std::shared_ptr<minifi::core::Processor>& processor, bool setDest = false);
 
-  std::shared_ptr<minifi::io::StreamFactory> stream_factory;
-
   std::shared_ptr<minifi::Configure> configuration_;
 
   std::shared_ptr<minifi::core::ContentRepository> content_repo_;
@@ -331,6 +330,9 @@ class TestPlan {
   std::optional<minifi::core::Relationship> termination_;
 
  private:
+  bool setProperty(const std::shared_ptr<minifi::core::Processor>& processor, const std::string& property, const std::string& value, bool dynamic);
+  static bool setProperty(const std::shared_ptr<minifi::core::controller::ControllerServiceNode>& controller_service_node, const std::string& property, const std::string& value, bool dynamic);
+
   std::shared_ptr<logging::Logger> logger_;
 };
 
@@ -352,8 +354,7 @@ class TestController {
 
   static void runSession(const std::shared_ptr<TestPlan> &plan,
                   bool runToCompletion = true,
-                  const std::function<void(const std::shared_ptr<minifi::core::ProcessContext>&,
-                  const std::shared_ptr<minifi::core::ProcessSession>&)>& verify = nullptr) {
+                  const TestPlan::PreTriggerVerifier& verify = nullptr) {
     while (plan->runNextProcessor(verify) && runToCompletion) {
     }
   }

@@ -35,7 +35,6 @@
 #include "core/FlowFile.h"
 #include "core/logging/Logger.h"
 #include "core/ProcessContext.h"
-#include "core/PropertyBuilder.h"
 #include "core/Relationship.h"
 #include "core/Resource.h"
 #include "CapturePacket.h"
@@ -47,19 +46,6 @@
 namespace org::apache::nifi::minifi::processors {
 
 std::shared_ptr<utils::IdGenerator> CapturePacket::id_generator_ = utils::IdGenerator::getIdGenerator();
-
-const core::Property CapturePacket::BaseDir(core::PropertyBuilder::createProperty("Base Directory")
-    ->withDescription("Scratch directory for PCAP files")
-    ->withDefaultValue<std::string>("/tmp/")->build());
-const core::Property CapturePacket::BatchSize(core::PropertyBuilder::createProperty("Batch Size")
-    ->withDescription("The number of packets to combine within a given PCAP")
-    ->withDefaultValue<uint64_t>(50)->build());
-const core::Property CapturePacket::NetworkControllers("Network Controllers", "Regular expression of the network controller(s) to which we will attach", ".*");
-const core::Property CapturePacket::CaptureBluetooth(core::PropertyBuilder::createProperty("Capture Bluetooth")
-    ->withDescription("True indicates that we support bluetooth interfaces")
-    ->withDefaultValue<bool>(false)->build());
-
-const core::Relationship CapturePacket::Success("success", "All files are routed to success");
 
 std::filesystem::path CapturePacket::generate_new_pcap(const std::string &base_path) {
   auto path = base_path;
@@ -74,7 +60,7 @@ void CapturePacket::packet_callback(pcpp::RawPacket* packet, pcpp::PcapLiveDevic
   // parse the packet
   auto capture_mechanism = reinterpret_cast<PacketMovers*>(data);
 
-  CapturePacketMechanism *capture;
+  CapturePacketMechanism *capture = nullptr;
 
   if (capture_mechanism->source.try_dequeue(capture)) {
     // if needed - write the packet to the output pcap file
@@ -99,7 +85,7 @@ void CapturePacket::packet_callback(pcpp::RawPacket* packet, pcpp::PcapLiveDevic
 
 CapturePacketMechanism *CapturePacket::create_new_capture(const std::string &base_path, int64_t *max_size) {
   auto new_capture = new CapturePacketMechanism(base_path, generate_new_pcap(base_path), max_size);
-  new_capture->writer_ = new pcpp::PcapFileWriterDevice(new_capture->getFile());
+  new_capture->writer_ = std::make_unique<pcpp::PcapFileWriterDevice>(new_capture->getFile());
   if (!new_capture->writer_->open())
     throw std::runtime_error{utils::StringUtils::join_pack("Failed to open PcapFileWriterDevice with file ", new_capture->getFile().string())};
 
@@ -111,23 +97,23 @@ std::atomic<int> CapturePacket::num_(0);
 void CapturePacket::initialize() {
   logger_->log_info("Initializing CapturePacket");
 
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
-void CapturePacket::onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory>& /*sessionFactory*/) {
+void CapturePacket::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory&) {
   std::string value;
-  if (context->getProperty(BatchSize.getName(), value)) {
+  if (context.getProperty(BatchSize, value)) {
     core::Property::StringToInt(value, pcap_batch_size_);
   }
 
   value = "";
-  if (context->getProperty(BaseDir.getName(), value)) {
+  if (context.getProperty(BaseDir, value)) {
     base_dir_ = value;
   }
 
   value = "";
-  if (context->getProperty(CaptureBluetooth.getName(), value)) {
+  if (context.getProperty(CaptureBluetooth, value)) {
     capture_bluetooth_ = utils::StringUtils::toBool(value).value_or(false);
   }
 
@@ -162,34 +148,34 @@ void CapturePacket::onSchedule(const std::shared_ptr<core::ProcessContext> &cont
         }
       }
       if (!found_match) {
-        logger_->log_debug("Skipping %s because it does not match any regex", name);
+        logger_->log_debug("Skipping {} because it does not match any regex", name);
         continue;
       } else {
-        logger_->log_trace("Accepting %s because it matches %s", name, matching_regex);
+        logger_->log_trace("Accepting {} because it matches {}", name, matching_regex);
       }
     }
 
     if (!iter->open()) {
-      logger_->log_error("Could not open device %s", name);
+      logger_->log_error("Could not open device {}", name);
       continue;
     }
 
     if (!capture_bluetooth_) {
       if (name.find("bluetooth") != std::string::npos) {
-        logger_->log_error("Skipping %s because blue tooth capture is not enabled", name);
+        logger_->log_error("Skipping {} because blue tooth capture is not enabled", name);
         continue;
       }
     }
 
     if (name.find("dbus") != std::string::npos) {
-      logger_->log_error("Skipping %s because dbus capture is disabled", name);
+      logger_->log_error("Skipping {} because dbus capture is disabled", name);
       continue;
     }
 
     if (iter->startCapture(packet_callback, mover.get())) {
-      logger_->log_debug("Starting capture on %s", iter->getName());
+      logger_->log_debug("Starting capture on {}", iter->getName());
       CapturePacketMechanism *aa = create_new_capture(getPath(), &pcap_batch_size_);
-      logger_->log_trace("Creating packet capture in %s", aa->getFile());
+      logger_->log_trace("Creating packet capture in {}", aa->getFile());
       mover->source.enqueue(aa);
       device_list_.push_back(iter);
     }
@@ -203,16 +189,16 @@ void CapturePacket::onSchedule(const std::shared_ptr<core::ProcessContext> &cont
 
 CapturePacket::~CapturePacket() = default;
 
-void CapturePacket::onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) {
-  CapturePacketMechanism *capture;
+void CapturePacket::onTrigger(core::ProcessContext& context, core::ProcessSession& session) {
+  gsl::owner<CapturePacketMechanism*> capture = nullptr;
   if (mover->sink.try_dequeue(capture)) {
-    auto ff = session->create();
-    session->import(capture->getFile(), ff, false, 0);
-    logger_->log_debug("Received packet capture in file %s %d for %s", capture->getFile(), capture->getSize(), ff->getResourceClaim()->getContentFullPath());
-    session->transfer(ff, Success);
+    auto ff = session.create();
+    session.import(capture->getFile(), ff, false, 0);
+    logger_->log_debug("Received packet capture in file {} {} for {}", capture->getFile(), capture->getSize(), ff->getResourceClaim()->getContentFullPath());
+    session.transfer(ff, Success);
     delete capture;
   } else {
-    context->yield();
+    context.yield();
   }
 }
 

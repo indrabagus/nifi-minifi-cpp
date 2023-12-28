@@ -368,7 +368,6 @@ show_supported_features() {
   echo "G. PCAP support ................$(print_feature_status PCAP_ENABLED)"
   echo "H. USB Camera support ..........$(print_feature_status USB_ENABLED)"
   echo "I. GPS support .................$(print_feature_status GPS_ENABLED)"
-  echo "J. TensorFlow Support ..........$(print_feature_status TENSORFLOW_ENABLED)"
   echo "K. Bustache Support ............$(print_feature_status BUSTACHE_ENABLED)"
   echo "L. Lua Scripting Support .......$(print_feature_status LUA_SCRIPTING_ENABLED)"
   echo "M. MQTT Support ................$(print_feature_status MQTT_ENABLED)"
@@ -400,6 +399,7 @@ show_supported_features() {
   echo "5. Build Profile ...............$(print_multi_option_status BUILD_PROFILE)"
   echo "6. Create ASAN build ...........$(print_feature_status ASAN_ENABLED)"
   echo "7. Treat warnings as errors.....$(print_feature_status FAIL_ON_WARNINGS)"
+  echo "8. Enable OpenSSL...............$(print_feature_status OPENSSL_ENABLED)"
   echo "P. Continue with these options"
   if [ "$GUIDED_INSTALL" = "${TRUE}" ]; then
     echo "R. Return to Main Menu"
@@ -425,7 +425,6 @@ read_feature_options(){
     g) ToggleFeature PCAP_ENABLED ;;
     h) ToggleFeature USB_ENABLED ;;
     i) ToggleFeature GPS_ENABLED ;;
-    j) ToggleFeature TENSORFLOW_ENABLED ;;
     k) ToggleFeature BUSTACHE_ENABLED ;;
     l) ToggleFeature LUA_SCRIPTING_ENABLED ;;
     m) ToggleFeature MQTT_ENABLED ;;
@@ -452,6 +451,7 @@ read_feature_options(){
     5) ToggleMultiOption BUILD_PROFILE;;
     6) ToggleFeature ASAN_ENABLED;;
     7) ToggleFeature FAIL_ON_WARNINGS;;
+    8) ToggleFeature OPENSSL_ENABLED;;
     p) export FEATURES_SELECTED="true" ;;
     r) if [ "$GUIDED_INSTALL" = "${TRUE}" ]; then
         export MENU="main"

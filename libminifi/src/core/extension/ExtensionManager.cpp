@@ -31,9 +31,13 @@ namespace org::apache::nifi::minifi::core::extension {
 
 const std::shared_ptr<logging::Logger> ExtensionManager::logger_ = logging::LoggerFactory<ExtensionManager>::getLogger();
 
-ExtensionManager::ExtensionManager() {
-  modules_.push_back(std::make_unique<Executable>());
-  active_module_ = modules_[0].get();
+ExtensionManager::ExtensionManager()
+    : modules_([] {
+        std::vector<std::unique_ptr<Module>> modules;
+        modules.push_back(std::make_unique<Executable>());
+        return modules;
+      }()),
+      active_module_(modules_[0].get()) {
 }
 
 ExtensionManager& ExtensionManager::get() {
@@ -59,12 +63,12 @@ bool ExtensionManager::initialize(const std::shared_ptr<Configure>& config) {
        */
       auto opt_pattern = config->get(minifi::Configuration::nifi_extension_path);
       if (!opt_pattern) {
-        logger_->log_warn("No extension path is provided, using default: '%s'", DEFAULT_EXTENSION_PATH);
+        logger_->log_warn("No extension path is provided, using default: '{}'", DEFAULT_EXTENSION_PATH);
       }
       return opt_pattern.value_or(DEFAULT_EXTENSION_PATH);
     }();
     auto candidates = utils::file::match(utils::file::FilePattern(pattern, [&] (std::string_view subpattern, std::string_view error_msg) {
-      logger_->log_error("Error in subpattern '%s': %s", std::string{subpattern}, std::string{error_msg});
+      logger_->log_error("Error in subpattern '{}': {}", subpattern, error_msg);
     }));
     for (const auto& candidate : candidates) {
       auto library = internal::asDynamicLibrary(candidate);
@@ -86,7 +90,7 @@ bool ExtensionManager::initialize(const std::shared_ptr<Configure>& config) {
         }
       }
       if (!module->initialize(config)) {
-        logger_->log_error("Failed to initialize module '%s' at '%s'", library->name, library->getFullPath().string());
+        logger_->log_error("Failed to initialize module '{}' at '{}'", library->name, library->getFullPath());
       } else {
         modules_.push_back(std::move(module));
       }

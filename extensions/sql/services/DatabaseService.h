@@ -23,6 +23,8 @@
 
 #include "core/logging/LoggerConfiguration.h"
 #include "core/controller/ControllerService.h"
+#include "core/PropertyDefinition.h"
+#include "core/PropertyDefinitionBuilder.h"
 #include "data/DatabaseConnectors.h"
 
 namespace org::apache::nifi::minifi::sql::controllers {
@@ -34,14 +36,14 @@ namespace org::apache::nifi::minifi::sql::controllers {
  */
 class DatabaseService : public core::controller::ControllerService {
  public:
-  explicit DatabaseService(std::string name, const utils::Identifier &uuid = {})
-      : ControllerService(std::move(name), uuid),
+  explicit DatabaseService(std::string_view name, const utils::Identifier &uuid = {})
+      : ControllerService(name, uuid),
         initialized_(false) {
     initialize();
   }
 
-  explicit DatabaseService(std::string name, const std::shared_ptr<Configure> &configuration)
-      : ControllerService(std::move(name)),
+  explicit DatabaseService(std::string_view name, const std::shared_ptr<Configure> &configuration)
+      : ControllerService(name),
         initialized_(false) {
     setConfiguration(configuration);
     initialize();
@@ -50,8 +52,11 @@ class DatabaseService : public core::controller::ControllerService {
   /**
    * Parameters needed.
    */
-  EXTENSIONAPI static core::Property ConnectionString;
-  static auto properties() { return std::array{ConnectionString}; }
+  EXTENSIONAPI static constexpr auto ConnectionString = core::PropertyDefinitionBuilder<>::createProperty("Connection String")
+      .withDescription("Database Connection String")
+      .isRequired(true)
+      .build();
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 1>{ConnectionString};
 
   void initialize() override;
 

@@ -33,10 +33,10 @@ namespace org::apache::nifi::minifi::core::logging {
 AlertSink::AlertSink(Config config, std::shared_ptr<Logger> logger)
     : config_(std::move(config)),
       live_logs_(config_.rate_limit),
+      next_flush_(clock_->timeSinceEpoch() + config_.flush_period),
       buffer_(config_.buffer_limit, config_.batch_size),
       logger_(std::move(logger)) {
   set_level(config_.level);
-  next_flush_ = clock_->timeSinceEpoch() + config_.flush_period;
   flush_thread_ = std::thread([this] {run();});
 }
 
@@ -46,7 +46,7 @@ std::shared_ptr<AlertSink> AlertSink::create(const std::string& prop_name_prefix
   if (auto url = logger_properties->getString(prop_name_prefix + ".url")) {
     config.url = url.value();
   } else {
-    logger->log_info("Missing '%s.url' value, network logging won't be available", prop_name_prefix);
+    logger->log_info("Missing '{}.url' value, network logging won't be available", prop_name_prefix);
     return {};
   }
 
@@ -54,11 +54,11 @@ std::shared_ptr<AlertSink> AlertSink::create(const std::string& prop_name_prefix
     try {
       config.filter = utils::Regex{filter_str.value()};
     } catch (const std::regex_error& err) {
-      logger->log_error("Invalid '%s.filter' value, network logging won't be available: %s", prop_name_prefix, err.what());
+      logger->log_error("Invalid '{}.filter' value, network logging won't be available: {}", prop_name_prefix, err.what());
       return {};
     }
   } else {
-    logger->log_error("Missing '%s.filter' value, network logging won't be available", prop_name_prefix);
+    logger->log_error("Missing '{}.filter' value, network logging won't be available", prop_name_prefix);
     return {};
   }
 
@@ -67,15 +67,15 @@ std::shared_ptr<AlertSink> AlertSink::create(const std::string& prop_name_prefix
       if (auto prop_val = parser(prop_str.value())) {
         return prop_val.value();
       }
-      logger->log_error("Invalid '%s' value, using default '%s'", prop_name_prefix + suffix, fallback);
+      logger->log_error("Invalid '{}' value, using default '{}'", prop_name_prefix + suffix, fallback);
     } else {
-      logger->log_info("Missing '%s' value, using default '%s'", prop_name_prefix + suffix, fallback);
+      logger->log_info("Missing '{}' value, using default '{}'", prop_name_prefix + suffix, fallback);
     }
     return parser(fallback).value();
   };
 
   auto datasize_parser = [] (const std::string& str) -> std::optional<int> {
-    int val;
+    int val = 0;
     if (DataSizeValue::StringToInt(str, val)) {
       return val;
     }
@@ -99,18 +99,18 @@ void AlertSink::initialize(core::controller::ControllerServiceProvider* controll
 
   if (config_.ssl_service_name) {
     if (!controller) {
-      logger_->log_error("Could not find service '%s': no service provider", config_.ssl_service_name.value());
+      logger_->log_error("Could not find service '{}': no service provider", config_.ssl_service_name.value());
       return;
     }
     if (auto service = controller->getControllerService(config_.ssl_service_name.value())) {
       if (auto ssl_service = std::dynamic_pointer_cast<controllers::SSLContextService>(service)) {
         services->ssl_service = ssl_service;
       } else {
-        logger_->log_error("Service '%s' is not an SSLContextService", config_.ssl_service_name.value());
+        logger_->log_error("Service '{}' is not an SSLContextService", config_.ssl_service_name.value());
         return;
       }
     } else {
-      logger_->log_error("Could not find service '%s'", config_.ssl_service_name.value());
+      logger_->log_error("Could not find service '{}'", config_.ssl_service_name.value());
       return;
     }
   }
@@ -163,7 +163,7 @@ void AlertSink::run() {
     try {
       send(*services);
     } catch (const std::exception& err) {
-      logger_->log_error("Exception while sending logs: %s", err.what());
+      logger_->log_error("Exception while sending logs: {}", err.what());
     } catch (...) {
       logger_->log_error("Unknown exception while sending logs");
     }
@@ -184,7 +184,7 @@ AlertSink::~AlertSink() {
   if (flush_thread_.joinable()) {
     flush_thread_.join();
   }
-  delete services_.exchange(nullptr);
+  delete services_.exchange(nullptr);  // NOLINT(cppcoreguidelines-owning-memory)
 }
 
 void AlertSink::send(Services& services) {
@@ -199,14 +199,14 @@ void AlertSink::send(Services& services) {
     logger_->log_error("Could not instantiate a HTTPClient object");
     return;
   }
-  client->initialize("PUT", config_.url, services.ssl_service);
+  client->initialize(utils::HttpRequestMethod::PUT, config_.url, services.ssl_service);
 
   rapidjson::Document doc(rapidjson::kObjectType);
   std::string agent_id = services.agent_id->getAgentIdentifier();
-  doc.AddMember("agentId", rapidjson::Value(agent_id.data(), agent_id.length()), doc.GetAllocator());
+  doc.AddMember("agentId", rapidjson::Value(agent_id.data(), gsl::narrow<rapidjson::SizeType>(agent_id.length())), doc.GetAllocator());
   doc.AddMember("alerts", rapidjson::Value(rapidjson::kArrayType), doc.GetAllocator());
   for (const auto& [log, _] : logs.data_) {
-    doc["alerts"].PushBack(rapidjson::Value(log.data(), log.size()), doc.GetAllocator());
+    doc["alerts"].PushBack(rapidjson::Value(log.data(), gsl::narrow<rapidjson::SizeType>(log.size())), doc.GetAllocator());
   }
   rapidjson::StringBuffer buffer;
   rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
@@ -224,11 +224,11 @@ void AlertSink::send(Services& services) {
   const bool client_err = 400 <= resp_code && resp_code < 500;
   const bool server_err = 500 <= resp_code && resp_code < 600;
   if (client_err || server_err) {
-    logger_->log_error("Error response code '" "%" PRId64 "' from '%s'", resp_code, config_.url);
+    logger_->log_error("Error response code '{}' from '{}'", resp_code, config_.url);
   } else if (!response_success) {
-    logger_->log_warn("Non-success response code '" "%" PRId64 "' from '%s'", resp_code, config_.url);
+    logger_->log_warn("Non-success response code '{}' from '{}'", resp_code, config_.url);
   } else {
-    logger_->log_debug("Response code '" "%" PRId64 "' from '%s'", resp_code, config_.url);
+    logger_->log_debug("Response code '{}' from '{}'", resp_code, config_.url);
   }
 
   if (!req_success) {

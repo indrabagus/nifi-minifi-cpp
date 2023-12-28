@@ -31,10 +31,11 @@
 #include "core/ProcessContext.h"
 #include "core/ProcessSession.h"
 #include "core/ProcessSessionFactory.h"
-#include "core/PropertyBuilder.h"
 #include "core/Resource.h"
 #include "utils/gsl.h"
 #include "utils/OptionalUtils.h"
+#include "utils/OsUtils.h"
+#include "utils/UnicodeConversion.h"
 
 #pragma comment(lib, "wevtapi.lib")
 #pragma comment(lib, "Wecapi.lib")
@@ -45,119 +46,6 @@ namespace org::apache::nifi::minifi::processors {
 
 #define LOG_SUBSCRIPTION_ERROR(error) logError(__LINE__, error)
 #define LOG_SUBSCRIPTION_WINDOWS_ERROR(info) logWindowsError(__LINE__, info)
-
-namespace {
-std::string to_string(const wchar_t *pChar) {
-  return std::wstring_convert<std::codecvt_utf8<wchar_t>>().to_bytes(pChar);
-}
-
-std::wstring to_wstring(const std::string& utf8_string) {
-  return std::wstring_convert<std::codecvt_utf8<wchar_t>>().from_bytes(utf8_string);
-}
-}  // namespace
-
-const core::Property CollectorInitiatedSubscription::SubscriptionName =
-    core::PropertyBuilder::createProperty("Subscription Name")->
-        isRequired(true)->
-        withDescription("The name of the subscription. The value provided for this parameter should be unique within the computer's scope.")->
-        supportsExpressionLanguage(true)->
-        build();
-
-const core::Property CollectorInitiatedSubscription::SubscriptionDescription =
-    core::PropertyBuilder::createProperty("Subscription Description")->
-        isRequired(true)->
-        withDescription("A description of the subscription.")->
-        supportsExpressionLanguage(true)->
-        build();
-
-const core::Property CollectorInitiatedSubscription::SourceAddress =
-    core::PropertyBuilder::createProperty("Source Address")->
-        isRequired(true)->
-        withDescription("The IP address or fully qualified domain name (FQDN) of the local or remote computer (event source) from which the events are collected.")->
-        supportsExpressionLanguage(true)->
-        build();
-
-const core::Property CollectorInitiatedSubscription::SourceUserName =
-    core::PropertyBuilder::createProperty("Source User Name")->
-        isRequired(true)->
-        withDescription("The user name, which is used by the remote computer (event source) to authenticate the user.")->
-        supportsExpressionLanguage(true)->
-        build();
-
-const core::Property CollectorInitiatedSubscription::SourcePassword =
-    core::PropertyBuilder::createProperty("Source Password")->
-        isRequired(true)->
-        withDescription("The password, which is used by the remote computer (event source) to authenticate the user.")->
-        supportsExpressionLanguage(true)->
-        build();
-
-const core::Property CollectorInitiatedSubscription::SourceChannels =
-    core::PropertyBuilder::createProperty("Source Channels")->
-        isRequired(true)->
-        withDescription("The Windows Event Log Channels (on domain computer(s)) from which events are transferred.")->
-        supportsExpressionLanguage(true)->
-        build();
-
-const core::Property CollectorInitiatedSubscription::MaxDeliveryItems =
-    core::PropertyBuilder::createProperty("Max Delivery Items")->
-        isRequired(true)->
-        withDefaultValue<core::DataSizeValue>("1000")->
-        withDescription("Determines the maximum number of items that will forwarded from an event source for each request.")->
-        build();
-
-const core::Property CollectorInitiatedSubscription::DeliveryMaxLatencyTime =
-    core::PropertyBuilder::createProperty("Delivery MaxLatency Time")->
-        isRequired(true)->
-        withDefaultValue<core::TimePeriodValue>("10 min")->
-        withDescription("How long, in milliseconds, the event source should wait before sending events.")->
-        build();
-
-const core::Property CollectorInitiatedSubscription::HeartbeatInterval =
-    core::PropertyBuilder::createProperty("Heartbeat Interval")->
-        isRequired(true)->
-        withDefaultValue<core::TimePeriodValue>("10 min")->
-        withDescription(
-        "Time interval, in milliseconds, which is observed between the sent heartbeat messages."
-        " The event collector uses this property to determine the interval between queries to the event source.")->
-        build();
-
-const core::Property CollectorInitiatedSubscription::Channel =
-    core::PropertyBuilder::createProperty("Channel")->
-        isRequired(true)->
-        withDefaultValue("ForwardedEvents")->
-        withDescription("The Windows Event Log Channel (on local machine) to which events are transferred.")->
-        supportsExpressionLanguage(true)->
-        build();
-
-const core::Property CollectorInitiatedSubscription::Query =
-    core::PropertyBuilder::createProperty("Query")->
-        isRequired(true)->
-        withDefaultValue("*")->
-        withDescription("XPath Query to filter events. (See https://msdn.microsoft.com/en-us/library/windows/desktop/dd996910(v=vs.85).aspx for examples.)")->
-        supportsExpressionLanguage(true)->
-        build();
-
-const core::Property CollectorInitiatedSubscription::MaxBufferSize =
-    core::PropertyBuilder::createProperty("Max Buffer Size")->
-        isRequired(true)->
-        withDefaultValue<core::DataSizeValue>("1 MB")->
-        withDescription(
-        "The individual Event Log XMLs are rendered to a buffer."
-        " This specifies the maximum size in bytes that the buffer will be allowed to grow to. (Limiting the maximum size of an individual Event XML.)")->
-        build();
-
-const core::Property CollectorInitiatedSubscription::InactiveDurationToReconnect =
-    core::PropertyBuilder::createProperty("Inactive Duration To Reconnect")->
-        isRequired(true)->
-        withDefaultValue<core::TimePeriodValue>("10 min")->
-        withDescription(
-        "If no new event logs are processed for the specified time period,"
-        " this processor will try reconnecting to recover from a state where any further messages cannot be consumed."
-        " Such situation can happen if Windows Event Log service is restarted, or ERROR_EVT_QUERY_RESULT_STALE (15011) is returned."
-        " Setting no duration, e.g. '0 ms' disables auto-reconnection.")->
-        build();
-
-const core::Relationship CollectorInitiatedSubscription::Success("success", "Relationship for successfully consumed events.");
 
 CollectorInitiatedSubscription::CollectorInitiatedSubscription(const std::string& name, const utils::Identifier& uuid)
   : core::Processor(name, uuid), logger_(core::logging::LoggerFactory<CollectorInitiatedSubscription>::getLogger(uuid_)) {
@@ -171,11 +59,11 @@ CollectorInitiatedSubscription::CollectorInitiatedSubscription(const std::string
 }
 
 void CollectorInitiatedSubscription::initialize() {
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
-void CollectorInitiatedSubscription::onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &sessionFactory) {
+void CollectorInitiatedSubscription::onScheduleSharedPtr(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &sessionFactory) {
   gsl_Expects(context);
 
   if (subscriptionHandle_) {
@@ -183,24 +71,22 @@ void CollectorInitiatedSubscription::onSchedule(const std::shared_ptr<core::Proc
   } else {
     sessionFactory_ = sessionFactory;
 
-    if (!createSubscription(context))
+    if (!createSubscription(*context))
       return;
     if (!checkSubscriptionRuntimeStatus())
       return;
 
-    subscribe(context);
+    subscribe(*context);
   }
 
-  subscription_name_ = to_wstring(context->getProperty(SubscriptionName).value());
+  subscription_name_ = utils::to_wstring(context->getProperty(SubscriptionName).value());
   max_buffer_size_ = context->getProperty<core::DataSizeValue>(MaxBufferSize).value();
 }
 
-void CollectorInitiatedSubscription::onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) {
-  gsl_Expects(context);
-
+void CollectorInitiatedSubscription::onTrigger(core::ProcessContext& context, core::ProcessSession& session) {
   if (!subscriptionHandle_) {
     if (!subscribe(context)) {
-      context->yield();
+      context.yield();
       return;
     }
   }
@@ -213,11 +99,11 @@ void CollectorInitiatedSubscription::onTrigger(const std::shared_ptr<core::Proce
 
   if (flowFileCount > 0) {
     lastActivityTimestamp_ = now;
-  } else if (auto inactive_duration_to_reconnect_ms = context->getProperty<core::TimePeriodValue>(InactiveDurationToReconnect)
-             | utils::map([](const auto& time_period_value) { return time_period_value.getMilliseconds().count(); });
+  } else if (auto inactive_duration_to_reconnect_ms = context.getProperty<core::TimePeriodValue>(InactiveDurationToReconnect)
+             | utils::transform([](const auto& time_period_value) { return time_period_value.getMilliseconds().count(); });
              inactive_duration_to_reconnect_ms && *inactive_duration_to_reconnect_ms > 0) {
-    if ((now - lastActivityTimestamp_) > *inactive_duration_to_reconnect_ms) {
-      logger_->log_info("Exceeds configured 'inactive duration to reconnect' %lld ms. Unsubscribe to reconnect..", *inactive_duration_to_reconnect_ms);
+    if ((now - lastActivityTimestamp_) > gsl::narrow<uint64_t>(*inactive_duration_to_reconnect_ms)) {
+      logger_->log_info("Exceeds configured 'inactive duration to reconnect' {} ms. Unsubscribe to reconnect..", *inactive_duration_to_reconnect_ms);
       unsubscribe();
     }
   }
@@ -378,7 +264,7 @@ bool CollectorInitiatedSubscription::checkSubscriptionRuntimeStatus() {
     const auto lastError = vProperty->UInt32Val;
 
     if (lastError == 0 && (runtimeStatus == EcRuntimeStatusActiveStatusActive || runtimeStatus == EcRuntimeStatusActiveStatusTrying)) {
-      logger_->log_info("Subscription '%ws': status '%ws', no error.", subscription_name_.c_str(), strRuntimeStatus.c_str());
+      logger_->log_info("Subscription '{}': status '{}', no error.", utils::to_string(subscription_name_), utils::to_string(strRuntimeStatus));
       return true;
     }
 
@@ -397,7 +283,10 @@ bool CollectorInitiatedSubscription::checkSubscriptionRuntimeStatus() {
       lastErrorMessage = vProperty->StringVal;
     }
 
-    logger_->log_error("Runtime status: %ws, last error: %d, last error message: %ws", strRuntimeStatus.c_str(), lastError, lastErrorMessage.c_str());
+    logger_->log_error("Runtime status: {}, last error: {}, last error message: {}",
+        utils::to_string(strRuntimeStatus),
+        lastError,
+        utils::to_string(lastErrorMessage));
 
     return false;
   }
@@ -427,9 +316,7 @@ bool CollectorInitiatedSubscription::getSubscriptionProperty(EC_HANDLE hSubscrip
   return true;
 }
 
-bool CollectorInitiatedSubscription::createSubscription(const std::shared_ptr<core::ProcessContext>& context) {
-  gsl_Expects(context);
-
+bool CollectorInitiatedSubscription::createSubscription(core::ProcessContext& context) {
   // If subcription already exists, delete it.
   EC_HANDLE hSubscription = EcOpenSubscription(subscription_name_.c_str(), EC_READ_ACCESS, EC_OPEN_EXISTING);
   if (hSubscription) {
@@ -474,14 +361,14 @@ bool CollectorInitiatedSubscription::createSubscription(const std::shared_ptr<co
     EC_VARIANT prop_;
   };
 
-  const auto subscription_description = to_wstring(context->getProperty(SubscriptionDescription).value());
-  const auto source_channels = to_wstring(context->getProperty(SourceChannels).value());
-  const auto channel = to_wstring(context->getProperty(Channel).value());
-  const auto max_delivery_items = context->getProperty<core::DataSizeValue>(MaxDeliveryItems).value().getValue();
-  const auto delivery_max_latency_time = context->getProperty<core::TimePeriodValue>(DeliveryMaxLatencyTime).value().getMilliseconds().count();
-  const auto heartbeat_interval = context->getProperty<core::TimePeriodValue>(HeartbeatInterval).value().getMilliseconds().count();
-  const auto source_user_name = to_wstring(context->getProperty(SourceUserName).value());
-  const auto source_password = to_wstring(context->getProperty(SourcePassword).value());
+  const auto subscription_description = utils::to_wstring(context.getProperty(SubscriptionDescription).value());
+  const auto source_channels = utils::to_wstring(context.getProperty(SourceChannels).value());
+  const auto channel = utils::to_wstring(context.getProperty(Channel).value());
+  const auto max_delivery_items = context.getProperty<core::DataSizeValue>(MaxDeliveryItems).value().getValue();
+  const auto delivery_max_latency_time = context.getProperty<core::TimePeriodValue>(DeliveryMaxLatencyTime).value().getMilliseconds().count();
+  const auto heartbeat_interval = context.getProperty<core::TimePeriodValue>(HeartbeatInterval).value().getMilliseconds().count();
+  const auto source_user_name = utils::to_wstring(context.getProperty(SourceUserName).value());
+  const auto source_password = utils::to_wstring(context.getProperty(SourcePassword).value());
 
   std::vector<SubscriptionProperty> listProperty = {
     {EcSubscriptionDescription, subscription_description},
@@ -538,7 +425,7 @@ bool CollectorInitiatedSubscription::createSubscription(const std::shared_ptr<co
     return false;
   }
 
-  const auto source_address = to_wstring(context->getProperty(SourceAddress).value());
+  const auto source_address = utils::to_wstring(context.getProperty(SourceAddress).value());
   for (auto& prop : std::vector<SubscriptionProperty>{{EcSubscriptionEventSourceAddress, source_address}, {EcSubscriptionEventSourceEnabled, true}}) {
     if (!EcSetObjectArrayProperty(hArray, prop.propId_, dwEventSourceCount, 0, &prop.prop_)) {
       LOG_SUBSCRIPTION_WINDOWS_ERROR("EcSetObjectArrayProperty id: " + std::to_string(prop.propId_));
@@ -554,17 +441,15 @@ bool CollectorInitiatedSubscription::createSubscription(const std::shared_ptr<co
   return true;
 }
 
-bool CollectorInitiatedSubscription::subscribe(const std::shared_ptr<core::ProcessContext> &context) {
-  gsl_Expects(context);
+bool CollectorInitiatedSubscription::subscribe(core::ProcessContext& context) {
+  logger_->log_debug("CollectorInitiatedSubscription: MaxBufferSize {}", max_buffer_size_.getValue());
 
-  logger_->log_debug("CollectorInitiatedSubscription: MaxBufferSize %lld", max_buffer_size_.getValue());
-
-  const auto channel = context->getProperty(Channel).value();
-  const auto query = context->getProperty(Query).value();
+  const auto channel = context.getProperty(Channel).value();
+  const auto query = context.getProperty(Query).value();
   provenanceUri_ = "winlog://" + computerName_ + "/" + channel + "?" + query;
 
-  const auto channel_ws = to_wstring(context->getProperty(Channel).value());
-  const auto query_ws = to_wstring(context->getProperty(Query).value());
+  const auto channel_ws = utils::to_wstring(context.getProperty(Channel).value());
+  const auto query_ws = utils::to_wstring(context.getProperty(Query).value());
 
   const EVT_SUBSCRIBE_CALLBACK callback = [](EVT_SUBSCRIBE_NOTIFY_ACTION action, PVOID pContext, EVT_HANDLE hEvent) {
     auto pCollectorInitiatedSubscription = static_cast<CollectorInitiatedSubscription*>(pContext);
@@ -575,7 +460,7 @@ bool CollectorInitiatedSubscription::subscribe(const std::shared_ptr<core::Proce
       if (ERROR_EVT_QUERY_RESULT_STALE == reinterpret_cast<intptr_t>(hEvent)) {
         logger->log_error("Received missing event notification. Consider triggering processor more frequently or increasing queue size.");
       } else {
-        logger->log_error("Received the following Win32 error: %x", hEvent);
+        logger->log_error("Received the following Win32 error: {:#x}", reinterpret_cast<intptr_t>(hEvent));
       }
     } else if (action == EvtSubscribeActionDeliver) {
       DWORD size = 0;
@@ -585,18 +470,18 @@ bool CollectorInitiatedSubscription::subscribe(const std::shared_ptr<core::Proce
       if (!EvtRender(NULL, hEvent, EvtRenderEventXml, size, 0, &used, &propertyCount)) {
         if (ERROR_INSUFFICIENT_BUFFER == GetLastError()) {
           if (used > pCollectorInitiatedSubscription->max_buffer_size_.getValue()) {
-            logger->log_error("Dropping event %p because it couldn't be rendered within %llu bytes.", hEvent, pCollectorInitiatedSubscription->max_buffer_size_.getValue());
+            logger->log_error("Dropping event {} because it couldn't be rendered within {} bytes.", hEvent, pCollectorInitiatedSubscription->max_buffer_size_.getValue());
             return 0UL;
           }
 
           size = used;
           std::vector<wchar_t> buf(size/2);
           if (EvtRender(NULL, hEvent, EvtRenderEventXml, size, &buf[0], &used, &propertyCount)) {
-            auto xml = to_string(&buf[0]);
+            auto xml = utils::to_string(&buf[0]);
 
             pCollectorInitiatedSubscription->renderedXMLs_.enqueue(std::move(xml));
           } else {
-            logger->log_error("EvtRender returned the following error code: %d.", GetLastError());
+            logger->log_error("EvtRender returned the following error code: {}.", GetLastError());
           }
         }
       }
@@ -616,7 +501,7 @@ bool CollectorInitiatedSubscription::subscribe(const std::shared_ptr<core::Proce
       EvtSubscribeToFutureEvents | EvtSubscribeStrict);
 
   if (!subscriptionHandle_) {
-    logger_->log_error("Unable to subscribe with provided parameters, received the following error code: %d", GetLastError());
+    logger_->log_error("Unable to subscribe with provided parameters, received the following error code: {}", GetLastError());
     return false;
   }
 
@@ -632,17 +517,17 @@ void CollectorInitiatedSubscription::unsubscribe() {
   }
 }
 
-int CollectorInitiatedSubscription::processQueue(const std::shared_ptr<core::ProcessSession> &session) {
+int CollectorInitiatedSubscription::processQueue(core::ProcessSession& session) {
   int flowFileCount = 0;
 
   std::string xml;
   while (renderedXMLs_.try_dequeue(xml)) {
-    auto flowFile = session->create();
+    auto flowFile = session.create();
 
-    session->writeBuffer(flowFile, xml);
-    session->putAttribute(flowFile, core::SpecialFlowAttribute::MIME_TYPE, "application/xml");
-    session->getProvenanceReporter()->receive(flowFile, provenanceUri_, getUUIDStr(), "Consume windows event logs", 0ms);
-    session->transfer(flowFile, Success);
+    session.writeBuffer(flowFile, xml);
+    session.putAttribute(flowFile, core::SpecialFlowAttribute::MIME_TYPE, "application/xml");
+    session.getProvenanceReporter()->receive(flowFile, provenanceUri_, getUUIDStr(), "Consume windows event logs", 0ms);
+    session.transfer(flowFile, Success);
 
     flowFileCount++;
   }
@@ -662,7 +547,7 @@ void CollectorInitiatedSubscription::notifyStop() {
     if (session) {
       logger_->log_info("Finishing processing leftover events");
 
-      processQueue(session);
+      processQueue(*session);
     } else {
       logger_->log_error(
         "Stopping the processor but there is no ProcessSessionFactory stored and there are messages in the internal queue. "
@@ -674,25 +559,12 @@ void CollectorInitiatedSubscription::notifyStop() {
 }
 
 void CollectorInitiatedSubscription::logError(int line, const std::string& error) {
-  logger_->log_error("Line %d: %s\n", error.c_str());
+  logger_->log_error("Line {}: {}\n", line, error);
 }
 
 void CollectorInitiatedSubscription::logWindowsError(int line, const std::string& info) {
-  auto error = GetLastError();
-
-  LPVOID lpMsg{};
-  FormatMessage(
-    FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
-    NULL,
-    error,
-    MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-    (LPTSTR)&lpMsg,
-    0,
-    NULL);
-
-  logger_->log_error("Line %d: '%s': error %d: %s\n", line, info.c_str(), static_cast<int>(error), reinterpret_cast<char *>(lpMsg));
-
-  LocalFree(lpMsg);
+  auto last_error = utils::OsUtils::windowsErrorToErrorCode(GetLastError());
+  logger_->log_error("Line {}: '{}': error {}: {}", line, info, last_error, last_error.message());
 }
 
 REGISTER_RESOURCE(CollectorInitiatedSubscription, Processor);

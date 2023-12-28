@@ -15,37 +15,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef LIBMINIFI_INCLUDE_CORE_STATE_NODES_STATEMONITOR_H_
-#define LIBMINIFI_INCLUDE_CORE_STATE_NODES_STATEMONITOR_H_
+#pragma once
 
-#include <stdio.h>
-#include <stdlib.h>
-
-#include <map>
-#include <memory>
-#include <sstream>
 #include <string>
 #include <utility>
 
-#include "../nodes/MetricsBase.h"
-#include "agent/agent_version.h"
-#include "agent/build_description.h"
-#include "Connection.h"
-#include "core/ClassLoader.h"
+#include "core/state/nodes/MetricsBase.h"
 #include "core/state/UpdateController.h"
-#include "io/ClientSocket.h"
 
 namespace org::apache::nifi::minifi::state::response {
 
 class StateMonitorNode : public DeviceInformation {
  public:
-  StateMonitorNode(std::string name, const utils::Identifier& uuid)
-      : DeviceInformation(std::move(name), uuid),
+  StateMonitorNode(std::string_view name, const utils::Identifier& uuid)
+      : DeviceInformation(name, uuid),
         monitor_(nullptr) {
   }
 
-  explicit StateMonitorNode(std::string name)
-      : DeviceInformation(std::move(name)),
+  explicit StateMonitorNode(std::string_view name)
+      : DeviceInformation(name),
         monitor_(nullptr) {
   }
 
@@ -57,5 +45,3 @@ class StateMonitorNode : public DeviceInformation {
 };
 
 }  // namespace org::apache::nifi::minifi::state::response
-
-#endif  // LIBMINIFI_INCLUDE_CORE_STATE_NODES_STATEMONITOR_H_

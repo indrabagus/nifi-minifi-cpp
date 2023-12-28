@@ -16,7 +16,6 @@
  * limitations under the License.
  */
 
-#define CURLOPT_SSL_VERIFYPEER_DISABLE 1
 #include <sys/stat.h>
 #undef NDEBUG
 #include <cassert>
@@ -28,9 +27,7 @@
 #include "sitetosite/HTTPProtocol.h"
 #include "InvokeHTTP.h"
 #include "TestBase.h"
-#include "Catch.h"
 #include "FlowController.h"
-#include "io/StreamFactory.h"
 #include "RemoteProcessorGroupPort.h"
 #include "core/ConfigurableComponent.h"
 #include "HTTPIntegrationBase.h"

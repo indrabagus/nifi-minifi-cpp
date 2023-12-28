@@ -23,12 +23,10 @@ enable_coroutines()
 file(GLOB PROCESSOR_UNIT_TESTS  "unit/*.cpp")
 file(GLOB PROCESSOR_INTEGRATION_TESTS "integration/*.cpp")
 file(GLOB RESOURCE_APPS "resource_apps/*.cpp")
-if(OPENSSL_OFF)
-    list(REMOVE_ITEM PROCESSOR_INTEGRATION_TESTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/SecureSocketGetTCPTest.cpp")
-    list(REMOVE_ITEM PROCESSOR_INTEGRATION_TESTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/TLSServerSocketSupportedProtocolsTest.cpp")
-    list(REMOVE_ITEM PROCESSOR_INTEGRATION_TESTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/TLSClientSocketSupportedProtocolsTest.cpp")
-endif()
 
+if (WIN32)
+    list(REMOVE_ITEM PROCESSOR_UNIT_TESTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/ExecuteProcessTests.cpp")
+endif()
 SET(PROCESSOR_INT_TEST_COUNT 0)
 
 FOREACH(testfile ${PROCESSOR_UNIT_TESTS})
@@ -40,7 +38,7 @@ FOREACH(testfile ${PROCESSOR_UNIT_TESTS})
     target_include_directories(${testfilename} BEFORE PRIVATE "../processors")
     target_include_directories(${testfilename} BEFORE PRIVATE ./include)
     createTests("${testfilename}")
-    target_link_libraries(${testfilename} ${CATCH_MAIN_LIB})
+    target_link_libraries(${testfilename} Catch2WithMain)
     target_link_libraries(${testfilename} minifi-expression-language-extensions)
     target_link_libraries(${testfilename} minifi-standard-processors)
     target_link_libraries(${testfilename} minifi-civet-extensions)
@@ -50,17 +48,6 @@ FOREACH(testfile ${PROCESSOR_UNIT_TESTS})
     add_test(NAME "${testfilename}" COMMAND "${testfilename}" WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
     MATH(EXPR PROCESSOR_INT_TEST_COUNT "${PROCESSOR_INT_TEST_COUNT}+1")
-
-    # Copy test resources only once after the first build to be available for all test cases
-    if(PROCESSOR_INT_TEST_COUNT EQUAL 1)
-        add_custom_command(
-            TARGET "${testfilename}"
-            POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                    "${CMAKE_SOURCE_DIR}/extensions/standard-processors/tests/unit/resources"
-                    "$<TARGET_FILE_DIR:${testfilename}>/resources"
-            )
-    endif()
 ENDFOREACH()
 
 message("-- Finished building ${PROCESSOR_INT_TEST_COUNT} processor unit test file(s)...")
@@ -88,16 +75,6 @@ FOREACH(testfile ${PROCESSOR_INTEGRATION_TESTS})
 ENDFOREACH()
 message("-- Finished building ${INT_TEST_COUNT} integration test file(s)...")
 
-if(NOT OPENSSL_OFF)
-    add_test(NAME SecureSocketGetTCPTest COMMAND SecureSocketGetTCPTest "${TEST_RESOURCES}/TestGetTCPSecure.yml"  "${TEST_RESOURCES}/")
-    add_test(NAME SecureSocketGetTCPTestEmptyPass COMMAND SecureSocketGetTCPTest "${TEST_RESOURCES}/TestGetTCPSecureEmptyPass.yml"  "${TEST_RESOURCES}/")
-    add_test(NAME SecureSocketGetTCPTestWithPassword COMMAND SecureSocketGetTCPTest "${TEST_RESOURCES}/TestGetTCPSecureWithPass.yml"  "${TEST_RESOURCES}/")
-    add_test(NAME SecureSocketGetTCPTestWithPasswordFile COMMAND SecureSocketGetTCPTest "${TEST_RESOURCES}/TestGetTCPSecureWithFilePass.yml"  "${TEST_RESOURCES}/")
-
-    add_test(NAME TLSServerSocketSupportedProtocolsTest COMMAND TLSServerSocketSupportedProtocolsTest "${TEST_RESOURCES}/")
-    add_test(NAME TLSClientSocketSupportedProtocolsTest COMMAND TLSClientSocketSupportedProtocolsTest "${TEST_RESOURCES}/")
-endif()
-
 add_test(NAME TailFileTest COMMAND TailFileTest "${TEST_RESOURCES}/TestTailFile.yml"  "${TEST_RESOURCES}/")
 add_test(NAME TailFileCronTest COMMAND TailFileTest "${TEST_RESOURCES}/TestTailFileCron.yml"  "${TEST_RESOURCES}/")
 add_test(NAME ProcessGroupTest COMMAND ProcessGroupTest "${TEST_RESOURCES}/TestProcessGroup.yml")
@@ -107,3 +84,5 @@ FOREACH(resourcefile ${RESOURCE_APPS})
     add_executable("${resourcefilename}" "${resourcefile}")
     set_target_properties(${resourcefilename} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 ENDFOREACH()
+
+copyTestResources(${CMAKE_SOURCE_DIR}/libminifi/test/resources/certs ${CMAKE_BINARY_DIR}/bin/resources)

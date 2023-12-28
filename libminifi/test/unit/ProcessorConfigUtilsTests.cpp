@@ -17,8 +17,9 @@
 
 #include "../TestBase.h"
 #include "../Catch.h"
+#include "PropertyDefinition.h"
 #include "core/Processor.h"
-#include "core/PropertyBuilder.h"
+#include "core/PropertyDefinitionBuilder.h"
 #include "utils/ProcessorConfigUtils.h"
 #include "utils/Enum.h"
 
@@ -36,21 +37,21 @@ class TestProcessor : public Processor {
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 };
 
-SMART_ENUM(TestEnum,
-  (A, "A"),
-  (B, "B")
-)
+enum class TestEnum {
+  A,
+  B
+};
 
 TEST_CASE("Parse enum property") {
-  auto prop = PropertyBuilder::createProperty("prop")
-      ->withAllowableValues(TestEnum::values())
-      ->build();
+  static constexpr auto prop = PropertyDefinitionBuilder<magic_enum::enum_count<TestEnum>()>::createProperty("prop")
+      .withAllowedValues(magic_enum::enum_names<TestEnum>())
+      .build();
   auto proc = std::make_shared<TestProcessor>("test-proc");
-  proc->setSupportedProperties(std::array{prop});
+  proc->setSupportedProperties(std::array<core::PropertyReference, 1>{prop});
   ProcessContext context(std::make_shared<ProcessorNode>(proc.get()), nullptr, nullptr, nullptr, nullptr, nullptr);
   SECTION("Valid") {
     proc->setProperty(prop, "B");
-    TestEnum val = utils::parseEnumProperty<TestEnum>(context, prop);
+    const auto val = utils::parseEnumProperty<TestEnum>(context, prop);
     REQUIRE(val == TestEnum::B);
   }
   SECTION("Invalid") {
@@ -59,6 +60,19 @@ TEST_CASE("Parse enum property") {
   }
   SECTION("Missing") {
     REQUIRE_THROWS(utils::parseEnumProperty<TestEnum>(context, prop));
+  }
+  SECTION("Optional enum property valid") {
+    proc->setProperty(prop, "B");
+    const auto val = utils::parseOptionalEnumProperty<TestEnum>(context, prop);
+    REQUIRE(*val == TestEnum::B);
+  }
+  SECTION("Optional enum property invalid") {
+    proc->setProperty(prop, "C");
+    REQUIRE_THROWS(utils::parseOptionalEnumProperty<TestEnum>(context, prop));
+  }
+  SECTION("Optional enum property missing") {
+    const auto val = utils::parseOptionalEnumProperty<TestEnum>(context, prop);
+    REQUIRE(val == std::nullopt);
   }
 }
 

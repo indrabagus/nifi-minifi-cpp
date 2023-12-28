@@ -38,13 +38,13 @@ namespace org::apache::nifi::minifi::c2 {
  *
  */
 class RESTSender : public RESTProtocol, public C2Protocol {
-  SMART_ENUM(RequestEncoding,
-    (None, "none"),
-    (Gzip, "gzip")
-  )
-
  public:
-  explicit RESTSender(std::string name, const utils::Identifier &uuid = utils::Identifier());
+  enum class RequestEncoding {
+    none,
+    gzip
+  };
+
+  explicit RESTSender(std::string_view name, const utils::Identifier &uuid = utils::Identifier());
 
   EXTENSIONAPI static constexpr const char* Description = "Encapsulates the restful protocol that is built upon C2Protocol.";
 
@@ -68,13 +68,13 @@ class RESTSender : public RESTProtocol, public C2Protocol {
    * @param type type of HTTP request
    * @param url HTTP url
    */
-  void setSecurityContext(extensions::curl::HTTPClient &client, const std::string &type, const std::string &url);
+  void setSecurityContext(extensions::curl::HTTPClient &client, utils::HttpRequestMethod type, const std::string &url);
 
   std::shared_ptr<minifi::controllers::SSLContextService> ssl_context_service_;
 
   std::string rest_uri_;
   std::string ack_uri_;
-  RequestEncoding req_encoding_;
+  RequestEncoding req_encoding_ = RequestEncoding::none;
 
  private:
   std::shared_ptr<core::logging::Logger> logger_ = core::logging::LoggerFactory<RESTSender>::getLogger();

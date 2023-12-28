@@ -32,7 +32,6 @@
 #include "BaseHTTPClient.h"
 #include "processors/InvokeHTTP.h"
 #include "TestBase.h"
-#include "Catch.h"
 #include "utils/StringUtils.h"
 #include "core/Core.h"
 #include "core/logging/Logger.h"
@@ -40,7 +39,6 @@
 #include "FlowController.h"
 #include "properties/Configure.h"
 #include "unit/ProvenanceTestHelper.h"
-#include "io/StreamFactory.h"
 #include "CivetServer.h"
 #include "RemoteProcessorGroupPort.h"
 #include "core/ConfigurableComponent.h"
@@ -98,7 +96,7 @@ class VerifyCoAPServer : public CoapIntegrationBase {
 
     assert(inv != nullptr);
     std::string url;
-    inv->getProperty(minifi::processors::InvokeHTTP::URL.getName(), url);
+    inv->getProperty(minifi::processors::InvokeHTTP::URL, url);
 
     std::string port;
     std::string scheme;

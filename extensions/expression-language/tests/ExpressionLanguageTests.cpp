@@ -22,7 +22,11 @@
 #include <string>
 #ifndef DISABLE_CURL
 #ifdef WIN32
+#ifdef _DEBUG
+#pragma comment(lib, "libcurl-d.lib")
+#else
 #pragma comment(lib, "libcurl.lib")
+#endif
 #pragma comment(lib, "Ws2_32.lib")
 #pragma comment(lib, "legacy_stdio_definitions.lib")
 #pragma comment(lib, "crypt32.lib")
@@ -39,6 +43,7 @@
 #include "utils/gsl.h"
 #include "TestBase.h"
 #include "Catch.h"
+#include "catch2/catch_approx.hpp"
 #include "unit/ProvenanceTestHelper.h"
 #include "date/tz.h"
 #include "Utils.h"
@@ -143,11 +148,10 @@ TEST_CASE("Double quoted attribute expression", "[expressionLanguageTestDoubleQu
 TEST_CASE("Hostname function", "[expressionLanguageTestHostnameFunction]") {
   auto expr = expression::compile("text_before${\n\t hostname ()\n\t }text_after");
 
-  char hostname[1024];
-  hostname[1023] = '\0';
-  gethostname(hostname, 1023);
+  std::array<char, 1024> hostname{};
+  gethostname(hostname.data(), 1023);
   std::string expected("text_before");
-  expected.append(hostname);
+  expected.append(hostname.data());
   expected.append("text_after");
 
   auto flow_file_a = std::make_shared<core::FlowFile>();
@@ -208,18 +212,18 @@ TEST_CASE("GetFile PutFile dynamic attribute", "[expressionLanguageTestGetFilePu
 
   // Build MiNiFi processing graph
   auto get_file = plan->addProcessor("GetFile", "GetFile");
-  plan->setProperty(get_file, minifi::processors::GetFile::Directory.getName(), in_dir.string());
-  plan->setProperty(get_file, minifi::processors::GetFile::KeepSourceFile.getName(), "false");
+  plan->setProperty(get_file, minifi::processors::GetFile::Directory, in_dir.string());
+  plan->setProperty(get_file, minifi::processors::GetFile::KeepSourceFile, "false");
   auto update = plan->addProcessor("UpdateAttribute", "UpdateAttribute", core::Relationship("success", "description"), true);
   update->setDynamicProperty("prop_attr", "${'nifi.my.own.property'}_added");
   plan->addProcessor("LogAttribute", "LogAttribute", core::Relationship("success", "description"), true);
   auto extract_text = plan->addProcessor("ExtractText", "ExtractText", core::Relationship("success", "description"), true);
-  plan->setProperty(extract_text, minifi::processors::ExtractText::Attribute.getName(), "extracted_attr_name");
+  plan->setProperty(extract_text, minifi::processors::ExtractText::Attribute, "extracted_attr_name");
   plan->addProcessor("LogAttribute", "LogAttribute", core::Relationship("success", "description"), true);
   auto put_file = plan->addProcessor("PutFile", "PutFile", core::Relationship("success", "description"), true);
-  plan->setProperty(put_file, minifi::processors::PutFile::Directory.getName(), (out_dir / "${extracted_attr_name}").string());
-  plan->setProperty(put_file, minifi::processors::PutFile::ConflictResolution.getName(), minifi::processors::PutFile::CONFLICT_RESOLUTION_STRATEGY_REPLACE);
-  plan->setProperty(put_file, minifi::processors::PutFile::CreateDirs.getName(), "true");
+  plan->setProperty(put_file, minifi::processors::PutFile::Directory, (out_dir / "${extracted_attr_name}").string());
+  plan->setProperty(put_file, minifi::processors::PutFile::ConflictResolution, magic_enum::enum_name(minifi::processors::PutFile::FileExistsResolutionStrategy::replace));
+  plan->setProperty(put_file, minifi::processors::PutFile::CreateDirs, "true");
 
   // Write test input
   {
@@ -626,7 +630,7 @@ TEST_CASE("Plus Exponent 2", "[expressionLanguagePlusExponent2]") {
 
   auto flow_file_a = std::make_shared<core::FlowFile>();
   flow_file_a->addAttribute("attr", "11.345678901234");
-  REQUIRE(10000011.345678901234 == Approx(expr(expression::Parameters{ flow_file_a }).asLongDouble()));
+  REQUIRE(10000011.345678901234 == Catch::Approx(expr(expression::Parameters{ flow_file_a }).asLongDouble()));
 }
 
 TEST_CASE("Minus Integer", "[expressionLanguageMinusInteger]") {
@@ -658,7 +662,7 @@ TEST_CASE("Multiply Decimal", "[expressionLanguageMultiplyDecimal]") {
 
   auto flow_file_a = std::make_shared<core::FlowFile>();
   flow_file_a->addAttribute("attr", "11.1");
-  REQUIRE(-148.136937 == Approx(expr(expression::Parameters{ flow_file_a }).asLongDouble()));
+  REQUIRE(-148.136937 == Catch::Approx(expr(expression::Parameters{ flow_file_a }).asLongDouble()));
 }
 
 TEST_CASE("Divide Integer", "[expressionLanguageDivideInteger]") {
@@ -906,6 +910,44 @@ TEST_CASE("GT3", "[expressionGT3]") {
   auto flow_file_a = std::make_shared<core::FlowFile>();
   flow_file_a->addAttribute("attr", "1");
   REQUIRE("false" == expr(expression::Parameters{ flow_file_a }).asString());
+}
+
+// using :gt() to test string to integer parsing code
+TEST_CASE("GT4 Value parsing errors", "[expressionGT4][outofrange]") {
+  const char* test_str = nullptr;
+  const char* expected_substr = nullptr;
+  SECTION("integer out of range") {
+    // 2 ^ 64, the smallest positive integer that's not representable even in uint64_t
+    test_str = "18446744073709551616";
+    expected_substr = "out of range";
+  }
+  SECTION("integer invalid") {
+    test_str = "banana1337";
+    expected_substr = "invalid argument";
+  }
+  SECTION("floating point out of range") {
+    // largest IEEE754 quad precision float normal number times 10 (bumped the exponent by one)
+    test_str = "1.1897314953572317650857593266280070162e+4933";
+    expected_substr = "out of range";
+  }
+  SECTION("floating point invalid") {
+    test_str = "app.le+1337";
+    expected_substr = "invalid argument";
+  }
+  REQUIRE(test_str);
+  REQUIRE(expected_substr);
+  const auto expr = expression::compile("${attr1:gt(13.37)}");
+  auto flow_file = std::make_shared<core::FlowFile>();
+  flow_file->addAttribute("attr1", test_str);
+  try {
+    const auto result = expr(expression::Parameters{flow_file}).asString();
+    REQUIRE(false);
+  } catch (const std::exception& ex) {
+    const std::string message = ex.what();
+    // The exception message should be helpful enough to contain the problem description, and the problematic value
+    CHECK(message.find(expected_substr) != std::string::npos);
+    CHECK(message.find(test_str) != std::string::npos);
+  }
 }
 
 TEST_CASE("GE", "[expressionGE]") {
@@ -1283,7 +1325,7 @@ TEST_CASE("Now Date", "[expressionNowDate]") {
 TEST_CASE("Parse RFC3339 with Expression Language toDate") {
   using date::sys_days;
   using org::apache::nifi::minifi::utils::timeutils::parseRfc3339;
-  using namespace date::literals;
+  using namespace date::literals;  // NOLINT(google-build-using-namespace)
   using namespace std::literals::chrono_literals;
   using std::chrono::milliseconds;
 
@@ -1367,28 +1409,29 @@ TEST_CASE("Reverse DNS lookup with valid ip", "[ExpressionLanguage][reverseDnsLo
 
   auto flow_file_a = std::make_shared<core::FlowFile>();
   std::string expected_hostname;
+
+  SECTION("dns.google IPv6") {
+    if (minifi::test::utils::isIPv6Disabled())
+      SKIP("IPv6 is disabled");
+    flow_file_a->addAttribute("ip_addr", "2001:4860:4860::8888");
+    expected_hostname = "dns.google";
+  }
+
   SECTION("dns.google IPv4") {
     flow_file_a->addAttribute("ip_addr", "8.8.8.8");
     expected_hostname = "dns.google";
   }
 
-  SECTION("dns.google IPv6") {
+  SECTION("Unresolvable address IPv6") {
     if (minifi::test::utils::isIPv6Disabled())
-      return;
-    flow_file_a->addAttribute("ip_addr", "2001:4860:4860::8888");
-    expected_hostname = "dns.google";
+      SKIP("IPv6 is disabled");
+    flow_file_a->addAttribute("ip_addr", "2001:db8::");
+    expected_hostname = "2001:db8::";
   }
 
   SECTION("Unresolvable address IPv4") {
     flow_file_a->addAttribute("ip_addr", "192.0.2.0");
     expected_hostname = "192.0.2.0";
-  }
-
-  SECTION("Unresolvable address IPv6") {
-    if (minifi::test::utils::isIPv6Disabled())
-      return;
-    flow_file_a->addAttribute("ip_addr", "2001:db8::");
-    expected_hostname = "2001:db8::";
   }
 
   REQUIRE(expr(expression::Parameters{ flow_file_a }).asString() ==  expected_hostname);

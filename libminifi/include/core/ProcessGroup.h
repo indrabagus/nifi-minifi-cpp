@@ -68,10 +68,10 @@ class ProcessGroup : public CoreComponent {
     IncludeChildren
   };
 
-  ProcessGroup(ProcessGroupType type, std::string name, const utils::Identifier& uuid, int version, ProcessGroup *parent);
-  ProcessGroup(ProcessGroupType type, std::string name);
-  ProcessGroup(ProcessGroupType type, std::string name, const utils::Identifier& uuid);
-  ProcessGroup(ProcessGroupType type, std::string name, const utils::Identifier& uuid, int version);
+  ProcessGroup(ProcessGroupType type, std::string_view name, const utils::Identifier& uuid, int version, ProcessGroup *parent);
+  ProcessGroup(ProcessGroupType type, std::string_view name);
+  ProcessGroup(ProcessGroupType type, std::string_view name, const utils::Identifier& uuid);
+  ProcessGroup(ProcessGroupType type, std::string_view name, const utils::Identifier& uuid, int version);
   // Destructor
   ~ProcessGroup() override;
   // Set URL
@@ -130,14 +130,6 @@ class ProcessGroup : public CoreComponent {
   // Get Processor yield period in MilliSecond
   std::chrono::milliseconds getYieldPeriodMsec() {
     return (yield_period_msec_);
-  }
-
-  void setOnScheduleRetryPeriod(int64_t period) {
-    onschedule_retry_msec_ = period;
-  }
-
-  int64_t getOnScheduleRetryPeriod() {
-    return onschedule_retry_msec_;
   }
 
   int getVersion() const {
@@ -247,7 +239,6 @@ class ProcessGroup : public CoreComponent {
   // Yield Period in Milliseconds
   std::atomic<std::chrono::milliseconds> yield_period_msec_;
   std::atomic<uint64_t> timeout_;
-  std::atomic<int64_t> onschedule_retry_msec_;
 
   // URL
   std::string url_;

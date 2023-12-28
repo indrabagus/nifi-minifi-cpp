@@ -26,6 +26,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <unordered_map>
 #include <utility>
@@ -41,11 +42,11 @@
 #include "core/state/nodes/MetricsBase.h"
 #include "ProcessorMetrics.h"
 #include "utils/gsl.h"
-#include "OutputAttribute.h"
+#include "OutputAttributeDefinition.h"
 
 #define ADD_GET_PROCESSOR_NAME \
   std::string getProcessorType() const override { \
-    auto class_name = org::apache::nifi::minifi::core::getClassName<decltype(*this)>(); \
+    auto class_name = org::apache::nifi::minifi::core::className<decltype(*this)>(); \
     auto splitted = org::apache::nifi::minifi::utils::StringUtils::split(class_name, "::"); \
     return splitted[splitted.size() - 1]; \
   }
@@ -61,25 +62,20 @@ namespace org::apache::nifi::minifi {
 
 class Connection;
 
-namespace io {
-class StreamFactory;
-}
-
 namespace core {
 
 class ProcessContext;
 class ProcessSession;
 class ProcessSessionFactory;
 
-// Minimum scheduling period in Nano Second
-constexpr std::chrono::nanoseconds MINIMUM_SCHEDULING_NANOS{30000};
+constexpr std::chrono::microseconds MINIMUM_SCHEDULING_PERIOD{30};
 
 #define BUILDING_DLL 1
 
 class Processor : public Connectable, public ConfigurableComponent, public state::response::ResponseNodeSource {
  public:
-  Processor(std::string name, const utils::Identifier& uuid, std::shared_ptr<ProcessorMetrics> metrics = nullptr);
-  explicit Processor(std::string name, std::shared_ptr<ProcessorMetrics> metrics = nullptr);
+  Processor(std::string_view name, const utils::Identifier& uuid, std::shared_ptr<ProcessorMetrics> metrics = nullptr);
+  explicit Processor(std::string_view name, std::shared_ptr<ProcessorMetrics> metrics = nullptr);
 
   Processor(const Processor& parent) = delete;
   Processor& operator=(const Processor& parent) = delete;
@@ -102,12 +98,12 @@ class Processor : public Connectable, public ConfigurableComponent, public state
     return strategy_;
   }
 
-  void setSchedulingPeriodNano(std::chrono::nanoseconds period) {
-    scheduling_period_nano_ = std::max(MINIMUM_SCHEDULING_NANOS, period);
+  void setSchedulingPeriod(std::chrono::steady_clock::duration period) {
+    scheduling_period_ = std::max(std::chrono::steady_clock::duration(MINIMUM_SCHEDULING_PERIOD), period);
   }
 
-  std::chrono::nanoseconds getSchedulingPeriodNano() const {
-    return scheduling_period_nano_;
+  std::chrono::steady_clock::duration getSchedulingPeriod() const {
+    return scheduling_period_;
   }
 
   void setCronPeriod(const std::string &period) {
@@ -118,20 +114,20 @@ class Processor : public Connectable, public ConfigurableComponent, public state
     return cron_period_;
   }
 
-  void setRunDurationNano(std::chrono::nanoseconds period) {
-    run_duration_nano_ = period;
+  void setRunDurationNano(std::chrono::steady_clock::duration period) {
+    run_duration_ = period;
   }
 
-  std::chrono::nanoseconds getRunDurationNano() const {
-    return (run_duration_nano_);
+  std::chrono::steady_clock::duration getRunDurationNano() const {
+    return (run_duration_);
   }
 
   void setYieldPeriodMsec(std::chrono::milliseconds period) {
-    yield_period_msec_ = period;
+    yield_period_ = period;
   }
 
-  std::chrono::milliseconds getYieldPeriodMsec() const {
-    return yield_period_msec_;
+  std::chrono::steady_clock::duration getYieldPeriod() const {
+    return yield_period_;
   }
 
   void setPenalizationPeriod(std::chrono::milliseconds period) {
@@ -171,37 +167,37 @@ class Processor : public Connectable, public ConfigurableComponent, public state
 
   void yield() override;
 
-  void yield(std::chrono::milliseconds delta_time);
+  void yield(std::chrono::steady_clock::duration delta_time);
 
   virtual bool isYield();
 
   void clearYield();
 
-  std::chrono::milliseconds getYieldTime() const;
+  std::chrono::steady_clock::time_point getYieldExpirationTime() const { return yield_expiration_; }
+  std::chrono::steady_clock::duration getYieldTime() const;
   // Whether flow file queue full in any of the outgoing connection
   bool flowFilesOutGoingFull() const;
 
   bool addConnection(Connectable* connection);
 
-  virtual void onTrigger(const std::shared_ptr<ProcessContext> &context, const std::shared_ptr<ProcessSessionFactory> &sessionFactory);
-  void onTrigger(ProcessContext *context, ProcessSessionFactory *sessionFactory);
-
   bool canEdit() override {
     return !isRunning();
   }
 
-  virtual void onTrigger(const std::shared_ptr<ProcessContext> &context, const std::shared_ptr<ProcessSession> &session) {
-    onTrigger(context.get(), session.get());
-  }
-  virtual void onTrigger(ProcessContext* /*context*/, ProcessSession* /*session*/) {
-  }
   void initialize() override {
   }
-  virtual void onSchedule(const std::shared_ptr<ProcessContext> &context, const std::shared_ptr<ProcessSessionFactory> &sessionFactory) {
-    onSchedule(context.get(), sessionFactory.get());
+
+  virtual void onTrigger(const std::shared_ptr<ProcessContext>& context, const std::shared_ptr<ProcessSessionFactory>& session_factory);
+
+  virtual void onTriggerSharedPtr(const std::shared_ptr<ProcessContext>& context, const std::shared_ptr<ProcessSession>& session) {
+    onTrigger(*context, *session);
   }
-  virtual void onSchedule(ProcessContext* /*context*/, ProcessSessionFactory* /*sessionFactory*/) {
+  virtual void onTrigger(ProcessContext&, ProcessSession&) {}
+
+  virtual void onScheduleSharedPtr(const std::shared_ptr<ProcessContext>& context, const std::shared_ptr<ProcessSessionFactory>& session_factory) {
+    onSchedule(*context, *session_factory);
   }
+  virtual void onSchedule(ProcessContext&, ProcessSessionFactory&) {}
 
   // Hook executed when onSchedule fails (throws). Configuration should be reset in this
   virtual void onUnSchedule() {
@@ -210,10 +206,6 @@ class Processor : public Connectable, public ConfigurableComponent, public state
 
   // Check all incoming connections for work
   bool isWorkAvailable() override;
-
-  void setStreamFactory(std::shared_ptr<minifi::io::StreamFactory> stream_factory) {
-    stream_factory_ = std::move(stream_factory);
-  }
 
   bool isThrottledByBackpressure() const;
 
@@ -227,21 +219,19 @@ class Processor : public Connectable, public ConfigurableComponent, public state
     return metrics_;
   }
 
-  static std::array<DynamicProperty, 0> dynamicProperties() { return {}; }
+  static constexpr auto DynamicProperties = std::array<DynamicProperty, 0>{};
 
-  static std::array<OutputAttribute, 0> outputAttributes() { return {}; }
+  static constexpr auto OutputAttributes = std::array<OutputAttributeReference, 0>{};
 
  protected:
   virtual void notifyStop() {
   }
 
-  std::shared_ptr<minifi::io::StreamFactory> stream_factory_;
-
   std::atomic<ScheduledState> state_;
 
-  std::atomic<std::chrono::nanoseconds> scheduling_period_nano_;
-  std::atomic<std::chrono::nanoseconds> run_duration_nano_;
-  std::atomic<std::chrono::milliseconds> yield_period_msec_;
+  std::atomic<std::chrono::steady_clock::duration> scheduling_period_;
+  std::atomic<std::chrono::steady_clock::duration> run_duration_;
+  std::atomic<std::chrono::steady_clock::duration> yield_period_;
 
   std::atomic<uint8_t> active_tasks_;
   std::atomic<bool> _triggerWhenEmpty;
@@ -251,7 +241,7 @@ class Processor : public Connectable, public ConfigurableComponent, public state
 
  private:
   mutable std::mutex mutex_;
-  std::atomic<std::chrono::time_point<std::chrono::system_clock>> yield_expiration_{};
+  std::atomic<std::chrono::steady_clock::time_point> yield_expiration_{};
 
   static std::mutex& getGraphMutex() {
     static std::mutex mutex{};

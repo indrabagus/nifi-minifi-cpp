@@ -26,6 +26,9 @@
 #include <utility>
 #include <vector>
 
+#include "ProcessContext.h"
+#include "PropertyDefinition.h"
+#include "PropertyType.h"
 #include "core/Property.h"
 #include "core/logging/LoggerConfiguration.h"
 #include "AzureBlobStorageSingleBlobProcessorBase.h"
@@ -41,14 +44,19 @@ class PutAzureBlobStorage final : public AzureBlobStorageSingleBlobProcessorBase
  public:
   EXTENSIONAPI static constexpr const char* Description = "Puts content into an Azure Storage Blob";
 
-  EXTENSIONAPI static const core::Property CreateContainer;
-  static auto properties() {
-    return utils::array_cat(AzureBlobStorageSingleBlobProcessorBase::properties(), std::array{CreateContainer});
-  }
+  EXTENSIONAPI static constexpr auto CreateContainer = core::PropertyDefinitionBuilder<>::createProperty("Create Container")
+    .withDescription("Specifies whether to check if the container exists and to automatically create it if it does not. "
+        "Permission to list containers is required. If false, this check is not made, but the Put operation will "
+        "fail if the container does not exist.")
+    .isRequired(true)
+    .withPropertyType(core::StandardPropertyTypes::BOOLEAN_TYPE)
+    .withDefaultValue("false")
+    .build();
+  EXTENSIONAPI static constexpr auto Properties = utils::array_cat(AzureBlobStorageSingleBlobProcessorBase::Properties, std::array<core::PropertyReference, 1>{CreateContainer});
 
-  EXTENSIONAPI static const core::Relationship Success;
-  EXTENSIONAPI static const core::Relationship Failure;
-  static auto relationships() { return std::array{Success, Failure}; }
+  EXTENSIONAPI static constexpr auto Success = core::RelationshipDefinition{"success", "All successfully processed FlowFiles are routed to this relationship"};
+  EXTENSIONAPI static constexpr auto Failure = core::RelationshipDefinition{"failure", "Unsuccessful operations will be transferred to the failure relationship"};
+  EXTENSIONAPI static constexpr auto Relationships = std::array{Success, Failure};
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
@@ -57,13 +65,13 @@ class PutAzureBlobStorage final : public AzureBlobStorageSingleBlobProcessorBase
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  explicit PutAzureBlobStorage(std::string name, const minifi::utils::Identifier& uuid = minifi::utils::Identifier())
-    : PutAzureBlobStorage(std::move(name), uuid, nullptr) {
+  explicit PutAzureBlobStorage(std::string_view name, const minifi::utils::Identifier& uuid = minifi::utils::Identifier())
+    : PutAzureBlobStorage(name, uuid, nullptr) {
   }
 
   void initialize() override;
-  void onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &session_factory) override;
-  void onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) override;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& session_factory) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
 
   class ReadCallback {
    public:
@@ -99,8 +107,8 @@ class PutAzureBlobStorage final : public AzureBlobStorageSingleBlobProcessorBase
  private:
   friend class ::AzureBlobStorageTestsFixture<PutAzureBlobStorage>;
 
-  explicit PutAzureBlobStorage(std::string name, const minifi::utils::Identifier& uuid, std::unique_ptr<storage::BlobStorageClient> blob_storage_client)
-    : AzureBlobStorageSingleBlobProcessorBase(std::move(name), uuid, core::logging::LoggerFactory<PutAzureBlobStorage>::getLogger(), std::move(blob_storage_client)) {
+  explicit PutAzureBlobStorage(std::string_view name, const minifi::utils::Identifier& uuid, std::unique_ptr<storage::BlobStorageClient> blob_storage_client)
+    : AzureBlobStorageSingleBlobProcessorBase(name, uuid, core::logging::LoggerFactory<PutAzureBlobStorage>::getLogger(), std::move(blob_storage_client)) {
   }
 
   std::optional<storage::PutAzureBlobStorageParameters> buildPutAzureBlobStorageParameters(core::ProcessContext &context, const std::shared_ptr<core::FlowFile> &flow_file);

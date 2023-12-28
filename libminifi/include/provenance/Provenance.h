@@ -152,7 +152,7 @@ class ProvenanceEventRecord : public core::SerializableComponent {
   ProvenanceEventRecord(ProvenanceEventType event, std::string componentId, std::string componentType);
 
   ProvenanceEventRecord()
-      : core::SerializableComponent(core::getClassName<ProvenanceEventRecord>()) {
+      : core::SerializableComponent(core::className<ProvenanceEventRecord>()) {
     _eventTime = std::chrono::system_clock::now();
   }
 
@@ -348,9 +348,9 @@ class ProvenanceEventRecord : public core::SerializableComponent {
   std::string _componentId;
   std::string _componentType;
   // Size in bytes of the data corresponding to this flow file
-  uint64_t _size;
+  uint64_t _size = 0;
   utils::Identifier flow_uuid_;
-  uint64_t _offset;
+  uint64_t _offset = 0;
   std::string _contentFullPath;
   std::map<std::string, std::string> _attributes;
   // UUID string for all parents

@@ -1,7 +1,4 @@
 /**
- * @file PutFile.h
- * PutFile class declaration
- *
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -26,51 +23,82 @@
 #include "FlowFileRecord.h"
 #include "core/Processor.h"
 #include "core/ProcessSession.h"
+#include "core/PropertyDefinition.h"
+#include "core/PropertyDefinitionBuilder.h"
+#include "core/PropertyType.h"
+#include "core/RelationshipDefinition.h"
 #include "core/Core.h"
 #include "core/logging/LoggerConfiguration.h"
 #include "utils/Id.h"
 #include "utils/Export.h"
+#include "utils/Enum.h"
 
 namespace org::apache::nifi::minifi::processors {
 
 class PutFile : public core::Processor {
  public:
-  static constexpr char const *CONFLICT_RESOLUTION_STRATEGY_REPLACE = "replace";
-  static constexpr char const *CONFLICT_RESOLUTION_STRATEGY_IGNORE = "ignore";
-  static constexpr char const *CONFLICT_RESOLUTION_STRATEGY_FAIL = "fail";
-
-  explicit PutFile(std::string name,  const utils::Identifier& uuid = {})
-      : core::Processor(std::move(name), uuid) {
+  explicit PutFile(std::string_view name,  const utils::Identifier& uuid = {})
+      : core::Processor(name, uuid) {
   }
 
   ~PutFile() override = default;
 
+  enum class FileExistsResolutionStrategy {
+    fail,
+    replace,
+    ignore
+  };
+
   EXTENSIONAPI static constexpr const char* Description = "Writes the contents of a FlowFile to the local file system";
 
 #ifndef WIN32
-  EXTENSIONAPI static const core::Property Permissions;
-  EXTENSIONAPI static const core::Property DirectoryPermissions;
+  EXTENSIONAPI static constexpr auto Permissions = core::PropertyDefinitionBuilder<>::createProperty("Permissions")
+      .withDescription("Sets the permissions on the output file to the value of this attribute. "
+          "Must be an octal number (e.g. 644 or 0755). Not supported on Windows systems.")
+      .build();
+  EXTENSIONAPI static constexpr auto DirectoryPermissions = core::PropertyDefinitionBuilder<>::createProperty("Directory Permissions")
+      .withDescription("Sets the permissions on the directories being created if 'Create Missing Directories' property is set. "
+          "Must be an octal number (e.g. 644 or 0755). Not supported on Windows systems.")
+      .build();
 #endif
-  EXTENSIONAPI static const core::Property Directory;
-  EXTENSIONAPI static const core::Property ConflictResolution;
-  EXTENSIONAPI static const core::Property CreateDirs;
-  EXTENSIONAPI static const core::Property MaxDestFiles;
-  static auto properties() {
-    return std::array{
+  EXTENSIONAPI static constexpr auto Directory = core::PropertyDefinitionBuilder<>::createProperty("Directory")
+      .withDescription("The output directory to which to put files")
+      .supportsExpressionLanguage(true)
+      .withDefaultValue(".")
+      .build();
+  EXTENSIONAPI static constexpr auto ConflictResolution = core::PropertyDefinitionBuilder<magic_enum::enum_count<FileExistsResolutionStrategy>()>::createProperty("Conflict Resolution Strategy")
+      .withDescription("Indicates what should happen when a file with the same name already exists in the output directory")
+      .withDefaultValue(magic_enum::enum_name(FileExistsResolutionStrategy::fail))
+      .withAllowedValues(magic_enum::enum_names<FileExistsResolutionStrategy>())
+      .build();
+  EXTENSIONAPI static constexpr auto CreateDirs = core::PropertyDefinitionBuilder<0, 1>::createProperty("Create Missing Directories")
+      .withDescription("If true, then missing destination directories will be created. If false, flowfiles are penalized and sent to failure.")
+      .withDefaultValue("true")
+      .isRequired(true)
+      .withDependentProperties({Directory.name})
+      .build();
+  EXTENSIONAPI static constexpr auto MaxDestFiles = core::PropertyDefinitionBuilder<>::createProperty("Maximum File Count")
+      .withDescription("Specifies the maximum number of files that can exist in the output directory")
+      .withPropertyType(core::StandardPropertyTypes::INTEGER_TYPE)
+      .withDefaultValue("-1")
+      .build();
+  EXTENSIONAPI static constexpr auto Properties =
 #ifndef WIN32
-      Permissions,
-      DirectoryPermissions,
+      std::array<core::PropertyReference, 6>{
+          Permissions,
+          DirectoryPermissions,
+#else
+      std::array<core::PropertyReference, 4>{
 #endif
-      Directory,
-      ConflictResolution,
-      CreateDirs,
-      MaxDestFiles
-    };
-  }
+          Directory,
+          ConflictResolution,
+          CreateDirs,
+          MaxDestFiles
+      };
 
-  EXTENSIONAPI static const core::Relationship Success;
-  EXTENSIONAPI static const core::Relationship Failure;
-  static auto relationships() { return std::array{Success, Failure}; }
+  EXTENSIONAPI static constexpr auto Success = core::RelationshipDefinition{"success", "All files are routed to success"};
+  EXTENSIONAPI static constexpr auto Failure = core::RelationshipDefinition{"failure", "Failed files (conflict, write failure, etc.) are transferred to failure"};
+  EXTENSIONAPI static constexpr auto Relationships = std::array{Success, Failure};
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
@@ -79,42 +107,19 @@ class PutFile : public core::Processor {
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  void onSchedule(core::ProcessContext *context, core::ProcessSessionFactory *sessionFactory) override;
-  void onTrigger(core::ProcessContext *context, core::ProcessSession *session) override;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& session_factory) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
   void initialize() override;
 
-  class ReadCallback {
-   public:
-    ReadCallback(std::filesystem::path tmp_file, std::filesystem::path dest_file);
-    ~ReadCallback();
-    int64_t operator()(const std::shared_ptr<io::InputStream>& stream);
-    bool commit();
-
-   private:
-    std::shared_ptr<core::logging::Logger> logger_{ core::logging::LoggerFactory<PutFile::ReadCallback>::getLogger() };
-    bool write_succeeded_ = false;
-    std::filesystem::path tmp_file_;
-    std::filesystem::path dest_file_;
-  };
-
-  /**
-   * Generate a safe (universally-unique) temporary filename on the same partition
-   *
-   * @param filename from which to generate temporary write file path
-   * @return
-   */
-  static std::filesystem::path tmpWritePath(const std::filesystem::path& filename, const std::filesystem::path& directory);
-
  private:
-  std::string conflict_resolution_;
+  FileExistsResolutionStrategy conflict_resolution_strategy_ = FileExistsResolutionStrategy::fail;
   bool try_mkdirs_ = true;
-  int64_t max_dest_files_ = -1;
+  std::optional<uint64_t> max_dest_files_ = std::nullopt;
 
-  bool putFile(core::ProcessSession *session,
-               const std::shared_ptr<core::FlowFile>& flowFile,
-               const std::filesystem::path& tmpFile,
-               const std::filesystem::path& destFile,
-               const std::filesystem::path& destDir);
+  void prepareDirectory(const std::filesystem::path& directory_path) const;
+  bool directoryIsFull(const std::filesystem::path& directory) const;
+  std::optional<std::filesystem::path> getDestinationPath(core::ProcessContext& context, const std::shared_ptr<core::FlowFile>& flow_file);
+  void putFile(core::ProcessSession& session, const std::shared_ptr<core::FlowFile>& flow_file, const std::filesystem::path& dest_file);
   std::shared_ptr<core::logging::Logger> logger_ = core::logging::LoggerFactory<PutFile>::getLogger(uuid_);
   static std::shared_ptr<utils::IdGenerator> id_generator_;
 
@@ -130,9 +135,9 @@ class PutFile : public core::Processor {
   };
   FilePermissions permissions_;
   FilePermissions directory_permissions_;
-  void getPermissions(core::ProcessContext *context);
-  void getDirectoryPermissions(core::ProcessContext *context);
+  void getPermissions(const core::ProcessContext& context);
+  void getDirectoryPermissions(const core::ProcessContext& context);
 #endif
-};
+};  // NOLINT the linter gets confused by the '{'s inside #ifdef's
 
 }  // namespace org::apache::nifi::minifi::processors

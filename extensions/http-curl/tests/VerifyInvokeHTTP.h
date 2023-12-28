@@ -17,6 +17,7 @@
  */
 #pragma once
 
+#include "PropertyDefinition.h"
 #undef NDEBUG
 
 #include <memory>
@@ -24,7 +25,6 @@
 #include <string>
 
 #include "TestBase.h"
-#include "Catch.h"
 #include "HTTPClient.h"
 #include "InvokeHTTP.h"
 #include "processors/LogAttribute.h"
@@ -62,10 +62,10 @@ class VerifyInvokeHTTP : public HTTPIntegrationBase {
 
   void setProperties(const std::shared_ptr<core::Processor>& proc) {
     std::string url = scheme + "://localhost:" + getWebPort() + *path_;
-    proc->setProperty(minifi::processors::InvokeHTTP::URL.getName(), url);
+    proc->setProperty(minifi::processors::InvokeHTTP::URL, url);
   }
 
-  void setProperty(const std::string& property, const std::string& value) {
+  void setProperty(const core::PropertyReference& property, const std::string& value) {
     bool executed = false;
     flowController_->executeOnComponent("InvokeHTTP", [&](minifi::state::StateController& component) {
       const auto processorController = dynamic_cast<minifi::state::ProcessorController*>(&component);
@@ -90,13 +90,12 @@ class VerifyInvokeHTTP : public HTTPIntegrationBase {
     configuration->set(minifi::Configure::nifi_c2_agent_heartbeat_period, "200");
     std::shared_ptr<core::ContentRepository> content_repo = std::make_shared<core::repository::VolatileContentRepository>();
     content_repo->initialize(configuration);
-    std::shared_ptr<minifi::io::StreamFactory> stream_factory = minifi::io::StreamFactory::getInstance(configuration);
-    auto yaml_ptr = std::make_unique<core::YamlConfiguration>(core::ConfigurationContext{test_repo, content_repo, stream_factory, configuration, flow_yml_path});
+    auto yaml_ptr = std::make_unique<core::YamlConfiguration>(core::ConfigurationContext{test_repo, content_repo, configuration, flow_yml_path});
     flowController_ = std::make_unique<minifi::FlowController>(test_repo, test_flow_repo, configuration, std::move(yaml_ptr), content_repo);
     flowController_->load();
 
     std::string url = scheme + "://localhost:" + getWebPort() + *path_;
-    setProperty(minifi::processors::InvokeHTTP::URL.getName(), url);
+    setProperty(minifi::processors::InvokeHTTP::URL, url);
   }
 
   void run(const std::optional<std::filesystem::path>& flow_yml_path = {}, const std::optional<std::filesystem::path>& = {}) override {

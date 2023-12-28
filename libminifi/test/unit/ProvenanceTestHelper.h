@@ -65,8 +65,7 @@ class TestRepositoryBase : public T_BaseRepository {
 
   bool MultiPut(const std::vector<std::pair<std::string, std::unique_ptr<org::apache::nifi::minifi::io::BufferStream>>>& data) override {
     for (const auto& item : data) {
-      const auto buf = item.second->getBuffer().as_span<const uint8_t>();
-      if (!Put(item.first, buf.data(), buf.size())) {
+      if (!Put(item.first, reinterpret_cast<const uint8_t*>(item.second->getBuffer().data()), item.second->size())) {
         return false;
       }
     }
@@ -174,6 +173,16 @@ class TestThreadedRepository : public TestRepositoryBase<org::apache::nifi::mini
   }
 
   std::thread thread_;
+};
+
+class TestRocksDbRepository : public TestThreadedRepository {
+ public:
+  std::optional<RocksDbStats> getRocksDbStats() const override {
+    return RocksDbStats {
+      .table_readers_size = 100,
+      .all_memory_tables_size = 200
+    };
+  }
 };
 
 class TestFlowRepository : public org::apache::nifi::minifi::core::ThreadedRepository {

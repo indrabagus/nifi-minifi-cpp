@@ -30,6 +30,7 @@
 #include "ArchiveMetadata.h"
 #include "core/Processor.h"
 #include "core/ProcessSession.h"
+#include "core/RelationshipDefinition.h"
 #include "core/Core.h"
 #include "core/logging/LoggerConfiguration.h"
 
@@ -39,17 +40,17 @@ using core::logging::Logger;
 
 class UnfocusArchiveEntry : public core::Processor {
  public:
-  explicit UnfocusArchiveEntry(std::string name, const utils::Identifier& uuid = {})
-      : core::Processor(std::move(name), uuid) {
+  explicit UnfocusArchiveEntry(std::string_view name, const utils::Identifier& uuid = {})
+      : core::Processor(name, uuid) {
   }
   ~UnfocusArchiveEntry() override = default;
 
   EXTENSIONAPI static constexpr const char* Description = "Restores a FlowFile which has had an archive entry focused via FocusArchiveEntry to its original state.";
 
-  static auto properties() { return std::array<core::Property, 0>{}; }
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 0>{};
 
-  EXTENSIONAPI static const core::Relationship Success;
-  static auto relationships() { return std::array{Success}; }
+  EXTENSIONAPI static constexpr auto Success = core::RelationshipDefinition{"success", "success operational on the flow record"};
+  EXTENSIONAPI static constexpr auto Relationships = std::array{Success};
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
@@ -58,7 +59,7 @@ class UnfocusArchiveEntry : public core::Processor {
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  void onTrigger(core::ProcessContext *context, core::ProcessSession *session) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
   void initialize() override;
 
   //! Write callback for reconstituting lensed archive into flow file content

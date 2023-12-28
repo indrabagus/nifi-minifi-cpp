@@ -28,15 +28,14 @@
 #include "core/Processor.h"
 #include "core/ProcessSession.h"
 #include "RemoteProcessorGroupPort.h"
-#include "io/StreamFactory.h"
 #include "core/logging/LoggerFactory.h"
 
 namespace org::apache::nifi::minifi::core::reporting {
 
 class SiteToSiteProvenanceReportingTask : public minifi::RemoteProcessorGroupPort {
  public:
-  SiteToSiteProvenanceReportingTask(const std::shared_ptr<io::StreamFactory> &stream_factory, std::shared_ptr<Configure> configure)
-      : minifi::RemoteProcessorGroupPort(stream_factory, ReportTaskName, "", std::move(configure)),
+  explicit SiteToSiteProvenanceReportingTask(std::shared_ptr<Configure> configure)
+      : minifi::RemoteProcessorGroupPort(ReportTaskName, "", std::move(configure)),
         logger_(logging::LoggerFactory<SiteToSiteProvenanceReportingTask>::getLogger()) {
     this->setTriggerWhenEmpty(true);
     batch_size_ = 100;
@@ -47,10 +46,10 @@ class SiteToSiteProvenanceReportingTask : public minifi::RemoteProcessorGroupPor
   static constexpr char const* ReportTaskName = "SiteToSiteProvenanceReportingTask";
   static const char *ProvenanceAppStr;
 
-  static void getJsonReport(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session, std::vector<std::shared_ptr<core::SerializableComponent>> &records, std::string &report); // NOLINT
+  static void getJsonReport(core::ProcessContext& context, core::ProcessSession& session, std::vector<std::shared_ptr<core::SerializableComponent>> &records, std::string &report); // NOLINT
 
-  void onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &sessionFactory) override;
-  void onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) override;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& session_factory) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
 
   void initialize() override;
 

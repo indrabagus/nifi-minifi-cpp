@@ -26,65 +26,27 @@
 #include "utils/ProcessorConfigUtils.h"
 #include "range/v3/algorithm/find.hpp"
 #include "core/ProcessSession.h"
-#include "core/PropertyBuilder.h"
 #include "core/Resource.h"
 
 namespace org::apache::nifi::minifi::processors {
 
-const core::Property AttributesToJSON::AttributesList(
-  core::PropertyBuilder::createProperty("Attributes List")
-    ->withDescription("Comma separated list of attributes to be included in the resulting JSON. "
-                      "If this value is left empty then all existing Attributes will be included. This list of attributes is case sensitive. "
-                      "If an attribute specified in the list is not found it will be be emitted to the resulting JSON with an empty string or NULL value.")
-    ->build());
-
-const core::Property AttributesToJSON::AttributesRegularExpression(
-  core::PropertyBuilder::createProperty("Attributes Regular Expression")
-    ->withDescription("Regular expression that will be evaluated against the flow file attributes to select the matching attributes. "
-                      "Both the matching attributes and the selected attributes from the Attributes List property will be written in the resulting JSON.")
-    ->build());
-
-const core::Property AttributesToJSON::Destination(
-  core::PropertyBuilder::createProperty("Destination")
-    ->withDescription("Control if JSON value is written as a new flowfile attribute 'JSONAttributes' or written in the flowfile content. "
-                      "Writing to flowfile content will overwrite any existing flowfile content.")
-    ->isRequired(true)
-    ->withDefaultValue<std::string>(toString(WriteDestination::FLOWFILE_ATTRIBUTE))
-    ->withAllowableValues<std::string>(WriteDestination::values())
-    ->build());
-
-const core::Property AttributesToJSON::IncludeCoreAttributes(
-  core::PropertyBuilder::createProperty("Include Core Attributes")
-    ->withDescription("Determines if the FlowFile core attributes which are contained in every FlowFile should be included in the final JSON value generated.")
-    ->isRequired(true)
-    ->withDefaultValue<bool>(true)
-    ->build());
-
-const core::Property AttributesToJSON::NullValue(
-  core::PropertyBuilder::createProperty("Null Value")
-    ->withDescription("If true a non existing selected attribute will be NULL in the resulting JSON. If false an empty string will be placed in the JSON.")
-    ->isRequired(true)
-    ->withDefaultValue<bool>(false)
-    ->build());
-
-const core::Relationship AttributesToJSON::Success("success", "All FlowFiles received are routed to success");
-
 void AttributesToJSON::initialize() {
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
-void AttributesToJSON::onSchedule(core::ProcessContext* context, core::ProcessSessionFactory* /*sessionFactory*/) {
+void AttributesToJSON::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory&) {
   std::string value;
-  if (context->getProperty(AttributesList.getName(), value) && !value.empty()) {
+  if (context.getProperty(AttributesList, value) && !value.empty()) {
     attribute_list_ = utils::StringUtils::splitAndTrimRemovingEmpty(value, ",");
   }
-  if (context->getProperty(AttributesRegularExpression.getName(), value) && !value.empty()) {
+  if (context.getProperty(AttributesRegularExpression, value) && !value.empty()) {
     attributes_regular_expression_ = utils::Regex(value);
   }
-  write_destination_ = WriteDestination::parse(utils::parsePropertyWithAllowableValuesOrThrow(*context, Destination.getName(), WriteDestination::values()).c_str());
-  context->getProperty(IncludeCoreAttributes.getName(), include_core_attributes_);
-  context->getProperty(NullValue.getName(), null_value_);
+  write_destination_ = utils::parseEnumProperty<attributes_to_json::WriteDestination>(context, Destination);
+
+  context.getProperty(IncludeCoreAttributes, include_core_attributes_);
+  context.getProperty(NullValue, null_value_);
 }
 
 bool AttributesToJSON::isCoreAttributeToBeFiltered(const std::string& attribute) const {
@@ -145,21 +107,21 @@ std::string AttributesToJSON::buildAttributeJsonData(const core::FlowFile::Attri
   return buffer.GetString();
 }
 
-void AttributesToJSON::onTrigger(core::ProcessContext* /*context*/, core::ProcessSession* session) {
-  auto flow_file = session->get();
+void AttributesToJSON::onTrigger(core::ProcessContext&, core::ProcessSession& session) {
+  auto flow_file = session.get();
   if (!flow_file) {
     return;
   }
 
   auto json_data = buildAttributeJsonData(*flow_file->getAttributesPtr());
-  if (write_destination_ == WriteDestination::FLOWFILE_ATTRIBUTE) {
-    logger_->log_debug("Writing the following attribute data to JSONAttributes attribute: %s", json_data);
-    session->putAttribute(flow_file, "JSONAttributes", json_data);
-    session->transfer(flow_file, Success);
+  if (write_destination_ == attributes_to_json::WriteDestination::FLOWFILE_ATTRIBUTE) {
+    logger_->log_debug("Writing the following attribute data to JSONAttributes attribute: {}", json_data);
+    session.putAttribute(flow_file, "JSONAttributes", json_data);
+    session.transfer(flow_file, Success);
   } else {
-    logger_->log_debug("Writing the following attribute data to flowfile: %s", json_data);
-    session->writeBuffer(flow_file, json_data);
-    session->transfer(flow_file, Success);
+    logger_->log_debug("Writing the following attribute data to flowfile: {}", json_data);
+    session.writeBuffer(flow_file, json_data);
+    session.transfer(flow_file, Success);
   }
 }
 

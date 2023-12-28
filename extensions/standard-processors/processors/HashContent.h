@@ -21,8 +21,9 @@
 
 #ifdef OPENSSL_SUPPORT
 
-#include <openssl/md5.h>
+#include <openssl/evp.h>
 #include <openssl/sha.h>
+#include <openssl/md5.h>
 
 #include <array>
 #include <cstdint>
@@ -35,6 +36,9 @@
 
 #include "FlowFileRecord.h"
 #include "core/Processor.h"
+#include "core/PropertyDefinition.h"
+#include "core/PropertyDefinitionBuilder.h"
+#include "core/RelationshipDefinition.h"
 #include "core/ProcessSession.h"
 #include "utils/StringUtils.h"
 #include "utils/Export.h"
@@ -49,21 +53,24 @@ namespace { // NOLINT
     HashReturnType ret_val;
     ret_val.second = 0;
     std::array<std::byte, HASH_BUFFER_SIZE> buffer{};
-    MD5_CTX context;
-    MD5_Init(&context);
+    EVP_MD_CTX *context = EVP_MD_CTX_new();
+    const auto guard = gsl::finally([&context]() {
+      EVP_MD_CTX_free(context);
+    });
+    EVP_DigestInit_ex(context, EVP_md5(), nullptr);
 
     size_t ret = 0;
     do {
       ret = stream->read(buffer);
       if (ret > 0) {
-        MD5_Update(&context, buffer.data(), ret);
+        EVP_DigestUpdate(context, buffer.data(), ret);
         ret_val.second += gsl::narrow<int64_t>(ret);
       }
     } while (ret > 0);
 
     if (ret_val.second > 0) {
       std::array<std::byte, MD5_DIGEST_LENGTH> digest{};
-      MD5_Final(reinterpret_cast<unsigned char*>(digest.data()), &context);
+      EVP_DigestFinal_ex(context, reinterpret_cast<unsigned char*>(digest.data()), nullptr);
       ret_val.first = org::apache::nifi::minifi::utils::StringUtils::to_hex(digest, true /*uppercase*/);
     }
     return ret_val;
@@ -73,21 +80,24 @@ namespace { // NOLINT
     HashReturnType ret_val;
     ret_val.second = 0;
     std::array<std::byte, HASH_BUFFER_SIZE> buffer{};
-    SHA_CTX context;
-    SHA1_Init(&context);
+    EVP_MD_CTX *context = EVP_MD_CTX_new();
+    const auto guard = gsl::finally([&context]() {
+      EVP_MD_CTX_free(context);
+    });
+    EVP_DigestInit_ex(context, EVP_sha1(), nullptr);
 
     size_t ret = 0;
     do {
       ret = stream->read(buffer);
       if (ret > 0) {
-        SHA1_Update(&context, buffer.data(), ret);
+        EVP_DigestUpdate(context, buffer.data(), ret);
         ret_val.second += gsl::narrow<int64_t>(ret);
       }
     } while (ret > 0);
 
     if (ret_val.second > 0) {
       std::array<std::byte, SHA_DIGEST_LENGTH> digest{};
-      SHA1_Final(reinterpret_cast<unsigned char*>(digest.data()), &context);
+      EVP_DigestFinal_ex(context, reinterpret_cast<unsigned char*>(digest.data()), nullptr);
       ret_val.first = org::apache::nifi::minifi::utils::StringUtils::to_hex(digest, true /*uppercase*/);
     }
     return ret_val;
@@ -97,21 +107,24 @@ namespace { // NOLINT
     HashReturnType ret_val;
     ret_val.second = 0;
     std::array<std::byte, HASH_BUFFER_SIZE> buffer{};
-    SHA256_CTX context;
-    SHA256_Init(&context);
+    EVP_MD_CTX *context = EVP_MD_CTX_new();
+    const auto guard = gsl::finally([&context]() {
+      EVP_MD_CTX_free(context);
+    });
+    EVP_DigestInit_ex(context, EVP_sha256(), nullptr);
 
     size_t ret;
     do {
       ret = stream->read(buffer);
       if (ret > 0) {
-        SHA256_Update(&context, buffer.data(), ret);
+        EVP_DigestUpdate(context, buffer.data(), ret);
         ret_val.second += gsl::narrow<int64_t>(ret);
       }
     } while (ret > 0);
 
     if (ret_val.second > 0) {
       std::array<std::byte, SHA256_DIGEST_LENGTH> digest{};
-      SHA256_Final(reinterpret_cast<unsigned char*>(digest.data()), &context);
+      EVP_DigestFinal_ex(context, reinterpret_cast<unsigned char*>(digest.data()), nullptr);
       ret_val.first = org::apache::nifi::minifi::utils::StringUtils::to_hex(digest, true /*uppercase*/);
     }
     return ret_val;
@@ -126,27 +139,35 @@ static const std::map<std::string, const std::function<HashReturnType(const std:
 
 class HashContent : public core::Processor {
  public:
-  explicit HashContent(std::string name,  const utils::Identifier& uuid = {})
-      : Processor(std::move(name), uuid) {
+  explicit HashContent(std::string_view name,  const utils::Identifier& uuid = {})
+      : Processor(name, uuid) {
   }
 
   EXTENSIONAPI static constexpr const char* Description = "HashContent calculates the checksum of the content of the flowfile and adds it as an attribute. "
       "Configuration options exist to select hashing algorithm and set the name of the attribute.";
 
-  EXTENSIONAPI static const core::Property HashAttribute;
-  EXTENSIONAPI static const core::Property HashAlgorithm;
-  EXTENSIONAPI static const core::Property FailOnEmpty;
-  static auto properties() {
-    return std::array{
+  EXTENSIONAPI static constexpr auto HashAttribute = core::PropertyDefinitionBuilder<>::createProperty("Hash Attribute")
+      .withDescription("Attribute to store checksum to")
+      .withDefaultValue("Checksum")
+      .build();
+  EXTENSIONAPI static constexpr auto HashAlgorithm = core::PropertyDefinitionBuilder<>::createProperty("Hash Algorithm")
+      .withDescription("Name of the algorithm used to generate checksum")
+      .withDefaultValue("SHA256")
+      .build();
+  EXTENSIONAPI static constexpr auto FailOnEmpty = core::PropertyDefinitionBuilder<>::createProperty("Fail on empty")
+      .withDescription("Route to failure relationship in case of empty content")
+      .withDefaultValue("false")
+      .build();
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 3>{
       HashAttribute,
       HashAlgorithm,
       FailOnEmpty
-    };
-  }
+  };
 
-  EXTENSIONAPI static const core::Relationship Success;
-  EXTENSIONAPI static const core::Relationship Failure;
-  static auto relationships() { return std::array{Success, Failure}; }
+
+  EXTENSIONAPI static constexpr auto Success = core::RelationshipDefinition{"success", "success operational on the flow record"};
+  EXTENSIONAPI static constexpr auto Failure = core::RelationshipDefinition{"failure", "failure operational on the flow record"};
+  EXTENSIONAPI static constexpr auto Relationships = std::array{Success, Failure};
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
@@ -155,8 +176,8 @@ class HashContent : public core::Processor {
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  void onSchedule(core::ProcessContext *context, core::ProcessSessionFactory *sessionFactory) override;
-  void onTrigger(core::ProcessContext *context, core::ProcessSession *session) override;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& session_factory) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
   void initialize() override;
 
  private:

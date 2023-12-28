@@ -27,10 +27,11 @@
 #include "../Catch.h"
 #include "io/BaseStream.h"
 #include "io/StreamSlice.h"
+#include "utils/span.h"
 
 TEST_CASE("TestReadData", "[testread]") {
   auto base = std::make_shared<minifi::io::BufferStream>();
-  base->write((const uint8_t*)"\x01\x02\x03\x04\x05\x06\x07\x08", 8);
+  base->write(reinterpret_cast<const uint8_t*>("\x01\x02\x03\x04\x05\x06\x07\x08"), 8);
   uint64_t c = 0;
   REQUIRE(8 == base->read(c));
   REQUIRE(c == 0x0102030405060708);
@@ -74,23 +75,23 @@ TEST_CASE("TestRead4", "[testread]") {
 
 TEST_CASE("TestWrite1", "[testwrite]") {
   auto base = std::make_shared<minifi::io::BufferStream>();
-  base->write((uint64_t)0x0102030405060708);
+  base->write(static_cast<uint64_t>(0x0102030405060708));
   std::string bytes(8, '\0');
-  REQUIRE(8 == base->read(gsl::make_span(bytes).as_span<std::byte>()));
+  REQUIRE(8 == base->read(as_writable_bytes(std::span(bytes))));
   REQUIRE(bytes == "\x01\x02\x03\x04\x05\x06\x07\x08");
 }
 
 TEST_CASE("InvalidStreamSliceTest", "[teststreamslice]") {
   std::shared_ptr<minifi::io::BaseStream> base = std::make_shared<minifi::io::BufferStream>();
-  base->write((const uint8_t*)"\x01\x02\x03\x04\x05\x06\x07\x08", 8);
+  base->write(reinterpret_cast<const uint8_t*>("\x01\x02\x03\x04\x05\x06\x07\x08"), 8);
   auto input_stream = std::static_pointer_cast<minifi::io::InputStream>(base);
-  REQUIRE_THROWS_WITH(std::make_shared<minifi::io::StreamSlice>(input_stream, 0, 9), "StreamSlice is bigger than the Stream");
-  REQUIRE_THROWS_WITH(std::make_shared<minifi::io::StreamSlice>(input_stream, 7, 3), "StreamSlice is bigger than the Stream");
+  REQUIRE_THROWS_WITH(std::make_shared<minifi::io::StreamSlice>(input_stream, 0, 9), "StreamSlice is bigger than the Stream, Stream size: 8, StreamSlice size: 9, offset: 0");
+  REQUIRE_THROWS_WITH(std::make_shared<minifi::io::StreamSlice>(input_stream, 7, 3), "StreamSlice is bigger than the Stream, Stream size: 8, StreamSlice size: 3, offset: 7");
 }
 
 TEST_CASE("StreamSliceTest1", "[teststreamslice]") {
   std::shared_ptr<minifi::io::BaseStream> base = std::make_shared<minifi::io::BufferStream>();
-  base->write((const uint8_t*)"\x01\x02\x03\x04\x05\x06\x07\x08", 8);
+  base->write(reinterpret_cast<const uint8_t*>("\x01\x02\x03\x04\x05\x06\x07\x08"), 8);
   auto input_stream = std::static_pointer_cast<minifi::io::InputStream>(base);
   std::shared_ptr<minifi::io::InputStream> stream_slice = std::make_shared<minifi::io::StreamSlice>(input_stream, 2, 4);
   std::vector<std::byte> buffer;
@@ -102,5 +103,5 @@ TEST_CASE("StreamSliceTest1", "[teststreamslice]") {
   REQUIRE(stream_slice->read(buffer2) == 4);
   buffer2.resize(4);
   REQUIRE(buffer == buffer2);
-  REQUIRE(utils::span_to<std::vector>(gsl::make_span(buffer).as_span<uint8_t>()) == std::vector<uint8_t>({3, 4, 5, 6}));
+  REQUIRE(utils::span_to<std::vector>(utils::as_span<uint8_t>(std::span(buffer))) == std::vector<uint8_t>({3, 4, 5, 6}));
 }

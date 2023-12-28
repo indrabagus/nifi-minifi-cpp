@@ -70,7 +70,7 @@ TEST_CASE("getDateTimeStr() works correctly", "[getDateTimeStr]") {
 }
 
 TEST_CASE("getRFC2616Format() works correctly", "[getRFC2616Format]") {
-  using namespace date::literals;
+  using namespace date::literals;  // NOLINT(google-build-using-namespace)
   using namespace std::literals::chrono_literals;
   using date::year_month_day;
   using date::sys_days;
@@ -89,7 +89,7 @@ TEST_CASE("Test time conversion", "[testtimeconversion]") {
 }
 
 TEST_CASE("Test DateTime Conversion", "[testDateTime]") {
-  using namespace date::literals;
+  using namespace date::literals;  // NOLINT(google-build-using-namespace)
   using namespace std::literals::chrono_literals;
   using date::year_month_day;
   using date::sys_days;
@@ -110,18 +110,39 @@ TEST_CASE("Test DateTime Conversion", "[testDateTime]") {
 }
 
 TEST_CASE("Test system_clock epoch", "[systemclockepoch]") {
-  using namespace std::chrono;
-  time_point<system_clock> epoch;
-  time_point<system_clock> unix_epoch_plus_3e9_sec = date::sys_days(date::January / 24 / 2065) + 5h + 20min;
+  std::chrono::time_point<std::chrono::system_clock> epoch;
+  std::chrono::time_point<std::chrono::system_clock> unix_epoch_plus_3e9_sec = date::sys_days(date::January / 24 / 2065) + 5h + 20min;
   REQUIRE(epoch.time_since_epoch() == 0s);
   REQUIRE(unix_epoch_plus_3e9_sec.time_since_epoch() == 3000000000s);
 }
 
+#ifdef WIN32
+TEST_CASE("Test windows file_clock duration period and epoch") {
+  static_assert(std::ratio_equal_v<std::chrono::file_clock::duration::period, std::ratio<1, 10000000>>, "file_clock duration tick period must be 100 nanoseconds");
+  auto file_clock_epoch = std::chrono::file_clock::time_point{};
+  auto file_clock_epoch_as_sys_time = utils::file::to_sys(file_clock_epoch);
+  std::chrono::system_clock::time_point expected_windows_file_epoch = date::sys_days(date::January / 1 / 1601);
+  CHECK(file_clock_epoch_as_sys_time == expected_windows_file_epoch);
+}
+
+TEST_CASE("Test windows FILETIME epoch") {
+  SYSTEMTIME system_time;
+  FILETIME file_time{.dwLowDateTime = 0, .dwHighDateTime = 0};
+  FileTimeToSystemTime(&file_time, &system_time);
+  CHECK(system_time.wYear == 1601);
+  CHECK(system_time.wMonth == 1);
+  CHECK(system_time.wDay == 1);
+  CHECK(system_time.wHour == 0);
+  CHECK(system_time.wMinute == 0);
+  CHECK(system_time.wSecond == 0);
+  CHECK(system_time.wMilliseconds == 0);
+}
+#endif
+
 TEST_CASE("Test clock resolutions", "[clockresolutiontests]") {
-  using namespace std::chrono;
-  CHECK(std::is_constructible<system_clock::duration, std::chrono::microseconds>::value);  // The resolution of the system_clock is at least microseconds
-  CHECK(std::is_constructible<steady_clock::duration, std::chrono::microseconds>::value);  // The resolution of the steady_clock is at least microseconds
-  CHECK(std::is_constructible<high_resolution_clock::duration, std::chrono::nanoseconds>::value);  // The resolution of the high_resolution_clock is at least nanoseconds
+  CHECK(std::is_constructible<std::chrono::system_clock::duration, std::chrono::microseconds>::value);  // The resolution of the system_clock is at least microseconds
+  CHECK(std::is_constructible<std::chrono::steady_clock::duration, std::chrono::microseconds>::value);  // The resolution of the steady_clock is at least microseconds
+  CHECK(std::is_constructible<std::chrono::high_resolution_clock::duration, std::chrono::nanoseconds>::value);  // The resolution of the high_resolution_clock is at least nanoseconds
 }
 
 TEST_CASE("Test string to duration conversion", "[timedurationtests]") {
@@ -135,6 +156,7 @@ TEST_CASE("Test string to duration conversion", "[timedurationtests]") {
   CHECK(StringToDuration<std::chrono::seconds>("102             hours") == 102h);
   CHECK(StringToDuration<std::chrono::days>("102             hours") == std::chrono::days(4));
   CHECK(StringToDuration<std::chrono::milliseconds>("5 ns") == 0ms);
+  CHECK(StringToDuration<std::chrono::days>("2             weeks") == std::chrono::days(14));
 
   CHECK(StringToDuration<std::chrono::seconds>("1d") == std::chrono::days(1));
   CHECK(StringToDuration<std::chrono::seconds>("10 days") == std::chrono::days(10));
@@ -147,6 +169,11 @@ TEST_CASE("Test string to duration conversion", "[timedurationtests]") {
   CHECK(StringToDuration<std::chrono::seconds>("10 ms") == 0ms);
   CHECK(StringToDuration<std::chrono::seconds>("100 ns") == 0ns);
   CHECK(StringToDuration<std::chrono::seconds>("1 minute") == 1min);
+  CHECK(StringToDuration<std::chrono::seconds>("1 w") == std::chrono::weeks(1));
+  CHECK(StringToDuration<std::chrono::seconds>("3 weeks") == std::chrono::weeks(3));
+  CHECK(StringToDuration<std::chrono::seconds>("2 months") == std::chrono::months(2));
+  CHECK(StringToDuration<std::chrono::seconds>("1 y") == std::chrono::years(1));
+  CHECK(StringToDuration<std::chrono::seconds>("2 years") == std::chrono::years(2));
 
   CHECK(StringToDuration<std::chrono::nanoseconds>("1d") == std::chrono::days(1));
   CHECK(StringToDuration<std::chrono::nanoseconds>("10 days") == std::chrono::days(10));
@@ -159,9 +186,13 @@ TEST_CASE("Test string to duration conversion", "[timedurationtests]") {
   CHECK(StringToDuration<std::chrono::nanoseconds>("10 ms") == 10ms);
   CHECK(StringToDuration<std::chrono::nanoseconds>("100 ns") == 100ns);
   CHECK(StringToDuration<std::chrono::nanoseconds>("1 minute") == 1min);
+  CHECK(StringToDuration<std::chrono::nanoseconds>("1 w") == std::chrono::weeks(1));
+  CHECK(StringToDuration<std::chrono::nanoseconds>("3 weeks") == std::chrono::weeks(3));
+  CHECK(StringToDuration<std::chrono::nanoseconds>("2 months") == std::chrono::months(2));
+  CHECK(StringToDuration<std::chrono::nanoseconds>("1 y") == std::chrono::years(1));
+  CHECK(StringToDuration<std::chrono::nanoseconds>("2 years") == std::chrono::years(2));
 
   CHECK(StringToDuration<std::chrono::seconds>("5 apples") == std::nullopt);
-  CHECK(StringToDuration<std::chrono::seconds>("1 year") == std::nullopt);
 }
 
 namespace {
@@ -258,7 +289,7 @@ TEST_CASE("Test roundToNextSecond", "[roundingTests]") {
 TEST_CASE("Parse RFC3339", "[parseRfc3339]") {
   using date::sys_days;
   using org::apache::nifi::minifi::utils::timeutils::parseRfc3339;
-  using namespace date::literals;
+  using namespace date::literals;  // NOLINT(google-build-using-namespace)
   using namespace std::literals::chrono_literals;
 
   auto expected_second = sys_days(2023_y / 03 / 01) + 19h + 04min + 55s;

@@ -21,11 +21,11 @@ verify_enable_platform(){
     verify_gcc_enable "$feature"
 }
 add_os_flags() {
-    CC=gcc
-    CXX=g++
+    CC=${CC:-gcc}
+    CXX=${CXX:-g++}
     if [[ "$OS" = Ubuntu* && "$OS_MAJOR" -lt 22 ]]; then
-        CC=gcc-11
-        CXX=g++-11
+        CC=${CC:-gcc-11}
+        CXX=${CXX:-g++-11}
     fi
     export CC
     export CXX
@@ -33,22 +33,23 @@ add_os_flags() {
 }
 bootstrap_cmake(){
     ## on Ubuntu install the latest CMake
-    if [[ "$OS" = Ubuntu* && "$OS_MAJOR" -lt 22 ]]; then
-        echo "Adding KitWare CMake apt repository..."
-        sudo apt-get update && sudo apt-get install -y apt-transport-https ca-certificates gnupg software-properties-common wget
-        wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | sudo apt-key add -
-        sudo apt-add-repository "deb https://apt.kitware.com/ubuntu/ $(lsb_release -c --short) main" && sudo apt-get update
-    fi
+    echo "Adding KitWare CMake apt repository..."
+    sudo apt-get update && sudo apt-get install -y apt-transport-https ca-certificates gnupg software-properties-common wget
+    wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | sudo apt-key add -
+    sudo apt-add-repository "deb https://apt.kitware.com/ubuntu/ $(lsb_release -c --short) main" && sudo apt-get update
     sudo apt-get -y install cmake
 }
-build_deps(){
-    ## need to account for debian
+bootstrap_compiler() {
     compiler_pkgs="gcc g++"
     if [[ "$OS" = Ubuntu* && "$OS_MAJOR" -lt 22 ]]; then
         sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
         compiler_pkgs="gcc-11 g++-11"
     fi
-    COMMAND="sudo apt-get -y install cmake $compiler_pkgs zlib1g-dev libssl-dev uuid uuid-dev"
+    # shellcheck disable=SC2086
+    sudo apt-get -y install $compiler_pkgs
+}
+build_deps(){
+    COMMAND="sudo apt-get -y install zlib1g-dev libssl-dev uuid uuid-dev"
 
     export DEBIAN_FRONTEND=noninteractive
     INSTALLED=()
@@ -97,6 +98,8 @@ build_deps(){
                         INSTALLED+=("libgps-dev")
                     elif [ "$FOUND_VALUE" = "libarchive" ]; then
                         INSTALLED+=("liblzma-dev")
+                    elif [ "$FOUND_VALUE" = "opensslbuild" ]; then
+                        INSTALLED+=("perl")
                     fi
                 fi
             done

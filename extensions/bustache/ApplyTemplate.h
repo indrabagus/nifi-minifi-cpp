@@ -23,8 +23,10 @@
 #include <string>
 #include <utility>
 
+#include "PropertyDefinition.h"
 #include "core/Processor.h"
 #include "core/ProcessSession.h"
+#include "core/PropertyDefinitionBuilder.h"
 #include "core/FlowFile.h"
 
 namespace org::apache::nifi::minifi::processors {
@@ -40,11 +42,13 @@ class ApplyTemplate : public core::Processor {
   EXTENSIONAPI static constexpr const char* Description = "Applies the mustache template specified by the \"Template\" property and writes the output to the flow file content. "
     "FlowFile attributes are used as template parameters.";
 
-  EXTENSIONAPI static const core::Property Template;
-  static auto properties() { return std::array{Template}; }
+  EXTENSIONAPI static constexpr core::PropertyDefinition Template = core::PropertyDefinitionBuilder<>::createProperty("Template")
+      .withDescription("Path to the input mustache template file")
+      .build();
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 1>{Template};
 
-  EXTENSIONAPI static const core::Relationship Success;
-  static auto relationships() { return std::array{Success}; }
+  EXTENSIONAPI static constexpr core::RelationshipDefinition Success{"success", "success operational on the flow record"};
+  EXTENSIONAPI static constexpr auto Relationships = std::array{Success};
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
@@ -53,7 +57,7 @@ class ApplyTemplate : public core::Processor {
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  void onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
   void initialize() override;
 
  private:

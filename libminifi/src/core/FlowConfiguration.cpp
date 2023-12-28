@@ -29,10 +29,9 @@
 namespace org::apache::nifi::minifi::core {
 
 FlowConfiguration::FlowConfiguration(ConfigurationContext ctx)
-    : CoreComponent(core::getClassName<FlowConfiguration>()),
+    : CoreComponent(core::className<FlowConfiguration>()),
       flow_file_repo_(std::move(ctx.flow_file_repo)),
       content_repo_(std::move(ctx.content_repo)),
-      stream_factory_(std::move(ctx.stream_factory)),
       configuration_(std::move(ctx.configuration)),
       filesystem_(std::move(ctx.filesystem)),
       logger_(logging::LoggerFactory<FlowConfiguration>::getLogger()) {
@@ -50,7 +49,7 @@ FlowConfiguration::FlowConfiguration(ConfigurationContext ctx)
   } else {
     config_path_ = utils::file::canonicalize(*ctx.path);
     if (!config_path_) {
-      logger_->log_error("Couldn't find config file \"%s\".", ctx.path->string());
+      logger_->log_error("Couldn't find config file \"{}\".", ctx.path->string());
       config_path_ = ctx.path;
     }
     checksum_calculator_.setFileLocation(*config_path_);
@@ -70,25 +69,25 @@ FlowConfiguration::~FlowConfiguration() {
 }
 
 std::unique_ptr<core::Processor> FlowConfiguration::createProcessor(const std::string &name, const utils::Identifier &uuid) {
-  auto processor = minifi::processors::ProcessorUtils::createProcessor(name, name, uuid, stream_factory_);
+  auto processor = minifi::processors::ProcessorUtils::createProcessor(name, name, uuid);
   if (nullptr == processor) {
-    logger_->log_error("No Processor defined for %s", name);
+    logger_->log_error("No Processor defined for {}", name);
     return nullptr;
   }
   return processor;
 }
 
 std::unique_ptr<core::Processor> FlowConfiguration::createProcessor(const std::string &name, const std::string &fullname, const utils::Identifier &uuid) {
-  auto processor = minifi::processors::ProcessorUtils::createProcessor(name, fullname, uuid, stream_factory_);
+  auto processor = minifi::processors::ProcessorUtils::createProcessor(name, fullname, uuid);
   if (nullptr == processor) {
-    logger_->log_error("No Processor defined for %s", fullname);
+    logger_->log_error("No Processor defined for {}", fullname);
     return nullptr;
   }
   return processor;
 }
 
 std::unique_ptr<core::reporting::SiteToSiteProvenanceReportingTask> FlowConfiguration::createProvenanceReportTask() {
-  auto processor = std::make_unique<org::apache::nifi::minifi::core::reporting::SiteToSiteProvenanceReportingTask>(stream_factory_, this->configuration_);
+  auto processor = std::make_unique<org::apache::nifi::minifi::core::reporting::SiteToSiteProvenanceReportingTask>(this->configuration_);
   processor->initialize();
   return processor;
 }
@@ -127,14 +126,14 @@ bool FlowConfiguration::persist(const std::string &configuration) {
   auto config_file_backup = *config_path_;
   config_file_backup += ".bak";
   bool backup_file = (configuration_->get(minifi::Configure::nifi_flow_configuration_file_backup_update)
-                      | utils::flatMap(utils::StringUtils::toBool)).value_or(false);
+                      | utils::andThen(utils::StringUtils::toBool)).value_or(false);
 
   if (backup_file) {
     if (utils::file::FileUtils::copy_file(*config_path_, config_file_backup) != 0) {
-      logger_->log_debug("Cannot copy %s to %s", config_path_->string(), config_file_backup.string());
+      logger_->log_debug("Cannot copy {} to {}", *config_path_, config_file_backup);
       return false;
     }
-    logger_->log_debug("Copy %s to %s", config_path_->string(), config_file_backup.string());
+    logger_->log_debug("Copy {} to {}", *config_path_, config_file_backup);
   }
 
   const bool status = filesystem_->write(*config_path_, configuration);

@@ -94,6 +94,7 @@ enum class SSLVersion : uint8_t {
   TLSv1_0,
   TLSv1_1,
   TLSv1_2,
+  TLSv1_3
 };
 
 struct HTTPHeaderResponse {
@@ -177,6 +178,12 @@ namespace HTTPRequestResponse {
   int seek_callback(void *p, int64_t offset, int);
 }
 
+#undef DELETE  // this is a macro in winnt.h
+
+enum class HttpRequestMethod {
+  GET, POST, PUT, PATCH, DELETE, CONNECT, HEAD, OPTIONS, TRACE
+};
+
 class BaseHTTPClient {
  public:
   BaseHTTPClient() = default;
@@ -185,7 +192,7 @@ class BaseHTTPClient {
 
   virtual void setVerbose(bool use_stderr) = 0;
 
-  virtual void initialize(std::string method, std::string url, std::shared_ptr<minifi::controllers::SSLContextService> ssl_context_service) = 0;
+  virtual void initialize(HttpRequestMethod method, std::string url, std::shared_ptr<minifi::controllers::SSLContextService> ssl_context_service) = 0;
 
   virtual void setConnectionTimeout(std::chrono::milliseconds timeout) = 0;
 
@@ -207,7 +214,7 @@ class BaseHTTPClient {
 
   virtual void setRequestHeader(std::string key, std::optional<std::string> value) = 0;
 
-  virtual void set_request_method(std::string method) = 0;
+  virtual void set_request_method(HttpRequestMethod method) = 0;
 
   virtual void setPeerVerification(bool peer_verification) = 0;
   virtual void setHostVerification(bool host_verification) = 0;

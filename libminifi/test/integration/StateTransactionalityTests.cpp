@@ -21,7 +21,6 @@
 #include "IntegrationBase.h"
 #include "../StatefulProcessor.h"
 #include "../TestBase.h"
-#include "../Catch.h"
 #include "utils/IntegrationTestUtils.h"
 #include "core/state/ProcessorController.h"
 
@@ -52,7 +51,7 @@ class StatefulIntegrationTest : public IntegrationBase {
     LogTestController::getInstance().setDebug<core::Processor>();
     LogTestController::getInstance().setDebug<core::ProcessSession>();
     LogTestController::getInstance().setDebug<StatefulIntegrationTest>();
-    logger_->log_info("Running test case \"%s\"", test_case_);
+    logger_->log_info("Running test case \"{}\"", test_case_);
   }
 
   void updateProperties(minifi::FlowController& fc) override {
@@ -96,7 +95,7 @@ class StatefulIntegrationTest : public IntegrationBase {
   const std::vector<StatefulProcessor::HookType> on_trigger_hooks_;
   const LogChecker log_checker_;
   const std::string test_case_;
-  StatefulProcessor* stateful_processor_;
+  StatefulProcessor* stateful_processor_ = nullptr;
   std::shared_ptr<logging::Logger> logger_{logging::LoggerFactory<StatefulIntegrationTest>::getLogger()};
 };
 
@@ -108,15 +107,6 @@ auto standardLogChecker = [] {
   const auto errorResult = utils::StringUtils::countOccurrences(logs, "[error]");
   const auto warningResult = utils::StringUtils::countOccurrences(logs, "[warning]");
   return errorResult.second == 0 && warningResult.second == 0;
-};
-
-auto commitAndRollbackWarnings = [] {
-  const std::string logs = LogTestController::getInstance().getLogs();
-  const auto errorResult = utils::StringUtils::countOccurrences(logs, "[error]");
-  const auto commitWarningResult = utils::StringUtils::countOccurrences(logs, "[warning] Caught \"Process Session Operation: State manager commit failed.\"");
-  const auto rollbackWarningFirst = utils::StringUtils::countOccurrences(logs, "[warning] Caught Exception during process session rollback");
-  const auto rollbackWarningSecond = utils::StringUtils::countOccurrences(logs, "Process Session Operation: State manager rollback failed.");
-  return errorResult.second == 0 && commitWarningResult.second == 1 && rollbackWarningFirst.second == 1 && rollbackWarningSecond.second == 1;
 };
 
 auto exceptionRollbackWarnings = [] {
@@ -234,7 +224,7 @@ const std::unordered_map<std::string, HookCollection> testCasesToHookLists {
           assert(stateManager.commit());
         }
       },
-      commitAndRollbackWarnings
+      standardLogChecker
     },
   },
   {
@@ -245,7 +235,7 @@ const std::unordered_map<std::string, HookCollection> testCasesToHookLists {
           assert(stateManager.rollback());
         }
       },
-      commitAndRollbackWarnings
+      standardLogChecker
     },
   },
   {
@@ -625,4 +615,3 @@ int main(int argc, char** argv) {
     return EXIT_FAILURE;
   }
 }
-

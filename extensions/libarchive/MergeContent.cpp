@@ -32,8 +32,8 @@
 namespace org::apache::nifi::minifi::processors {
 
 void MergeContent::initialize() {
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
 std::string MergeContent::readContent(const std::string& path) {
@@ -49,36 +49,36 @@ std::string MergeContent::readContent(const std::string& path) {
   return (contents);
 }
 
-void MergeContent::onSchedule(core::ProcessContext *context, core::ProcessSessionFactory *sessionFactory) {
-  BinFiles::onSchedule(context, sessionFactory);
+void MergeContent::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& session_factory) {
+  BinFiles::onSchedule(context, session_factory);
 
-  context->getProperty(MergeStrategy.getName(), mergeStrategy_);
-  context->getProperty(MergeFormat.getName(), mergeFormat_);
-  context->getProperty(CorrelationAttributeName.getName(), correlationAttributeName_);
-  context->getProperty(DelimiterStrategy.getName(), delimiterStrategy_);
-  context->getProperty(Header.getName(), header_);
-  context->getProperty(Footer.getName(), footer_);
-  context->getProperty(Demarcator.getName(), demarcator_);
-  context->getProperty(KeepPath.getName(), keepPath_);
-  context->getProperty(AttributeStrategy.getName(), attributeStrategy_);
+  context.getProperty(MergeStrategy, mergeStrategy_);
+  context.getProperty(MergeFormat, mergeFormat_);
+  context.getProperty(CorrelationAttributeName, correlationAttributeName_);
+  context.getProperty(DelimiterStrategy, delimiterStrategy_);
+  context.getProperty(Header, header_);
+  context.getProperty(Footer, footer_);
+  context.getProperty(Demarcator, demarcator_);
+  context.getProperty(KeepPath, keepPath_);
+  context.getProperty(AttributeStrategy, attributeStrategy_);
 
   validatePropertyOptions();
 
   if (mergeStrategy_ == merge_content_options::MERGE_STRATEGY_DEFRAGMENT) {
     binManager_.setFileCount(FRAGMENT_COUNT_ATTRIBUTE);
   }
-  logger_->log_debug("Merge Content: Strategy [%s] Format [%s] Correlation Attribute [%s] Delimiter [%s]", mergeStrategy_, mergeFormat_, correlationAttributeName_, delimiterStrategy_);
-  logger_->log_debug("Merge Content: Footer [%s] Header [%s] Demarcator [%s] KeepPath [%d]", footer_, header_, demarcator_, keepPath_);
+  logger_->log_debug("Merge Content: Strategy [{}] Format [{}] Correlation Attribute [{}] Delimiter [{}]", mergeStrategy_, mergeFormat_, correlationAttributeName_, delimiterStrategy_);
+  logger_->log_debug("Merge Content: Footer [{}] Header [{}] Demarcator [{}] KeepPath [{}]", footer_, header_, demarcator_, keepPath_);
 
   if (mergeFormat_ != merge_content_options::MERGE_FORMAT_CONCAT_VALUE) {
     if (!header_.empty()) {
-      logger_->log_warn("Header property only works with the Binary Concatenation format, value [%s] is ignored", header_);
+      logger_->log_warn("Header property only works with the Binary Concatenation format, value [{}] is ignored", header_);
     }
     if (!footer_.empty()) {
-      logger_->log_warn("Footer property only works with the Binary Concatenation format, value [%s] is ignored", footer_);
+      logger_->log_warn("Footer property only works with the Binary Concatenation format, value [{}] is ignored", footer_);
     }
     if (!demarcator_.empty()) {
-      logger_->log_warn("Demarcator property only works with the Binary Concatenation format, value [%s] is ignored", demarcator_);
+      logger_->log_warn("Demarcator property only works with the Binary Concatenation format, value [{}] is ignored", demarcator_);
     }
   }
 
@@ -103,7 +103,7 @@ void MergeContent::onSchedule(core::ProcessContext *context, core::ProcessSessio
 void MergeContent::validatePropertyOptions() {
   if (mergeStrategy_ != merge_content_options::MERGE_STRATEGY_DEFRAGMENT &&
       mergeStrategy_ != merge_content_options::MERGE_STRATEGY_BIN_PACK) {
-    logger_->log_error("Merge strategy not supported %s", mergeStrategy_);
+    logger_->log_error("Merge strategy not supported {}", mergeStrategy_);
     throw minifi::Exception(ExceptionType::PROCESSOR_EXCEPTION, "Invalid merge strategy: " + attributeStrategy_);
   }
 
@@ -111,24 +111,24 @@ void MergeContent::validatePropertyOptions() {
       mergeFormat_ != merge_content_options::MERGE_FORMAT_TAR_VALUE &&
       mergeFormat_ != merge_content_options::MERGE_FORMAT_ZIP_VALUE &&
       mergeFormat_ != merge_content_options::MERGE_FORMAT_FLOWFILE_STREAM_V3_VALUE) {
-    logger_->log_error("Merge format not supported %s", mergeFormat_);
+    logger_->log_error("Merge format not supported {}", mergeFormat_);
     throw minifi::Exception(ExceptionType::PROCESSOR_EXCEPTION, "Invalid merge format: " + mergeFormat_);
   }
 
   if (delimiterStrategy_ != merge_content_options::DELIMITER_STRATEGY_FILENAME &&
       delimiterStrategy_ != merge_content_options::DELIMITER_STRATEGY_TEXT) {
-    logger_->log_error("Delimiter strategy not supported %s", delimiterStrategy_);
+    logger_->log_error("Delimiter strategy not supported {}", delimiterStrategy_);
     throw minifi::Exception(ExceptionType::PROCESSOR_EXCEPTION, "Invalid delimiter strategy: " + delimiterStrategy_);
   }
 
   if (attributeStrategy_ != merge_content_options::ATTRIBUTE_STRATEGY_KEEP_COMMON &&
       attributeStrategy_ != merge_content_options::ATTRIBUTE_STRATEGY_KEEP_ALL_UNIQUE) {
-    logger_->log_error("Attribute strategy not supported %s", attributeStrategy_);
+    logger_->log_error("Attribute strategy not supported {}", attributeStrategy_);
     throw minifi::Exception(ExceptionType::PROCESSOR_EXCEPTION, "Invalid attribute strategy: " + attributeStrategy_);
   }
 }
 
-std::string MergeContent::getGroupId(core::ProcessContext*, const std::shared_ptr<core::FlowFile>& flow) {
+std::string MergeContent::getGroupId(const std::shared_ptr<core::FlowFile>& flow) {
   std::string groupId;
   std::string value;
   if (!correlationAttributeName_.empty()) {
@@ -187,11 +187,11 @@ bool MergeContent::checkDefragment(std::unique_ptr<Bin> &bin) {
   return true;
 }
 
-void MergeContent::onTrigger(core::ProcessContext *context, core::ProcessSession *session) {
+void MergeContent::onTrigger(core::ProcessContext& context, core::ProcessSession& session) {
   BinFiles::onTrigger(context, session);
 }
 
-bool MergeContent::processBin(core::ProcessContext *context, core::ProcessSession *session, std::unique_ptr<Bin> &bin) {
+bool MergeContent::processBin(core::ProcessSession &session, std::unique_ptr<Bin> &bin) {
   if (mergeStrategy_ != merge_content_options::MERGE_STRATEGY_DEFRAGMENT && mergeStrategy_ != merge_content_options::MERGE_STRATEGY_BIN_PACK)
     return false;
 
@@ -213,18 +213,23 @@ bool MergeContent::processBin(core::ProcessContext *context, core::ProcessSessio
         });
   }
 
-  std::shared_ptr<core::FlowFile> merge_flow = std::static_pointer_cast<FlowFileRecord>(session->create());
+  std::shared_ptr<core::FlowFile> merge_flow = std::static_pointer_cast<FlowFileRecord>(session.create());
+  auto removeMergeFlow = gsl::finally([&](){
+    if (!session.hasBeenTransferred(*merge_flow)) {
+      session.remove(merge_flow);
+    }
+  });
   if (attributeStrategy_ == merge_content_options::ATTRIBUTE_STRATEGY_KEEP_COMMON) {
     KeepOnlyCommonAttributesMerger(bin->getFlowFile()).mergeAttributes(session, merge_flow);
   } else if (attributeStrategy_ == merge_content_options::ATTRIBUTE_STRATEGY_KEEP_ALL_UNIQUE) {
     KeepAllUniqueAttributesMerger(bin->getFlowFile()).mergeAttributes(session, merge_flow);
   } else {
-    logger_->log_error("Attribute strategy not supported %s", attributeStrategy_);
+    logger_->log_error("Attribute strategy not supported {}", attributeStrategy_);
     return false;
   }
 
   auto flowFileReader = [&] (const std::shared_ptr<core::FlowFile>& ff, const io::InputStreamCallback& cb) {
-    return session->read(ff, cb);
+    return session.read(ff, cb);
   };
 
   const char* mimeType;
@@ -245,30 +250,29 @@ bool MergeContent::processBin(core::ProcessContext *context, core::ProcessSessio
     mergeBin = std::make_unique<ZipMerge>();
     mimeType = "application/zip";
   } else {
-    logger_->log_error("Merge format not supported %s", mergeFormat_);
+    logger_->log_error("Merge format not supported {}", mergeFormat_);
     return false;
   }
 
-  std::shared_ptr<core::FlowFile> mergeFlow;
   try {
-    mergeBin->merge(context, session, bin->getFlowFile(), *serializer, merge_flow);
-    session->putAttribute(merge_flow, core::SpecialFlowAttribute::MIME_TYPE, mimeType);
+    mergeBin->merge(session, bin->getFlowFile(), *serializer, merge_flow);
+    session.putAttribute(merge_flow, core::SpecialFlowAttribute::MIME_TYPE, mimeType);
   } catch (const std::exception& ex) {
-    logger_->log_error("Merge Content merge catch exception, type: %s, what: %s", typeid(ex).name(), ex.what());
+    logger_->log_error("Merge Content merge catch exception, type: {}, what: {}", typeid(ex).name(), ex.what());
     return false;
   } catch (...) {
-    logger_->log_error("Merge Content merge catch exception, type: %s", getCurrentExceptionTypeName());
+    logger_->log_error("Merge Content merge catch exception, type: {}", getCurrentExceptionTypeName());
     return false;
   }
-  session->putAttribute(merge_flow, BinFiles::FRAGMENT_COUNT_ATTRIBUTE, std::to_string(bin->getSize()));
+  session.putAttribute(merge_flow, BinFiles::FRAGMENT_COUNT_ATTRIBUTE, std::to_string(bin->getSize()));
 
   // we successfully merge the flow
-  session->transfer(merge_flow, Merge);
+  session.transfer(merge_flow, Merge);
   std::deque<std::shared_ptr<core::FlowFile>> &flows = bin->getFlowFile();
   for (const auto& flow : flows) {
-    session->transfer(flow, Original);
+    session.transfer(flow, Original);
   }
-  logger_->log_info("Merge FlowFile record UUID %s, payload length %d", merge_flow->getUUIDStr(), merge_flow->getSize());
+  logger_->log_info("Merge FlowFile record UUID {}, payload length {}", merge_flow->getUUIDStr(), merge_flow->getSize());
 
   return true;
 }
@@ -278,9 +282,9 @@ BinaryConcatenationMerge::BinaryConcatenationMerge(std::string header, std::stri
     footer_(std::move(footer)),
     demarcator_(std::move(demarcator)) {}
 
-void BinaryConcatenationMerge::merge(core::ProcessContext* /*context*/, core::ProcessSession *session,
+void BinaryConcatenationMerge::merge(core::ProcessSession &session,
     std::deque<std::shared_ptr<core::FlowFile>> &flows, FlowFileSerializer& serializer, const std::shared_ptr<core::FlowFile>& merge_flow) {
-  session->write(merge_flow, BinaryConcatenationMerge::WriteCallback{header_, footer_, demarcator_, flows, serializer});
+  session.write(merge_flow, BinaryConcatenationMerge::WriteCallback{header_, footer_, demarcator_, flows, serializer});
   std::string fileName;
   if (flows.size() == 1) {
     flows.front()->getAttribute(core::SpecialFlowAttribute::FILENAME, fileName);
@@ -288,12 +292,12 @@ void BinaryConcatenationMerge::merge(core::ProcessContext* /*context*/, core::Pr
     flows.front()->getAttribute(BinFiles::SEGMENT_ORIGINAL_FILENAME, fileName);
   }
   if (!fileName.empty())
-    session->putAttribute(merge_flow, core::SpecialFlowAttribute::FILENAME, fileName);
+    session.putAttribute(merge_flow, core::SpecialFlowAttribute::FILENAME, fileName);
 }
 
-void TarMerge::merge(core::ProcessContext* /*context*/, core::ProcessSession *session,
+void TarMerge::merge(core::ProcessSession &session,
     std::deque<std::shared_ptr<core::FlowFile>> &flows, FlowFileSerializer& serializer, const std::shared_ptr<core::FlowFile>& merge_flow) {
-  session->write(merge_flow, ArchiveMerge::WriteCallback{merge_content_options::MERGE_FORMAT_TAR_VALUE, flows, serializer});
+  session.write(merge_flow, ArchiveMerge::WriteCallback{merge_content_options::MERGE_FORMAT_TAR_VALUE, flows, serializer});
   std::string fileName;
   merge_flow->getAttribute(core::SpecialFlowAttribute::FILENAME, fileName);
   if (flows.size() == 1) {
@@ -303,13 +307,13 @@ void TarMerge::merge(core::ProcessContext* /*context*/, core::ProcessSession *se
   }
   if (!fileName.empty()) {
     fileName += ".tar";
-    session->putAttribute(merge_flow, core::SpecialFlowAttribute::FILENAME, fileName);
+    session.putAttribute(merge_flow, core::SpecialFlowAttribute::FILENAME, fileName);
   }
 }
 
-void ZipMerge::merge(core::ProcessContext* /*context*/, core::ProcessSession *session,
+void ZipMerge::merge(core::ProcessSession &session,
     std::deque<std::shared_ptr<core::FlowFile>> &flows, FlowFileSerializer& serializer, const std::shared_ptr<core::FlowFile>& merge_flow) {
-  session->write(merge_flow, ArchiveMerge::WriteCallback{merge_content_options::MERGE_FORMAT_ZIP_VALUE, flows, serializer});
+  session.write(merge_flow, ArchiveMerge::WriteCallback{merge_content_options::MERGE_FORMAT_ZIP_VALUE, flows, serializer});
   std::string fileName;
   merge_flow->getAttribute(core::SpecialFlowAttribute::FILENAME, fileName);
   if (flows.size() == 1) {
@@ -319,13 +323,13 @@ void ZipMerge::merge(core::ProcessContext* /*context*/, core::ProcessSession *se
   }
   if (!fileName.empty()) {
     fileName += ".zip";
-    session->putAttribute(merge_flow, core::SpecialFlowAttribute::FILENAME, fileName);
+    session.putAttribute(merge_flow, core::SpecialFlowAttribute::FILENAME, fileName);
   }
 }
 
-void AttributeMerger::mergeAttributes(core::ProcessSession *session, const std::shared_ptr<core::FlowFile> &merge_flow) {
+void AttributeMerger::mergeAttributes(core::ProcessSession &session, const std::shared_ptr<core::FlowFile> &merge_flow) {
   for (const auto& pair : getMergedAttributes()) {
-    session->putAttribute(merge_flow, pair.first, pair.second);
+    session.putAttribute(merge_flow, pair.first, pair.second);
   }
 }
 
@@ -362,5 +366,7 @@ void KeepAllUniqueAttributesMerger::processFlowFile(const std::shared_ptr<core::
     }
   }
 }
+
+REGISTER_RESOURCE(MergeContent, Processor);
 
 }  // namespace org::apache::nifi::minifi::processors

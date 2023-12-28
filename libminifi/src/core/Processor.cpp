@@ -33,54 +33,54 @@
 #include "core/ProcessorConfig.h"
 #include "core/ProcessContext.h"
 #include "core/ProcessSessionFactory.h"
-#include "io/StreamFactory.h"
 #include "utils/gsl.h"
 #include "range/v3/algorithm/any_of.hpp"
+#include "fmt/format.h"
 
 using namespace std::literals::chrono_literals;
 
 namespace org::apache::nifi::minifi::core {
 
-Processor::Processor(std::string name, std::shared_ptr<ProcessorMetrics> metrics)
-    : Connectable(std::move(name)),
-      logger_(logging::LoggerFactory<Processor>::getLogger(uuid_)),
-      metrics_(metrics ? std::move(metrics) : std::make_shared<ProcessorMetrics>(*this)) {
+Processor::Processor(std::string_view name, std::shared_ptr<ProcessorMetrics> metrics)
+    : Connectable(name),
+      state_(DISABLED),
+      scheduling_period_(MINIMUM_SCHEDULING_PERIOD),
+      run_duration_(DEFAULT_RUN_DURATION),
+      yield_period_(DEFAULT_YIELD_PERIOD_SECONDS),
+      active_tasks_(0),
+      _triggerWhenEmpty(false),
+      metrics_(metrics ? std::move(metrics) : std::make_shared<ProcessorMetrics>(*this)),
+      logger_(logging::LoggerFactory<Processor>::getLogger(uuid_)) {
   has_work_.store(false);
   // Setup the default values
-  state_ = DISABLED;
   strategy_ = TIMER_DRIVEN;
-  _triggerWhenEmpty = false;
-  scheduling_period_nano_ = MINIMUM_SCHEDULING_NANOS;
-  run_duration_nano_ = DEFAULT_RUN_DURATION;
-  yield_period_msec_ = DEFAULT_YIELD_PERIOD_SECONDS;
   penalization_period_ = DEFAULT_PENALIZATION_PERIOD;
   max_concurrent_tasks_ = DEFAULT_MAX_CONCURRENT_TASKS;
-  active_tasks_ = 0;
   incoming_connections_Iter = this->incoming_connections_.begin();
-  logger_->log_debug("Processor %s created UUID %s", name_, getUUIDStr());
+  logger_->log_debug("Processor {} created UUID {}", name_, getUUIDStr());
 }
 
-Processor::Processor(std::string name, const utils::Identifier& uuid, std::shared_ptr<ProcessorMetrics> metrics)
-    : Connectable(std::move(name), uuid),
-      logger_(logging::LoggerFactory<Processor>::getLogger(uuid_)),
-      metrics_(metrics ? std::move(metrics) : std::make_shared<ProcessorMetrics>(*this)) {
+Processor::Processor(std::string_view name, const utils::Identifier& uuid, std::shared_ptr<ProcessorMetrics> metrics)
+    : Connectable(name, uuid),
+      state_(DISABLED),
+      scheduling_period_(MINIMUM_SCHEDULING_PERIOD),
+      run_duration_(DEFAULT_RUN_DURATION),
+      yield_period_(DEFAULT_YIELD_PERIOD_SECONDS),
+      active_tasks_(0),
+      _triggerWhenEmpty(false),
+      metrics_(metrics ? std::move(metrics) : std::make_shared<ProcessorMetrics>(*this)),
+      logger_(logging::LoggerFactory<Processor>::getLogger(uuid_)) {
   has_work_.store(false);
   // Setup the default values
-  state_ = DISABLED;
   strategy_ = TIMER_DRIVEN;
-  _triggerWhenEmpty = false;
-  scheduling_period_nano_ = MINIMUM_SCHEDULING_NANOS;
-  run_duration_nano_ = DEFAULT_RUN_DURATION;
-  yield_period_msec_ = DEFAULT_YIELD_PERIOD_SECONDS;
   penalization_period_ = DEFAULT_PENALIZATION_PERIOD;
   max_concurrent_tasks_ = DEFAULT_MAX_CONCURRENT_TASKS;
-  active_tasks_ = 0;
   incoming_connections_Iter = this->incoming_connections_.begin();
-  logger_->log_debug("Processor %s created with uuid %s", name_, getUUIDStr());
+  logger_->log_debug("Processor {} created with uuid {}", name_, getUUIDStr());
 }
 
 Processor::~Processor() {
-  logger_->log_debug("Destroying processor %s with uuid %s", name_, getUUIDStr());
+  logger_->log_debug("Destroying processor {} with uuid {}", name_, getUUIDStr());
 }
 
 bool Processor::isRunning() const {
@@ -103,7 +103,7 @@ bool Processor::addConnection(Connectable* conn) {
   SetAs result = SetAs::NONE;
 
   if (isRunning()) {
-    logger_->log_warn("Can not add connection while the process %s is running", name_);
+    logger_->log_warn("Can not add connection while the process {} is running", name_);
     return false;
   }
   const auto connection = dynamic_cast<Connection*>(conn);
@@ -129,7 +129,7 @@ bool Processor::addConnection(Connectable* conn) {
     if (incoming_connections_.find(connection) == incoming_connections_.end()) {
       incoming_connections_.insert(connection);
       connection->setDestination(this);
-      logger_->log_debug("Add connection %s into Processor %s incoming connection", connection->getName(), name_);
+      logger_->log_debug("Add connection {} into Processor {} incoming connection", connection->getName(), name_);
       incoming_connections_Iter = this->incoming_connections_.begin();
       result = SetAs::OUTPUT;
     }
@@ -147,7 +147,7 @@ bool Processor::addConnection(Connectable* conn) {
           existedConnection.insert(connection);
           connection->setSource(this);
           outgoing_connections_[relationship] = existedConnection;
-          logger_->log_debug("Add connection %s into Processor %s outgoing connection for relationship %s", connection->getName(), name_, relationship);
+          logger_->log_debug("Add connection {} into Processor {} outgoing connection for relationship {}", connection->getName(), name_, relationship);
           result = SetAs::INPUT;
         }
       } else {
@@ -156,7 +156,7 @@ bool Processor::addConnection(Connectable* conn) {
         newConnection.insert(connection);
         connection->setSource(this);
         outgoing_connections_[relationship] = newConnection;
-        logger_->log_debug("Add connection %s into Processor %s outgoing connection for relationship %s", connection->getName(), name_, relationship);
+        logger_->log_debug("Add connection {} into Processor {} outgoing connection for relationship {}", connection->getName(), name_, relationship);
         result = SetAs::INPUT;
       }
     }
@@ -180,51 +180,26 @@ bool Processor::flowFilesOutGoingFull() const {
   return false;
 }
 
-void Processor::onTrigger(ProcessContext *context, ProcessSessionFactory *sessionFactory) {
+void Processor::onTrigger(const std::shared_ptr<ProcessContext>& context, const std::shared_ptr<ProcessSessionFactory>& session_factory) {
   ++metrics_->iterations;
-  auto session = sessionFactory->createSession();
+  auto session = session_factory->createSession();
   session->setMetrics(metrics_);
 
   try {
     // Call the virtual trigger function
     auto start = std::chrono::steady_clock::now();
-    onTrigger(context, session.get());
+    onTriggerSharedPtr(context, session);
     metrics_->addLastOnTriggerRuntime(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start));
     start = std::chrono::steady_clock::now();
     session->commit();
     metrics_->addLastSessionCommitRuntime(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start));
   } catch (const std::exception& exception) {
-    logger_->log_warn("Caught \"%s\" (%s) during Processor::onTrigger of processor: %s (%s)",
+    logger_->log_warn("Caught \"{}\" ({}) during Processor::onTrigger of processor: {} ({})",
         exception.what(), typeid(exception).name(), getUUIDStr(), getName());
     session->rollback();
     throw;
   } catch (...) {
-    logger_->log_warn("Caught unknown exception during Processor::onTrigger of processor: %s (%s)", getUUIDStr(), getName());
-    session->rollback();
-    throw;
-  }
-}
-
-void Processor::onTrigger(const std::shared_ptr<ProcessContext> &context, const std::shared_ptr<ProcessSessionFactory> &sessionFactory) {
-  ++metrics_->iterations;
-  auto session = sessionFactory->createSession();
-  session->setMetrics(metrics_);
-
-  try {
-    // Call the virtual trigger function
-    auto start = std::chrono::steady_clock::now();
-    onTrigger(context, session);
-    metrics_->addLastOnTriggerRuntime(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start));
-    start = std::chrono::steady_clock::now();
-    session->commit();
-    metrics_->addLastSessionCommitRuntime(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start));
-  } catch (std::exception &exception) {
-    logger_->log_warn("Caught \"%s\" (%s) during Processor::onTrigger of processor: %s (%s)",
-        exception.what(), typeid(exception).name(), getUUIDStr(), getName());
-    session->rollback();
-    throw;
-  } catch (...) {
-    logger_->log_warn("Caught unknown exception during Processor::onTrigger of processor: %s (%s)", getUUIDStr(), getName());
+    logger_->log_warn("Caught unknown exception during Processor::onTrigger of processor: {} ({})", getUUIDStr(), getName());
     session->rollback();
     throw;
   }
@@ -247,7 +222,7 @@ bool Processor::isWorkAvailable() {
       }
     }
   } catch (...) {
-    logger_->log_error("Caught an exception (type: %s) while checking if work is available;"
+    logger_->log_error("Caught an exception (type: {}) while checking if work is available;"
         " unless it was positively determined that work is available, assuming NO work is available!",
         getCurrentExceptionTypeName());
   }
@@ -326,7 +301,7 @@ Connectable* Processor::pickIncomingConnection() {
   std::lock_guard<std::mutex> rel_guard(relationship_mutex_);
 
   auto beginIt = incoming_connections_Iter;
-  Connectable* inConn;
+  Connectable* inConn = nullptr;
   do {
     inConn = getNextIncomingConnectionImpl(rel_guard);
     auto connection = dynamic_cast<Connection*>(inConn);
@@ -346,7 +321,8 @@ void Processor::validateAnnotations() const {
   switch (getInputRequirement()) {
     case annotation::Input::INPUT_REQUIRED: {
       if (!hasIncomingConnections()) {
-        throw Exception(PROCESS_SCHEDULE_EXCEPTION, "INPUT_REQUIRED was specified for the processor, but no incoming connections were found");
+        throw Exception(PROCESS_SCHEDULE_EXCEPTION, fmt::format("INPUT_REQUIRED was specified for the processor '{}' (uuid: '{}'), but no incoming connections were found",
+          getName(), std::string(getUUIDStr())));
       }
       break;
     }
@@ -354,7 +330,8 @@ void Processor::validateAnnotations() const {
       break;
     case annotation::Input::INPUT_FORBIDDEN: {
       if (hasIncomingConnections()) {
-        throw Exception(PROCESS_SCHEDULE_EXCEPTION, "INPUT_FORBIDDEN was specified for the processor, but there are incoming connections");
+        throw Exception(PROCESS_SCHEDULE_EXCEPTION, fmt::format("INPUT_FORBIDDEN was specified for the processor '{}' (uuid: '{}'), but there are incoming connections",
+          getName(), std::string(getUUIDStr())));
       }
     }
   }
@@ -362,8 +339,8 @@ void Processor::validateAnnotations() const {
 
 void Processor::setMaxConcurrentTasks(const uint8_t tasks) {
   if (isSingleThreaded() && tasks > 1) {
-    logger_->log_warn("Processor %s can not be run in parallel, its \"max concurrent tasks\" value is too high. "
-                      "It was set to 1 from %" PRIu8 ".", name_, tasks);
+    logger_->log_warn("Processor {} can not be run in parallel, its \"max concurrent tasks\" value is too high. "
+                      "It was set to 1 from {}.", name_, tasks);
     max_concurrent_tasks_ = 1;
     return;
   }
@@ -372,28 +349,23 @@ void Processor::setMaxConcurrentTasks(const uint8_t tasks) {
 }
 
 void Processor::yield() {
-  yield_expiration_ = std::chrono::system_clock::now() + yield_period_msec_.load();
+  yield_expiration_ = std::chrono::steady_clock::now() + yield_period_.load();
 }
 
-void Processor::yield(std::chrono::milliseconds delta_time) {
-  yield_expiration_ = std::chrono::system_clock::now() + delta_time;
+void Processor::yield(std::chrono::steady_clock::duration delta_time) {
+  yield_expiration_ = std::chrono::steady_clock::now() + delta_time;
 }
 
 bool Processor::isYield() {
-  return yield_expiration_.load() >= std::chrono::system_clock::now();
+  return getYieldTime() > 0ms;
 }
 
 void Processor::clearYield() {
-  yield_expiration_ = std::chrono::system_clock::time_point();
+  yield_expiration_ = std::chrono::steady_clock::time_point();
 }
 
-std::chrono::milliseconds Processor::getYieldTime() const {
-  auto yield_expiration = yield_expiration_.load();
-  auto current_time = std::chrono::system_clock::now();
-  if (yield_expiration > current_time)
-    return std::chrono::duration_cast<std::chrono::milliseconds>(yield_expiration - current_time);
-  else
-    return 0ms;
+std::chrono::steady_clock::duration Processor::getYieldTime() const {
+  return std::max(yield_expiration_.load()-std::chrono::steady_clock::now(), std::chrono::steady_clock::duration{0});
 }
 
 }  // namespace org::apache::nifi::minifi::core

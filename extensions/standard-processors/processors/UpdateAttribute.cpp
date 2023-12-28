@@ -23,36 +23,29 @@
 #include <memory>
 #include <string>
 
-#include "core/PropertyBuilder.h"
+#include "core/PropertyDefinitionBuilder.h"
 #include "core/Resource.h"
 
-namespace org {
-namespace apache {
-namespace nifi {
-namespace minifi {
-namespace processors {
-
-const core::Relationship UpdateAttribute::Success("success", "All files are routed to success");
-const core::Relationship UpdateAttribute::Failure("failure", "Failed files are transferred to failure");
+namespace org::apache::nifi::minifi::processors {
 
 void UpdateAttribute::initialize() {
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
-void UpdateAttribute::onSchedule(core::ProcessContext *context, core::ProcessSessionFactory* /*sessionFactory*/) {
+void UpdateAttribute::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory&) {
   attributes_.clear();
-  const auto &dynamic_prop_keys = context->getDynamicPropertyKeys();
-  logger_->log_info("UpdateAttribute registering %d keys", dynamic_prop_keys.size());
+  const auto &dynamic_prop_keys = context.getDynamicPropertyKeys();
+  logger_->log_info("UpdateAttribute registering {} keys", dynamic_prop_keys.size());
 
   for (const auto &key : dynamic_prop_keys) {
-    attributes_.emplace_back(core::PropertyBuilder::createProperty(key)->withDescription("auto generated")->supportsExpressionLanguage(true)->build());
-    logger_->log_info("UpdateAttribute registered attribute '%s'", key);
+    attributes_.emplace_back(core::PropertyDefinitionBuilder<>::createProperty(key).withDescription("auto generated").supportsExpressionLanguage(true).build());
+    logger_->log_info("UpdateAttribute registered attribute '{}'", key);
   }
 }
 
-void UpdateAttribute::onTrigger(core::ProcessContext *context, core::ProcessSession *session) {
-  auto flow_file = session->get();
+void UpdateAttribute::onTrigger(core::ProcessContext& context, core::ProcessSession& session) {
+  auto flow_file = session.get();
 
   // Do nothing if there are no incoming files
   if (!flow_file) {
@@ -62,22 +55,18 @@ void UpdateAttribute::onTrigger(core::ProcessContext *context, core::ProcessSess
   try {
     for (const auto &attribute : attributes_) {
       std::string value;
-      context->getDynamicProperty(attribute, value, flow_file);
+      context.getDynamicProperty(attribute, value, flow_file);
       flow_file->setAttribute(attribute.getName(), value);
-      logger_->log_info("Set attribute '%s' of flow file '%s' with value '%s'", attribute.getName(), flow_file->getUUIDStr(), value);
+      logger_->log_info("Set attribute '{}' of flow file '{}' with value '{}'", attribute.getName(), flow_file->getUUIDStr(), value);
     }
-    session->transfer(flow_file, Success);
+    session.transfer(flow_file, Success);
   } catch (const std::exception &e) {
-    logger_->log_error("Caught exception while updating attributes: %s", e.what());
-    session->transfer(flow_file, Failure);
+    logger_->log_error("Caught exception while updating attributes: {}", e.what());
+    session.transfer(flow_file, Failure);
     yield();
   }
 }
 
 REGISTER_RESOURCE(UpdateAttribute, Processor);
 
-} /* namespace processors */
-} /* namespace minifi */
-} /* namespace nifi */
-} /* namespace apache */
-} /* namespace org */
+}  // namespace org::apache::nifi::minifi::processors

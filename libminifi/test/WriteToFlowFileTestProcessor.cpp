@@ -21,35 +21,32 @@
 
 namespace org::apache::nifi::minifi::processors {
 
-const core::Relationship WriteToFlowFileTestProcessor::Success("success", "success operational on the flow record");
-
 void WriteToFlowFileTestProcessor::initialize() {
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
-void WriteToFlowFileTestProcessor::onSchedule(core::ProcessContext*, core::ProcessSessionFactory*) {
-  logger_->log_info("%s", ON_SCHEDULE_LOG_STR);
+void WriteToFlowFileTestProcessor::onSchedule(core::ProcessContext&, core::ProcessSessionFactory&) {
+  logger_->log_info("{}", ON_SCHEDULE_LOG_STR);
 }
 
-void WriteToFlowFileTestProcessor::onTrigger(core::ProcessContext* context, core::ProcessSession* session) {
-  gsl_Expects(context && session);
-  logger_->log_info("%s", ON_TRIGGER_LOG_STR);
+void WriteToFlowFileTestProcessor::onTrigger(core::ProcessContext& context, core::ProcessSession& session) {
+  logger_->log_info("{}", ON_TRIGGER_LOG_STR);
   if (content_.empty()) {
-    context->yield();
+    context.yield();
     return;
   }
-  std::shared_ptr<core::FlowFile> flow_file = session->create();
+  std::shared_ptr<core::FlowFile> flow_file = session.create();
   if (!flow_file) {
     logger_->log_error("Failed to create flowfile!");
     return;
   }
-  session->writeBuffer(flow_file, content_);
-  session->transfer(flow_file, Success);
+  session.writeBuffer(flow_file, content_);
+  session.transfer(flow_file, Success);
 }
 
 void WriteToFlowFileTestProcessor::onUnSchedule() {
-  logger_->log_info("%s", ON_UNSCHEDULE_LOG_STR);
+  logger_->log_info("{}", ON_UNSCHEDULE_LOG_STR);
 }
 
 REGISTER_RESOURCE(WriteToFlowFileTestProcessor, Processor);

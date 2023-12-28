@@ -30,13 +30,44 @@
 
 #include "controllers/AttributeProviderService.h"
 #include "FlowFileRecord.h"
+#include "core/Core.h"
 #include "core/Processor.h"
 #include "core/ProcessSession.h"
-#include "core/Core.h"
+#include "core/PropertyDefinition.h"
+#include "core/PropertyDefinitionBuilder.h"
+#include "core/PropertyType.h"
+#include "core/RelationshipDefinition.h"
 #include "core/logging/LoggerConfiguration.h"
 #include "utils/Enum.h"
 #include "utils/Export.h"
 #include "utils/RegexUtils.h"
+
+namespace org::apache::nifi::minifi::processors {
+
+enum class InitialStartPositions {
+  BEGINNING_OF_TIME,
+  BEGINNING_OF_FILE,
+  CURRENT_TIME
+};
+
+}  // namespace org::apache::nifi::minifi::processors
+
+namespace magic_enum::customize {
+using InitialStartPositions = org::apache::nifi::minifi::processors::InitialStartPositions;
+
+template <>
+constexpr customize_t enum_name<InitialStartPositions>(InitialStartPositions value) noexcept {
+  switch (value) {
+    case InitialStartPositions::BEGINNING_OF_TIME:
+      return "Beginning of Time";
+    case InitialStartPositions::BEGINNING_OF_FILE:
+      return "Beginning of File";
+    case InitialStartPositions::CURRENT_TIME:
+      return "Current Time";
+  }
+  return invalid_tag;
+}
+}  // namespace magic_enum::customize
 
 namespace org::apache::nifi::minifi::processors {
 
@@ -72,16 +103,10 @@ enum class Mode {
   SINGLE, MULTIPLE, UNDEFINED
 };
 
-SMART_ENUM(InitialStartPositions,
-  (BEGINNING_OF_TIME, "Beginning of Time"),
-  (BEGINNING_OF_FILE, "Beginning of File"),
-  (CURRENT_TIME, "Current Time")
-)
-
 class TailFile : public core::Processor {
  public:
-  explicit TailFile(std::string name, const utils::Identifier& uuid = {})
-      : core::Processor(std::move(name), uuid) {
+  explicit TailFile(std::string_view name, const utils::Identifier& uuid = {})
+      : core::Processor(name, uuid) {
   }
 
   ~TailFile() override = default;
@@ -93,20 +118,78 @@ class TailFile : public core::Processor {
       " rather than running with the default value of 0 secs, as this Processor will consume a lot of resources if scheduled very aggressively. At this time, this Processor"
       " does not support ingesting files that have been compressed when 'rolled over'.";
 
-  EXTENSIONAPI static const core::Property FileName;
-  EXTENSIONAPI static const core::Property StateFile;
-  EXTENSIONAPI static const core::Property Delimiter;
-  EXTENSIONAPI static const core::Property TailMode;
-  EXTENSIONAPI static const core::Property BaseDirectory;
-  EXTENSIONAPI static const core::Property RecursiveLookup;
-  EXTENSIONAPI static const core::Property LookupFrequency;
-  EXTENSIONAPI static const core::Property RollingFilenamePattern;
-  EXTENSIONAPI static const core::Property InitialStartPosition;
-  EXTENSIONAPI static const core::Property AttributeProviderService;
-  EXTENSIONAPI static const core::Property BatchSize;
-
-  static auto properties() {
-    return std::array{
+  EXTENSIONAPI static constexpr auto FileName = core::PropertyDefinitionBuilder<>::createProperty("File to Tail")
+      .withDescription("Fully-qualified filename of the file that should be tailed when using single file mode, or a file regex when using multifile mode")
+      .isRequired(true)
+      .build();
+  EXTENSIONAPI static constexpr auto StateFile = core::PropertyDefinitionBuilder<>::createProperty("State File")
+      .withDescription("DEPRECATED. Only use it for state migration from the legacy state file.")
+      .isRequired(false)
+      .withDefaultValue("TailFileState")
+      .build();
+  EXTENSIONAPI static constexpr auto Delimiter = core::PropertyDefinitionBuilder<>::createProperty("Input Delimiter")
+      .withDescription("Specifies the character that should be used for delimiting the data being tailed"
+          "from the incoming file. If none is specified, data will be ingested as it becomes available.")
+      .isRequired(false)
+      .withDefaultValue("\\n")
+      .build();
+  EXTENSIONAPI static constexpr auto TailMode = core::PropertyDefinitionBuilder<2>::createProperty("tail-mode", "Tailing Mode")
+      .withDescription("Specifies the tail file mode. In 'Single file' mode only a single file will be watched. "
+          "In 'Multiple file' mode a regex may be used. Note that in multiple file mode we will still continue to watch for rollover on the initial set of watched files. "
+          "The Regex used to locate multiple files will be run during the schedule phrase. Note that if rotated files are matched by the regex, those files will be tailed.")
+      .isRequired(true)
+      .withAllowedValues({"Single file", "Multiple file"})
+      .withDefaultValue("Single file")
+      .build();
+  EXTENSIONAPI static constexpr auto BaseDirectory = core::PropertyDefinitionBuilder<>::createProperty("tail-base-directory", "Base Directory")
+      .withDescription("Base directory used to look for files to tail. This property is required when using Multiple file mode. "
+          "Can contain expression language placeholders if Attribute Provider Service is set.")
+      .isRequired(false)
+      .supportsExpressionLanguage(true)
+      .build();
+  EXTENSIONAPI static constexpr auto RecursiveLookup = core::PropertyDefinitionBuilder<>::createProperty("Recursive lookup")
+      .withDescription("When using Multiple file mode, this property determines whether files are tailed in child directories of the Base Directory or not.")
+      .isRequired(false)
+      .withPropertyType(core::StandardPropertyTypes::BOOLEAN_TYPE)
+      .withDefaultValue("false")
+      .build();
+  EXTENSIONAPI static constexpr auto LookupFrequency = core::PropertyDefinitionBuilder<>::createProperty("Lookup frequency")
+      .withDescription("When using Multiple file mode, this property specifies the minimum duration "
+          "the processor will wait between looking for new files to tail in the Base Directory.")
+      .isRequired(false)
+      .withPropertyType(core::StandardPropertyTypes::TIME_PERIOD_TYPE)
+      .withDefaultValue("10 min")
+      .build();
+  EXTENSIONAPI static constexpr auto RollingFilenamePattern = core::PropertyDefinitionBuilder<>::createProperty("Rolling Filename Pattern")
+      .withDescription("If the file to tail \"rolls over\" as would be the case with log files, this filename pattern will be used to "
+          "identify files that have rolled over so MiNiFi can read the remaining of the rolled-over file and then continue with the new log file. "
+          "This pattern supports the wildcard characters * and ?, it also supports the notation ${filename} to specify a pattern based on the name of the file "
+          "(without extension), and will assume that the files that have rolled over live in the same directory as the file being tailed.")
+      .isRequired(false)
+      .withDefaultValue("${filename}.*")
+      .build();
+  EXTENSIONAPI static constexpr auto InitialStartPosition = core::PropertyDefinitionBuilder<magic_enum::enum_count<InitialStartPositions>()>::createProperty("Initial Start Position")
+      .withDescription("When the Processor first begins to tail data, this property specifies where the Processor should begin reading data. "
+          "Once data has been ingested from a file, the Processor will continue from the last point from which it has received data.\n"
+          "Beginning of Time: Start with the oldest data that matches the Rolling Filename Pattern and then begin reading from the File to Tail.\n"
+          "Beginning of File: Start with the beginning of the File to Tail. Do not ingest any data that has already been rolled over.\n"
+          "Current Time: Start with the data at the end of the File to Tail. Do not ingest any data that has already been rolled over or "
+          "any data in the File to Tail that has already been written.")
+      .isRequired(true)
+      .withDefaultValue(magic_enum::enum_name(InitialStartPositions::BEGINNING_OF_FILE))
+      .withAllowedValues(magic_enum::enum_names<InitialStartPositions>())
+      .build();
+  EXTENSIONAPI static constexpr auto AttributeProviderService = core::PropertyDefinitionBuilder<>::createProperty("Attribute Provider Service")
+      .withDescription("Provides a list of key-value pair records which can be used in the Base Directory property using Expression Language. Requires Multiple file mode.")
+      .withAllowedTypes<minifi::controllers::AttributeProviderService>()
+      .build();
+  EXTENSIONAPI static constexpr auto BatchSize = core::PropertyDefinitionBuilder<>::createProperty("Batch Size")
+      .withDescription("Maximum number of flowfiles emitted in a single trigger. If set to 0 all new content will be processed.")
+      .isRequired(true)
+      .withPropertyType(core::StandardPropertyTypes::UNSIGNED_INT_TYPE)
+      .withDefaultValue("0")
+      .build();
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 11>{
       FileName,
       StateFile,
       Delimiter,
@@ -118,14 +201,11 @@ class TailFile : public core::Processor {
       InitialStartPosition,
       AttributeProviderService,
       BatchSize
-    };
-  }
+  };
 
-  EXTENSIONAPI static const core::Relationship Success;
 
-  static auto relationships() {
-    return std::array{Success};
-  }
+  EXTENSIONAPI static constexpr auto Success = core::RelationshipDefinition{"success", "All files are routed to success"};
+  EXTENSIONAPI static constexpr auto Relationships = std::array{Success};
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
 
@@ -137,22 +217,11 @@ class TailFile : public core::Processor {
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  /**
-   * Function that's executed when the processor is scheduled.
-   * @param context process context, provides eg. configuration.
-   * @param sessionFactory process session factory that is used when creating ProcessSession objects.
-   */
-  void onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &sessionFactory) override;
-
-  /**
-   * Function that's executed on each invocation of the processor.
-   * @param context process context, provides eg. configuration.
-   * @param session session object, provides eg. ways to interact with flow files.
-   */
-  void onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession>  &session) override;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& sessionFactory) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
 
   void initialize() override;
-  bool recoverState(const std::shared_ptr<core::ProcessContext>& context);
+  bool recoverState(core::ProcessContext& context);
   void logState();
   bool storeState();
   std::chrono::milliseconds getLookupFrequency() const;
@@ -170,21 +239,21 @@ class TailFile : public core::Processor {
 
   void parseAttributeProviderServiceProperty(core::ProcessContext& context);
   void parseStateFileLine(char *buf, std::map<std::filesystem::path, TailState> &state) const;
-  void processAllRotatedFiles(const std::shared_ptr<core::ProcessSession> &session, TailState &state);
-  void processRotatedFiles(const std::shared_ptr<core::ProcessSession> &session, TailState &state, std::vector<TailState> &rotated_file_states);
-  void processRotatedFilesAfterLastReadTime(const std::shared_ptr<core::ProcessSession> &session, TailState &state);
+  void processAllRotatedFiles(core::ProcessSession& session, TailState &state);
+  void processRotatedFiles(core::ProcessSession& session, TailState &state, std::vector<TailState> &rotated_file_states);
+  void processRotatedFilesAfterLastReadTime(core::ProcessSession& session, TailState &state);
   std::string parseRollingFilePattern(const TailState &state) const;
   std::vector<TailState> findAllRotatedFiles(const TailState &state) const;
   std::vector<TailState> findRotatedFilesAfterLastReadTime(const TailState &state) const;
   static std::vector<TailState> sortAndSkipMainFilePrefix(const TailState &state, std::vector<TailStateWithMtime>& matched_files_with_mtime);
-  void processFile(const std::shared_ptr<core::ProcessSession> &session,
+  void processFile(core::ProcessSession& session,
                    const std::filesystem::path& full_file_name,
                    TailState &state);
-  void processSingleFile(const std::shared_ptr<core::ProcessSession> &session,
+  void processSingleFile(core::ProcessSession& session,
                          const std::filesystem::path& full_file_name,
                          TailState &state);
   bool getStateFromStateManager(std::map<std::filesystem::path, TailState> &new_tail_states) const;
-  bool getStateFromLegacyStateFile(const std::shared_ptr<core::ProcessContext>& context,
+  bool getStateFromLegacyStateFile(core::ProcessContext& context,
                                    std::map<std::filesystem::path, TailState> &new_tail_states) const;
   void doMultifileLookup(core::ProcessContext& context);
   void checkForRemovedFiles();
@@ -200,7 +269,7 @@ class TailFile : public core::Processor {
   static const char *POSITION_STR;
   static const int BUFFER_SIZE = 512;
 
-  std::string delimiter_;  // Delimiter for the data incoming from the tailed file.
+  std::optional<char> delimiter_;  // Delimiter for the data incoming from the tailed file.
   core::StateManager* state_manager_ = nullptr;
   std::map<std::filesystem::path, TailState> tail_states_;
   Mode tail_mode_ = Mode::UNDEFINED;
@@ -219,3 +288,6 @@ class TailFile : public core::Processor {
 };
 
 }  // namespace org::apache::nifi::minifi::processors
+
+template <>
+struct fmt::formatter<org::apache::nifi::minifi::processors::TailState> : fmt::ostream_formatter {};

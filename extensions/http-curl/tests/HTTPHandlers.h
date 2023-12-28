@@ -40,11 +40,11 @@
 #include "utils/gsl.h"
 #include "agent/build_description.h"
 #include "c2/C2Payload.h"
-#include "core/PropertyBuilder.h"
 #include "properties/Configuration.h"
 #include "range/v3/algorithm/contains.hpp"
 #include "range/v3/view/filter.hpp"
 #include "range/v3/view/view.hpp"
+#include "utils/net/DNS.h"
 
 static std::atomic<int> transaction_id;
 static std::atomic<int> transaction_id_output;
@@ -100,7 +100,7 @@ class PeerResponder : public ServerAwareHandler {
 
   bool handleGet(CivetServer* /*server*/, struct mg_connection *conn) override {
 #ifdef WIN32
-    std::string hostname = org::apache::nifi::minifi::io::Socket::getMyHostName();
+    std::string hostname = org::apache::nifi::minifi::utils::net::getMyHostName();
 #else
     std::string hostname = "localhost";
 #endif
@@ -250,7 +250,7 @@ class FlowFileResponder : public ServerAwareHandler {
         }
         flow->attributes[name] = value;
       }
-      uint64_t length;
+      uint64_t length{};
       {
         const auto read = stream.read(length);
         if (!isServerRunning()) return false;
@@ -543,18 +543,18 @@ class HeartbeatHandler : public ServerAwareHandler {
   template<typename T>
   void verifyOperands(const rapidjson::Value& operation_node, const std::unordered_map<std::string, Metadata>& operand_with_metadata = {}) {
     auto operands = getOperandsOfProperties(operation_node);
-    assert(operands == T::values());
+    assert(operands == std::set<std::string>(magic_enum::enum_names<T>().begin(), magic_enum::enum_names<T>().end()));
     verifyMetadata(operation_node, operand_with_metadata);
   }
 
   void verifyProperties(const rapidjson::Value& operation_node, minifi::c2::Operation operation,
       const std::vector<std::string>& verify_components, const std::vector<std::string>& disallowed_properties) {
-    switch (operation.value()) {
-      case minifi::c2::Operation::DESCRIBE: {
+    switch (operation) {
+      case minifi::c2::Operation::describe: {
         verifyOperands<minifi::c2::DescribeOperand>(operation_node);
         break;
       }
-      case minifi::c2::Operation::UPDATE: {
+      case minifi::c2::Operation::update: {
         std::vector<std::unordered_map<std::string, std::string>> config_properties;
         const auto prop_reader = [this](const std::string& sensitive_props) { return configuration_->getString(sensitive_props); };
         const auto sensitive_props = minifi::Configuration::getSensitiveProperties(prop_reader);
@@ -569,7 +569,7 @@ class HeartbeatHandler : public ServerAwareHandler {
           if (auto value = configuration_->getRawValue(std::string(property_name))) {
             config_property.emplace("propertyValue", *value);
           }
-          config_property.emplace("validator", property_validator->getName());
+          config_property.emplace("validator", property_validator->getValidatorName());
           config_properties.push_back(config_property);
         }
         Metadata metadata;
@@ -579,16 +579,16 @@ class HeartbeatHandler : public ServerAwareHandler {
         verifyOperands<minifi::c2::UpdateOperand>(operation_node, operand_with_metadata);
         break;
       }
-      case minifi::c2::Operation::TRANSFER: {
+      case minifi::c2::Operation::transfer: {
         verifyOperands<minifi::c2::TransferOperand>(operation_node);
         break;
       }
-      case minifi::c2::Operation::CLEAR: {
+      case minifi::c2::Operation::clear: {
         verifyOperands<minifi::c2::ClearOperand>(operation_node);
         break;
       }
-      case minifi::c2::Operation::START:
-      case minifi::c2::Operation::STOP: {
+      case minifi::c2::Operation::start:
+      case minifi::c2::Operation::stop: {
         auto operands = getOperandsOfProperties(operation_node);
         assert(operands.find("c2") != operands.end());
         // FlowController is also present, but this handler has no way of knowing its UUID to test it
@@ -610,10 +610,10 @@ class HeartbeatHandler : public ServerAwareHandler {
     for (const auto& operation_node : agent_manifest["supportedOperations"].GetArray()) {
       assert(operation_node.HasMember("type"));
       operations.insert(operation_node["type"].GetString());
-      verifyProperties(operation_node, minifi::c2::Operation::parse(operation_node["type"].GetString(), {}, false), verify_components, disallowed_properties);
+      verifyProperties(operation_node, utils::enumCast<minifi::c2::Operation>(operation_node["type"].GetString(), true), verify_components, disallowed_properties);
     }
 
-    assert(operations == minifi::c2::Operation::values());
+    assert(operations == std::set<std::string>(magic_enum::enum_names<minifi::c2::Operation>().begin(), magic_enum::enum_names<minifi::c2::Operation>().end()));
   }
 
   std::shared_ptr<minifi::Configure> configuration_;

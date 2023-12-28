@@ -21,7 +21,6 @@
 #include <string>
 #include "../TestBase.h"
 #include "../Catch.h"
-#include "io/ClientSocket.h"
 #include "core/Processor.h"
 #include "../../controller/Controller.h"
 #include "core/controller/ControllerService.h"
@@ -70,7 +69,7 @@ TEST_CASE("TestDisableProperty", "[test1]") {
   controller->initialize();
   controller->setProperty(minifi::controllers::UpdatePolicyControllerService::AllowAllProperties, "true");
   controller->setProperty(minifi::controllers::UpdatePolicyControllerService::DisallowedProperties, "anyproperty");
-  controller->updateProperty(minifi::controllers::UpdatePolicyControllerService::DisallowedProperties.getName(), "anyproperty2");
+  controller->updateProperty(minifi::controllers::UpdatePolicyControllerService::DisallowedProperties, "anyproperty2");
   controller->onEnable();
   REQUIRE(false == controller->canUpdate("anyproperty"));
   REQUIRE(false == controller->canUpdate("anyproperty2"));

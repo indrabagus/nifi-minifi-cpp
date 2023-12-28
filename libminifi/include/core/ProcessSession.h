@@ -58,7 +58,7 @@ class ProcessSession : public ReferenceContainer {
   /*!
    * Create a new process session
    */
-  explicit ProcessSession(std::shared_ptr<ProcessContext> processContext = nullptr);
+  explicit ProcessSession(std::shared_ptr<ProcessContext> processContext);
 
   // Destructor
   virtual ~ProcessSession();
@@ -87,9 +87,9 @@ class ProcessSession : public ReferenceContainer {
   // Transfer the FlowFile to the relationship
   virtual void transfer(const std::shared_ptr<core::FlowFile>& flow, const Relationship& relationship);
   // Put Attribute
-  void putAttribute(const std::shared_ptr<core::FlowFile>& flow, const std::string& key, const std::string& value);
+  void putAttribute(const std::shared_ptr<core::FlowFile>& flow, std::string_view key, const std::string& value);
   // Remove Attribute
-  void removeAttribute(const std::shared_ptr<core::FlowFile>& flow, const std::string& key);
+  void removeAttribute(const std::shared_ptr<core::FlowFile>& flow, std::string_view key);
   // Remove Flow File
   void remove(const std::shared_ptr<core::FlowFile> &flow);
   // Access the contents of the flow file as an input stream; returns null if the flow file has no content claim
@@ -103,13 +103,13 @@ class ProcessSession : public ReferenceContainer {
   // Read and write the flow file at the same time (eg. for processing it line by line)
   int64_t readWrite(const std::shared_ptr<core::FlowFile> &flow, const io::InputOutputStreamCallback& callback);
   // Replace content with buffer
-  void writeBuffer(const std::shared_ptr<core::FlowFile>& flow_file, gsl::span<const char> buffer);
-  void writeBuffer(const std::shared_ptr<core::FlowFile>& flow_file, gsl::span<const std::byte> buffer);
+  void writeBuffer(const std::shared_ptr<core::FlowFile>& flow_file, std::span<const char> buffer);
+  void writeBuffer(const std::shared_ptr<core::FlowFile>& flow_file, std::span<const std::byte> buffer);
   // Execute the given write/append callback against the content
   void append(const std::shared_ptr<core::FlowFile> &flow, const io::OutputStreamCallback& callback);
   // Append buffer to content
-  void appendBuffer(const std::shared_ptr<core::FlowFile>& flow, gsl::span<const char> buffer);
-  void appendBuffer(const std::shared_ptr<core::FlowFile>& flow, gsl::span<const std::byte> buffer);
+  void appendBuffer(const std::shared_ptr<core::FlowFile>& flow, std::span<const char> buffer);
+  void appendBuffer(const std::shared_ptr<core::FlowFile>& flow, std::span<const std::byte> buffer);
   // Penalize the flow
   void penalize(const std::shared_ptr<core::FlowFile> &flow);
 
@@ -124,8 +124,8 @@ class ProcessSession : public ReferenceContainer {
   void importFrom(io::InputStream&& stream, const std::shared_ptr<core::FlowFile> &flow);
 
   // import from the data source.
-  void import(std::string source, const std::shared_ptr<core::FlowFile> &flow, bool keepSource = true, uint64_t offset = 0);
-  DEPRECATED(/*deprecated in*/ 0.7.0, /*will remove in */ 2.0) void import(std::string source, std::vector<std::shared_ptr<FlowFile>> &flows, bool keepSource, uint64_t offset, char inputDelimiter); // NOLINT
+  void import(const std::string& source, const std::shared_ptr<core::FlowFile> &flow, bool keepSource = true, uint64_t offset = 0);
+  DEPRECATED(/*deprecated in*/ 0.7.0, /*will remove in */ 2.0) void import(const std::string& source, std::vector<std::shared_ptr<FlowFile>> &flows, bool keepSource, uint64_t offset, char inputDelimiter); // NOLINT
   DEPRECATED(/*deprecated in*/ 0.8.0, /*will remove in */ 2.0) void import(const std::string& source, std::vector<std::shared_ptr<FlowFile>> &flows, uint64_t offset, char inputDelimiter);
 
   /**
@@ -150,6 +150,8 @@ class ProcessSession : public ReferenceContainer {
   void setMetrics(const std::shared_ptr<ProcessorMetrics>& metrics) {
     metrics_ = metrics;
   }
+
+  bool hasBeenTransferred(const core::FlowFile &flow) const;
 
 // Prevent default copy constructor and assignment operation
 // Only support pass by reference or pointer

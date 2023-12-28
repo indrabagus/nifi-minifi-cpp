@@ -23,7 +23,6 @@ extern "C" {
 #include "api/CoreV1API.h"
 }
 
-#include "core/PropertyBuilder.h"
 #include "core/Resource.h"
 #include "core/logging/LoggerConfiguration.h"
 #include "Exception.h"
@@ -31,20 +30,6 @@ extern "C" {
 #include "utils/StringUtils.h"
 
 namespace org::apache::nifi::minifi::controllers {
-
-const core::Property KubernetesControllerService::NamespaceFilter{
-    core::PropertyBuilder::createProperty("Namespace Filter")
-        ->withDescription("Limit the output to pods in namespaces which match this regular expression")
-        ->withDefaultValue<std::string>("default")
-        ->build()};
-const core::Property KubernetesControllerService::PodNameFilter{
-    core::PropertyBuilder::createProperty("Pod Name Filter")
-        ->withDescription("If present, limit the output to pods the name of which matches this regular expression")
-        ->build()};
-const core::Property KubernetesControllerService::ContainerNameFilter{
-    core::PropertyBuilder::createProperty("Container Name Filter")
-        ->withDescription("If present, limit the output to containers the name of which matches this regular expression")
-        ->build()};
 
 KubernetesControllerService::KubernetesControllerService(const std::string& name, const utils::Identifier& uuid)
   : AttributeProviderService(name, uuid),
@@ -62,7 +47,7 @@ void KubernetesControllerService::initialize() {
   if (initialized_) { return; }
 
   ControllerService::initialize();
-  setSupportedProperties(properties());
+  setSupportedProperties(Properties);
   initialized_ = true;
 }
 
@@ -70,21 +55,21 @@ void KubernetesControllerService::onEnable() {
   try {
     api_client_ = std::make_unique<kubernetes::ApiClient>();
   } catch (const std::runtime_error& ex) {
-    logger_->log_error("Could not create the API client in the Kubernetes Controller Service: %s", ex.what());
+    logger_->log_error("Could not create the API client in the Kubernetes Controller Service: {}", ex.what());
   }
 
   std::string namespace_filter;
-  if (getProperty(NamespaceFilter.getName(), namespace_filter) && !namespace_filter.empty()) {
+  if (getProperty(NamespaceFilter, namespace_filter) && !namespace_filter.empty()) {
     namespace_filter_ = utils::Regex{namespace_filter};
   }
 
   std::string pod_name_filter;
-  if (getProperty(PodNameFilter.getName(), pod_name_filter) && !pod_name_filter.empty()) {
+  if (getProperty(PodNameFilter, pod_name_filter) && !pod_name_filter.empty()) {
     pod_name_filter_ = utils::Regex{pod_name_filter};
   }
 
   std::string container_name_filter;
-  if (getProperty(ContainerNameFilter.getName(), container_name_filter) && !container_name_filter.empty()) {
+  if (getProperty(ContainerNameFilter, container_name_filter) && !container_name_filter.empty()) {
     container_name_filter_ = utils::Regex{container_name_filter};
   }
 }
@@ -109,7 +94,7 @@ v1_pod_list_unique_ptr getPods(gsl::not_null<apiClient_t*> api_client, core::log
                                                                     nullptr,  // resourceVersionMatch
                                                                     0,  // timeoutSeconds
                                                                     0)};  // watch
-  logger.log_info("The return code of the Kubernetes API listPodForAllNamespaces call: %ld", api_client->response_code);
+  logger.log_info("The return code of the Kubernetes API listPodForAllNamespaces call: {}", api_client->response_code);
   return pod_list;
 }
 
@@ -153,7 +138,7 @@ std::optional<std::vector<KubernetesControllerService::AttributeMap>> Kubernetes
     }
   }
 
-  logger_->log_info("Found %zu containers (after regex filtering) in %ld Kubernetes pods (unfiltered)", container_attribute_maps.size(), pod_list->items->count);
+  logger_->log_info("Found {} containers (after regex filtering) in {} Kubernetes pods (unfiltered)", container_attribute_maps.size(), pod_list->items->count);
   return container_attribute_maps;
 }
 

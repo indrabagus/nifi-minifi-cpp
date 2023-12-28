@@ -31,13 +31,13 @@ namespace org::apache::nifi::minifi::processors {
 
 class NetworkListenerProcessor : public core::Processor {
  public:
-  NetworkListenerProcessor(std::string name, const utils::Identifier& uuid, std::shared_ptr<core::logging::Logger> logger)
-    : core::Processor(std::move(name), uuid),
+  NetworkListenerProcessor(std::string_view name, const utils::Identifier& uuid, std::shared_ptr<core::logging::Logger> logger)
+    : core::Processor(name, uuid),
       logger_(std::move(logger)) {
   }
   ~NetworkListenerProcessor() override;
 
-  void onTrigger(const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSession>& session) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
@@ -57,7 +57,7 @@ class NetworkListenerProcessor : public core::Processor {
   }
 
  protected:
-  void startTcpServer(const core::ProcessContext& context, const core::Property& ssl_context_property, const core::Property& client_auth_property);
+  void startTcpServer(const core::ProcessContext& context, const core::PropertyReference& ssl_context_property, const core::PropertyReference& client_auth_property);
   void startUdpServer(const core::ProcessContext& context);
 
  private:
@@ -71,9 +71,9 @@ class NetworkListenerProcessor : public core::Processor {
   ServerOptions readServerOptions(const core::ProcessContext& context);
 
   virtual void transferAsFlowFile(const utils::net::Message& message, core::ProcessSession& session) = 0;
-  virtual const core::Property& getMaxBatchSizeProperty() = 0;
-  virtual const core::Property& getMaxQueueSizeProperty() = 0;
-  virtual const core::Property& getPortProperty() = 0;
+  virtual core::PropertyReference getMaxBatchSizeProperty() = 0;
+  virtual core::PropertyReference getMaxQueueSizeProperty() = 0;
+  virtual core::PropertyReference getPortProperty() = 0;
 
   uint64_t max_batch_size_{500};
   std::unique_ptr<utils::net::Server> server_;

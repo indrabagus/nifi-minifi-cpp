@@ -17,11 +17,9 @@
 # under the License.
 #
 
-cmake_minimum_required (VERSION 3.16)
+cmake_minimum_required (VERSION 3.24)
 cmake_policy(SET CMP0096 NEW) # policy to preserve the leading zeros in PROJECT_VERSION_{MAJOR,MINOR,PATCH,TWEAK}
-if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
-    cmake_policy(SET CMP0135 NEW) # policy to set the timestamps of extracted contents to the time of extraction
-endif()
+cmake_policy(SET CMP0135 NEW) # policy to set the timestamps of extracted contents to the time of extraction
 project(nifi-libcore-minifi VERSION 0.15.0)
 set(PROJECT_NAME "nifi-libcore-minifi")
 
@@ -93,7 +91,8 @@ endif()
 
 include(RangeV3)
 include(Asio)
-list(APPEND LIBMINIFI_LIBRARIES yaml-cpp ZLIB::ZLIB concurrentqueue RapidJSON spdlog Threads::Threads gsl-lite libsodium range-v3 expected-lite date::date date::tz asio)
+include(MagicEnum)
+list(APPEND LIBMINIFI_LIBRARIES yaml-cpp ZLIB::ZLIB concurrentqueue RapidJSON spdlog Threads::Threads gsl-lite libsodium range-v3 expected-lite date::date date::tz asio magic_enum)
 if(NOT WIN32)
     list(APPEND LIBMINIFI_LIBRARIES OSSP::libuuid++)
 endif()
@@ -104,6 +103,9 @@ if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VER
     list(APPEND LIBMINIFI_LIBRARIES stdc++fs)
 endif()
 target_link_libraries(core-minifi ${CMAKE_DL_LIBS} ${LIBMINIFI_LIBRARIES})
+if (UNIX AND (CMAKE_SYSTEM_PROCESSOR MATCHES "armv7"))
+    target_link_libraries(core-minifi "-latomic")
+endif()
 
 SET (LIBMINIFI core-minifi PARENT_SCOPE)
 

@@ -17,150 +17,27 @@
 
 #pragma once
 
-#include <cstring>
 #include <optional>
-#include <set>
 #include <string>
+#include <string_view>
+#include <stdexcept>
 
-#include "StringUtils.h"
-#include "Macro.h"
+#include "magic_enum.hpp"
 
-namespace org {
-namespace apache {
-namespace nifi {
-namespace minifi {
-namespace utils {
+namespace org::apache::nifi::minifi::utils {
 
-#define INCLUDE_BASE_FIELD(x) \
-  x = Base::x
+template<typename T>
+T enumCast(std::string_view str, bool case_insensitive = false) {
+  std::optional<T> enum_optional_value;
+  if (case_insensitive) {
+    enum_optional_value = magic_enum::enum_cast<T>(str, magic_enum::case_insensitive);
+  } else {
+    enum_optional_value = magic_enum::enum_cast<T>(str);
+  }
+  if (enum_optional_value) {
+    return enum_optional_value.value();
+  }
+  throw std::runtime_error("Cannot convert \"" + std::string(str) + "\" to enum class value of enum type \"" + std::string(magic_enum::enum_type_name<T>()) + "\"");
+}
 
-// [[maybe_unused]] on public members to avoid warnings when used inside an anonymous namespace
-#define SMART_ENUM_BODY(Clazz, ...) \
-    constexpr Clazz(Type value = static_cast<Type>(-1)) : value_{value} {} \
-    explicit Clazz(const std::string& str) : value_{parse(str.c_str()).value_} {} \
-    explicit Clazz(const char* str) : value_{parse(str).value_} {} \
-    explicit Clazz(std::nullptr_t) = delete; \
-   private: \
-    Type value_; \
-   public: \
-    [[maybe_unused]] Type value() const { \
-      return value_; \
-    } \
-    struct detail : Base::detail { \
-      static std::set<std::string> values() { \
-        static constexpr const char* ownValues[]{ \
-          FOR_EACH(SECOND, COMMA, (__VA_ARGS__)) \
-        }; \
-        std::set<std::string> values = Base::detail::values(); \
-        for (auto value : ownValues) { \
-          values.emplace(value); \
-        } \
-        return values; \
-      } \
-      static const char* toStringImpl(Type a, const char* DerivedName) { \
-        static constexpr const char* values[]{ \
-          FOR_EACH(SECOND, COMMA, (__VA_ARGS__)) \
-        }; \
-        int index = static_cast<int>(a); \
-        if (Base::length <= index && index < length) { \
-          return values[index - Base::length]; \
-        } \
-        return Base::detail::toStringImpl(static_cast<Base::Type>(a), DerivedName); \
-      } \
-    }; \
-    static constexpr int length = Base::length + COUNT(__VA_ARGS__); \
-    [[maybe_unused]] friend const char* toString(Type a) { \
-      return detail::toStringImpl(a, #Clazz); \
-    } \
-    [[maybe_unused]] const char* toString() const { \
-      return detail::toStringImpl(value_, #Clazz); \
-    } \
-    [[maybe_unused]] const char* toStringOr(const char* fallback) const { \
-      if (*this) { \
-        return toString(); \
-      } \
-      return fallback; \
-    } \
-    [[maybe_unused]] static std::set<std::string> values() { \
-      return detail::values(); \
-    } \
-    [[maybe_unused]] friend bool operator==(Clazz lhs, Clazz rhs) { \
-      return lhs.value_ == rhs.value_; \
-    } \
-    [[maybe_unused]] friend bool operator!=(Clazz lhs, Clazz rhs) { \
-      return lhs.value_ != rhs.value_; \
-    } \
-    [[maybe_unused]] friend bool operator<(Clazz lhs, Clazz rhs) { \
-      return lhs.value_ < rhs.value_;\
-    } \
-    [[maybe_unused]] explicit operator bool() const { \
-      int idx = static_cast<int>(value_); \
-      return 0 <= idx && idx < length; \
-    } \
-    [[maybe_unused]] static Clazz parse(const char* str, const ::std::optional<Clazz>& fallback = {}, bool caseSensitive = true) { \
-      for (int idx = 0; idx < length; ++idx) { \
-        if (::org::apache::nifi::minifi::utils::StringUtils::equals(str, detail::toStringImpl(static_cast<Type>(idx), #Clazz), caseSensitive)) \
-          return static_cast<Type>(idx); \
-      } \
-      if (fallback) { \
-        return fallback.value(); \
-      } \
-      throw std::runtime_error(std::string("Cannot convert \"") + str + "\" to " #Clazz); \
-    } \
-    template<typename T, typename = typename std::enable_if<std::is_base_of<typename T::detail, detail>::value>::type> \
-    [[maybe_unused]] T cast() const { \
-      if (0 <= value_ && value_ < T::length) { \
-        return static_cast<typename T::Type>(value_); \
-      } \
-      return {}; \
-    }
-
-/**
- * These macros provide an encapsulation of enum-like behavior offering the following:
- *  - switch safety: the compiler can detect if some enum cases are not handled
- *  - string conversion: convert between enum instances and their string representations (toString, parse)
- *  - validity: check if it contains a value that is an invalid enum value
- *  - extensibility: extend an enum with new values and safely* cast from derived to base
- *                   (* "safely" here means that there is no casting between unrelated enums)
- *  - reflection: access the set of all string representations
- */
-
-#define SMART_ENUM(Clazz, ...) \
-  struct Clazz { \
-    using Base = ::org::apache::nifi::minifi::utils::EnumBase; \
-    enum Type : int { \
-      FOR_EACH(FIRST, COMMA, (__VA_ARGS__)) \
-    }; \
-    SMART_ENUM_BODY(Clazz, __VA_ARGS__) \
-  };
-
-#define SMART_ENUM_EXTEND(Clazz, base, base_fields, ...) \
-  struct Clazz { \
-    using Base = base; \
-    enum Type : int { \
-      FOR_EACH(INCLUDE_BASE_FIELD, COMMA, base_fields), \
-      FOR_EACH(FIRST, COMMA, (__VA_ARGS__)) \
-    }; \
-    static_assert((COUNT base_fields) == Base::length, "Must enumerate all base instance values"); \
-    SMART_ENUM_BODY(Clazz, __VA_ARGS__) \
-  };
-
-struct EnumBase {
-  enum Type {};
-  static constexpr int length = 0;
-  struct detail {
-    static std::set<std::string> values() {
-      return {};
-    }
-    static const char* toStringImpl(Type a, const char* DerivedName) {
-      throw std::runtime_error(std::string("Cannot stringify unknown instance in enum \"") + DerivedName + "\" : \""
-                               + std::to_string(static_cast<int>(a)) + "\"");
-    }
-  };
-};
-
-}  // namespace utils
-}  // namespace minifi
-}  // namespace nifi
-}  // namespace apache
-}  // namespace org
+}  // namespace org::apache::nifi::minifi::utils

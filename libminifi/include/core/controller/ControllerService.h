@@ -61,19 +61,19 @@ enum ControllerServiceState {
 class ControllerService : public ConfigurableComponent, public Connectable {
  public:
   ControllerService()
-      : Connectable(core::getClassName<ControllerService>()),
+      : Connectable(core::className<ControllerService>()),
         configuration_(std::make_shared<Configure>()) {
     current_state_ = DISABLED;
   }
 
-  explicit ControllerService(std::string name, const utils::Identifier &uuid)
-      : Connectable(std::move(name), uuid),
+  explicit ControllerService(std::string_view name, const utils::Identifier &uuid)
+      : Connectable(name, uuid),
         configuration_(std::make_shared<Configure>()) {
     current_state_ = DISABLED;
   }
 
-  explicit ControllerService(std::string name)
-      : Connectable(std::move(name)),
+  explicit ControllerService(std::string_view name)
+      : Connectable(name),
         configuration_(std::make_shared<Configure>()) {
     current_state_ = DISABLED;
   }

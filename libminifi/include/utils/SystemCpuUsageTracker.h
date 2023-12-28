@@ -16,6 +16,8 @@
  */
 #pragma once
 
+#include <cstdint>
+
 #ifdef __linux__
 #include <stdlib.h>
 #include <stdio.h>
@@ -24,7 +26,6 @@
 #endif
 
 #ifdef WIN32
-#include <cstdint>
 #include "TCHAR.h"
 #include "windows.h"
 #endif
@@ -36,11 +37,7 @@
 #include <mach/vm_map.h>
 #endif
 
-namespace org {
-namespace apache {
-namespace nifi {
-namespace minifi {
-namespace utils {
+namespace org::apache::nifi::minifi::utils {
 
 class SystemCpuUsageTrackerBase {
  public:
@@ -121,8 +118,4 @@ class SystemCpuUsageTracker : public SystemCpuUsageTrackerBase {
 };
 #endif  // macOS
 
-} /* namespace utils */
-} /* namespace minifi */
-} /* namespace nifi */
-} /* namespace apache */
-} /* namespace org */
+}  // namespace org::apache::nifi::minifi::utils

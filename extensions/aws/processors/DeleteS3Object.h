@@ -23,9 +23,12 @@
 #include <string>
 #include <utility>
 
+#include "core/PropertyDefinition.h"
+#include "core/PropertyDefinitionBuilder.h"
 #include "S3Processor.h"
 #include "utils/ArrayUtils.h"
 #include "utils/GeneralUtils.h"
+
 
 template<typename T>
 class S3TestsFixture;
@@ -36,18 +39,23 @@ class DeleteS3Object : public S3Processor {
  public:
   EXTENSIONAPI static constexpr const char* Description = "Deletes FlowFiles on an Amazon S3 Bucket. If attempting to delete a file that does not exist, FlowFile is routed to success.";
 
-  static const core::Property ObjectKey;
-  static const core::Property Version;
-  static auto properties() {
-    return minifi::utils::array_cat(S3Processor::properties(), std::array{
+  EXTENSIONAPI static constexpr auto ObjectKey = core::PropertyDefinitionBuilder<>::createProperty("Object Key")
+    .withDescription("The key of the S3 object. If none is given the filename attribute will be used by default.")
+    .supportsExpressionLanguage(true)
+    .build();
+  EXTENSIONAPI static constexpr auto Version = core::PropertyDefinitionBuilder<>::createProperty("Version")
+    .withDescription("The Version of the Object to delete")
+    .supportsExpressionLanguage(true)
+    .build();
+  EXTENSIONAPI static constexpr auto Properties = minifi::utils::array_cat(S3Processor::Properties, std::array<core::PropertyReference, 2>{
       ObjectKey,
       Version
-    });
-  }
+  });
 
-  EXTENSIONAPI static const core::Relationship Success;
-  EXTENSIONAPI static const core::Relationship Failure;
-  static auto relationships() { return std::array{Success, Failure}; }
+
+  EXTENSIONAPI static constexpr auto Success = core::RelationshipDefinition{"success", "FlowFiles are routed to success relationship"};
+  EXTENSIONAPI static constexpr auto Failure = core::RelationshipDefinition{"failure", "FlowFiles are routed to failure relationship"};
+  EXTENSIONAPI static constexpr auto Relationships = std::array{Success, Failure};
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = true;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
@@ -63,17 +71,17 @@ class DeleteS3Object : public S3Processor {
   ~DeleteS3Object() override = default;
 
   void initialize() override;
-  void onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
 
  private:
   friend class ::S3TestsFixture<DeleteS3Object>;
 
-  explicit DeleteS3Object(std::string name, const minifi::utils::Identifier& uuid, std::unique_ptr<aws::s3::S3RequestSender> s3_request_sender)
-    : S3Processor(std::move(name), uuid, core::logging::LoggerFactory<DeleteS3Object>::getLogger(uuid), std::move(s3_request_sender)) {
+  explicit DeleteS3Object(std::string_view name, const minifi::utils::Identifier& uuid, std::unique_ptr<aws::s3::S3RequestSender> s3_request_sender)
+    : S3Processor(name, uuid, core::logging::LoggerFactory<DeleteS3Object>::getLogger(uuid), std::move(s3_request_sender)) {
   }
 
   std::optional<aws::s3::DeleteObjectRequestParameters> buildDeleteS3RequestParams(
-    const std::shared_ptr<core::ProcessContext> &context,
+    core::ProcessContext& context,
     const std::shared_ptr<core::FlowFile> &flow_file,
     const CommonProperties &common_properties) const;
 };

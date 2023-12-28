@@ -30,40 +30,33 @@
 #include "core/ProcessSession.h"
 #include "core/Resource.h"
 
-namespace org {
-namespace apache {
-namespace nifi {
-namespace minifi {
-namespace processors {
+#include "utils/OsUtils.h"
 
-const core::Relationship TailEventLog::Success("success", "All files, containing log events, are routed to success");
-
-const core::Property TailEventLog::LogSourceFileName("Log Source", "Log Source from which to read events", "");
-const core::Property TailEventLog::MaxEventsPerFlowFile("Max Events Per FlowFile", "Events per flow file", "1");
+namespace org::apache::nifi::minifi::processors {
 
 void TailEventLog::initialize() {
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
-void TailEventLog::onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &sessionFactory) {
+void TailEventLog::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& session_factory) {
   std::string value;
 
-  if (context->getProperty(LogSourceFileName.getName(), value)) {
+  if (context.getProperty(LogSourceFileName, value)) {
     log_source_ = value;
   }
-  if (context->getProperty(MaxEventsPerFlowFile.getName(), value)) {
+  if (context.getProperty(MaxEventsPerFlowFile, value)) {
     core::Property::StringToInt(value, max_events_);
   }
 
   log_handle_ = OpenEventLog(NULL, log_source_.c_str());
 
-  logger_->log_trace("TailEventLog configured to tail %s", log_source_);
+  logger_->log_trace("TailEventLog configured to tail {}", log_source_);
 }
 
-void TailEventLog::onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) {
+void TailEventLog::onTrigger(core::ProcessContext& context, core::ProcessSession& session) {
   if (log_handle_ == nullptr) {
-    logger_->log_debug("Handle could not be created for %s", log_source_);
+    logger_->log_debug("Handle could not be created for {}", log_source_);
   }
 
   BYTE buffer[MAX_RECORD_BUFFER_SIZE];
@@ -76,15 +69,15 @@ void TailEventLog::onTrigger(const std::shared_ptr<core::ProcessContext> &contex
   GetNumberOfEventLogRecords(log_handle_, &num_records_);
   current_record_ = num_records_-max_events_;
 
-  logger_->log_trace("%d and %d", current_record_, num_records_);
+  logger_->log_trace("{} and {}", current_record_, num_records_);
 
   if (ReadEventLog(log_handle_, EVENTLOG_FORWARDS_READ | EVENTLOG_SEEK_READ, current_record_, event_record, MAX_RECORD_BUFFER_SIZE, &bytes_to_read, &min_bytes)) {
     if (bytes_to_read == 0) {
       logger_->log_debug("Yielding");
-      context->yield();
+      context.yield();
     }
     while (bytes_to_read > 0) {
-      auto flowFile = session->create();
+      auto flowFile = session.create();
       if (flowFile == nullptr)
         return;
 
@@ -104,8 +97,8 @@ void TailEventLog::onTrigger(const std::shared_ptr<core::ProcessContext> &contex
 
       io::BufferStream stream(gsl::make_span(event_record + event_record->DataOffset, event_record->DataLength).as_span<std::byte>());
       // need an import from the data stream.
-      session->importFrom(stream, flowFile);
-      session->transfer(flowFile, Success);
+      session.importFrom(stream, flowFile);
+      session.transfer(flowFile, Success);
       bytes_to_read -= event_record->Length;
       event_record = reinterpret_cast<EVENTLOGRECORD *>((LPBYTE)event_record + event_record->Length);
     }
@@ -113,16 +106,13 @@ void TailEventLog::onTrigger(const std::shared_ptr<core::ProcessContext> &contex
     event_record = reinterpret_cast<EVENTLOGRECORD*>(&buffer);
     logger_->log_trace("All done no more");
   } else {
-    LogWindowsError();
+    auto last_error = utils::OsUtils::windowsErrorToErrorCode(GetLastError());
+    logger_->log_error("{}: {}", last_error, last_error.message());
     logger_->log_trace("Yielding due to error");
-    context->yield();
+    context.yield();
   }
 }
 
 REGISTER_RESOURCE(TailEventLog, Processor);
 
-} /* namespace processors */
-} /* namespace minifi */
-} /* namespace nifi */
-} /* namespace apache */
-} /* namespace org */
+}  // namespace org::apache::nifi::minifi::processors

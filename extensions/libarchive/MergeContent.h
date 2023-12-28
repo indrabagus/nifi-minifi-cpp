@@ -28,6 +28,8 @@
 #include "archive_entry.h"
 #include "archive.h"
 #include "core/logging/LoggerConfiguration.h"
+#include "core/PropertyDefinitionBuilder.h"
+#include "core/PropertyType.h"
 #include "serialization/FlowFileSerializer.h"
 #include "utils/ArrayUtils.h"
 #include "utils/gsl.h"
@@ -37,24 +39,24 @@ namespace org::apache::nifi::minifi::processors {
 
 namespace merge_content_options {
 
-constexpr const char *MERGE_STRATEGY_BIN_PACK = "Bin-Packing Algorithm";
-constexpr const char *MERGE_STRATEGY_DEFRAGMENT = "Defragment";
-constexpr const char *MERGE_FORMAT_TAR_VALUE = "TAR";
-constexpr const char *MERGE_FORMAT_ZIP_VALUE = "ZIP";
-constexpr const char *MERGE_FORMAT_CONCAT_VALUE = "Binary Concatenation";
-constexpr const char* MERGE_FORMAT_FLOWFILE_STREAM_V3_VALUE = "FlowFile Stream, v3";
-constexpr const char *DELIMITER_STRATEGY_FILENAME = "Filename";
-constexpr const char *DELIMITER_STRATEGY_TEXT = "Text";
-constexpr const char *ATTRIBUTE_STRATEGY_KEEP_COMMON = "Keep Only Common Attributes";
-constexpr const char *ATTRIBUTE_STRATEGY_KEEP_ALL_UNIQUE = "Keep All Unique Attributes";
+inline constexpr std::string_view MERGE_STRATEGY_BIN_PACK = "Bin-Packing Algorithm";
+inline constexpr std::string_view MERGE_STRATEGY_DEFRAGMENT = "Defragment";
+inline constexpr std::string_view MERGE_FORMAT_TAR_VALUE = "TAR";
+inline constexpr std::string_view MERGE_FORMAT_ZIP_VALUE = "ZIP";
+inline constexpr std::string_view MERGE_FORMAT_CONCAT_VALUE = "Binary Concatenation";
+inline constexpr std::string_view MERGE_FORMAT_FLOWFILE_STREAM_V3_VALUE = "FlowFile Stream, v3";
+inline constexpr std::string_view DELIMITER_STRATEGY_FILENAME = "Filename";
+inline constexpr std::string_view DELIMITER_STRATEGY_TEXT = "Text";
+inline constexpr std::string_view ATTRIBUTE_STRATEGY_KEEP_COMMON = "Keep Only Common Attributes";
+inline constexpr std::string_view ATTRIBUTE_STRATEGY_KEEP_ALL_UNIQUE = "Keep All Unique Attributes";
 
-} /* namespace merge_content_options */
+}  // namespace merge_content_options
 
 class MergeBin {
  public:
   virtual ~MergeBin() = default;
   // merge the flows in the bin
-  virtual void merge(core::ProcessContext *context, core::ProcessSession *session,
+  virtual void merge(core::ProcessSession &session,
       std::deque<std::shared_ptr<core::FlowFile>> &flows, FlowFileSerializer& serializer, const std::shared_ptr<core::FlowFile> &flowFile) = 0;
 };
 
@@ -62,7 +64,7 @@ class BinaryConcatenationMerge : public MergeBin {
  public:
   BinaryConcatenationMerge(std::string header, std::string footer, std::string demarcator);
 
-  void merge(core::ProcessContext* context, core::ProcessSession *session,
+  void merge(core::ProcessSession &session,
     std::deque<std::shared_ptr<core::FlowFile>>& flows, FlowFileSerializer& serializer, const std::shared_ptr<core::FlowFile>& merge_flow) override;
   // Nest Callback Class for write stream
   class WriteCallback {
@@ -154,8 +156,8 @@ class ArchiveMerge {
   // Nest Callback Class for write stream
   class WriteCallback {
    public:
-    WriteCallback(std::string merge_type, std::deque<std::shared_ptr<core::FlowFile>> &flows, FlowFileSerializer& serializer)
-        : merge_type_(std::move(merge_type)),
+    WriteCallback(std::string_view merge_type, std::deque<std::shared_ptr<core::FlowFile>> &flows, FlowFileSerializer& serializer)
+        : merge_type_(merge_type),
           flows_(flows),
           serializer_(serializer) {
       size_ = 0;
@@ -218,7 +220,7 @@ class ArchiveMerge {
           if (flow->getAttribute(BinFiles::TAR_PERMISSIONS_ATTRIBUTE, perm)) {
             try {
               permInt = std::stoi(perm);
-              logger_->log_debug("Merge Tar File %s permission %s", fileName, perm);
+              logger_->log_debug("Merge Tar File {} permission {}", fileName, perm);
               archive_entry_set_perm(entry, (mode_t) permInt);
             } catch (...) {
             }
@@ -240,13 +242,13 @@ class ArchiveMerge {
 
 class TarMerge: public ArchiveMerge, public MergeBin {
  public:
-  void merge(core::ProcessContext *context, core::ProcessSession *session, std::deque<std::shared_ptr<core::FlowFile>> &flows,
+  void merge(core::ProcessSession &session, std::deque<std::shared_ptr<core::FlowFile>> &flows,
              FlowFileSerializer& serializer, const std::shared_ptr<core::FlowFile> &merge_flow) override;
 };
 
 class ZipMerge: public ArchiveMerge, public MergeBin {
  public:
-  void merge(core::ProcessContext *context, core::ProcessSession *session, std::deque<std::shared_ptr<core::FlowFile>> &flows,
+  void merge(core::ProcessSession &session, std::deque<std::shared_ptr<core::FlowFile>> &flows,
              FlowFileSerializer& serializer, const std::shared_ptr<core::FlowFile> &merge_flow) override;
 };
 
@@ -254,7 +256,7 @@ class AttributeMerger {
  public:
   explicit AttributeMerger(std::deque<std::shared_ptr<org::apache::nifi::minifi::core::FlowFile>> &flows)
     : flows_(flows) {}
-  void mergeAttributes(core::ProcessSession *session, const std::shared_ptr<core::FlowFile> &merge_flow);
+  void mergeAttributes(core::ProcessSession &session, const std::shared_ptr<core::FlowFile> &merge_flow);
   virtual ~AttributeMerger() = default;
 
  protected:
@@ -285,6 +287,17 @@ class KeepAllUniqueAttributesMerger: public AttributeMerger {
   std::vector<std::string> removed_attributes_;
 };
 
+/**
+ * A processor that merges multiple correlated flow files to a single flow file
+ *
+ * Concepts:
+ * - Batch size: represents the maximum number of flow files to be processed from the incoming relationship
+ * - Bin (or bundle): represents a set of flow files that belong together defined by the processor properties. Correlated flow files are defined by the CorrelationAttributeName property which
+ *                    defines the attribute that provides the groupid for the bin the flow file belongs to
+ * - Ready bin: when a bin reaches a limit defined by the maximum age or the maximum size, the bin becomes ready, and ready bins can be merged
+ * - Group: a set of bins with the same groupid. In case a bin cannot accept a new flow files (e.g. it would go above its size limit), a new bin is created with this new flow file and added
+ *          to the same group of bins
+ */
 class MergeContent : public processors::BinFiles {
  public:
   explicit MergeContent(const std::string& name, const utils::Identifier& uuid = {})
@@ -301,17 +314,51 @@ class MergeContent : public processors::BinFiles {
       "MergeContent should be configured with only one incoming connection as it won't create grouped Flow Files."
       "This processor updates the mime.type attribute as appropriate.";
 
-  EXTENSIONAPI static const core::Property MergeStrategy;
-  EXTENSIONAPI static const core::Property MergeFormat;
-  EXTENSIONAPI static const core::Property CorrelationAttributeName;
-  EXTENSIONAPI static const core::Property DelimiterStrategy;
-  EXTENSIONAPI static const core::Property KeepPath;
-  EXTENSIONAPI static const core::Property Header;
-  EXTENSIONAPI static const core::Property Footer;
-  EXTENSIONAPI static const core::Property Demarcator;
-  EXTENSIONAPI static const core::Property AttributeStrategy;
-  static auto properties() {
-    return utils::array_cat(BinFiles::properties(), std::array{
+  EXTENSIONAPI static constexpr auto MergeStrategy = core::PropertyDefinitionBuilder<2>::createProperty("Merge Strategy")
+      .withDescription("Defragment or Bin-Packing Algorithm")
+      .withAllowedValues({merge_content_options::MERGE_STRATEGY_DEFRAGMENT, merge_content_options::MERGE_STRATEGY_BIN_PACK})
+      .withDefaultValue(merge_content_options::MERGE_STRATEGY_BIN_PACK)
+      .build();
+  EXTENSIONAPI static constexpr auto MergeFormat = core::PropertyDefinitionBuilder<4>::createProperty("Merge Format")
+      .withDescription("Merge Format")
+      .withAllowedValues({
+        merge_content_options::MERGE_FORMAT_CONCAT_VALUE,
+        merge_content_options::MERGE_FORMAT_TAR_VALUE,
+        merge_content_options::MERGE_FORMAT_ZIP_VALUE,
+        merge_content_options::MERGE_FORMAT_FLOWFILE_STREAM_V3_VALUE})
+      .withDefaultValue(merge_content_options::MERGE_FORMAT_CONCAT_VALUE)
+      .build();
+  EXTENSIONAPI static constexpr auto CorrelationAttributeName = core::PropertyDefinitionBuilder<>::createProperty("Correlation Attribute Name")
+      .withDescription("Correlation Attribute Name")
+      .build();
+  EXTENSIONAPI static constexpr auto DelimiterStrategy = core::PropertyDefinitionBuilder<2>::createProperty("Delimiter Strategy")
+      .withDescription("Determines if Header, Footer, and Demarcator should point to files")
+      .withAllowedValues({merge_content_options::DELIMITER_STRATEGY_FILENAME, merge_content_options::DELIMITER_STRATEGY_TEXT})
+      .withDefaultValue(merge_content_options::DELIMITER_STRATEGY_FILENAME)
+      .build();
+  EXTENSIONAPI static constexpr auto Header = core::PropertyDefinitionBuilder<>::createProperty("Header File")
+      .withDescription("Filename specifying the header to use")
+      .build();
+  EXTENSIONAPI static constexpr auto Footer = core::PropertyDefinitionBuilder<>::createProperty("Footer File")
+      .withDescription("Filename specifying the footer to use")
+      .build();
+  EXTENSIONAPI static constexpr auto Demarcator = core::PropertyDefinitionBuilder<>::createProperty("Demarcator File")
+      .withDescription("Filename specifying the demarcator to use")
+      .build();
+  EXTENSIONAPI static constexpr auto KeepPath = core::PropertyDefinitionBuilder<>::createProperty("Keep Path")
+      .withDescription("If using the Zip or Tar Merge Format, specifies whether or not the FlowFiles' paths should be included in their entry")
+      .withPropertyType(core::StandardPropertyTypes::BOOLEAN_TYPE)
+      .withDefaultValue("false")
+      .build();
+  EXTENSIONAPI static constexpr auto AttributeStrategy = core::PropertyDefinitionBuilder<2>::createProperty("Attribute Strategy")
+      .withDescription("Determines which FlowFile attributes should be added to the bundle. If 'Keep All Unique Attributes' is selected, "
+          "any attribute on any FlowFile that gets bundled will be kept unless its value conflicts with the value from another FlowFile "
+          "(in which case neither, or none, of the conflicting attributes will be kept). If 'Keep Only Common Attributes' is selected, "
+          "only the attributes that exist on all FlowFiles in the bundle, with the same value, will be preserved.")
+      .withAllowedValues({merge_content_options::ATTRIBUTE_STRATEGY_KEEP_COMMON, merge_content_options::ATTRIBUTE_STRATEGY_KEEP_ALL_UNIQUE})
+      .withDefaultValue(merge_content_options::ATTRIBUTE_STRATEGY_KEEP_COMMON)
+      .build();
+  EXTENSIONAPI static constexpr auto Properties = utils::array_cat(BinFiles::Properties, std::array<core::PropertyReference, 9>{
       MergeStrategy,
       MergeFormat,
       CorrelationAttributeName,
@@ -321,13 +368,11 @@ class MergeContent : public processors::BinFiles {
       Footer,
       Demarcator,
       AttributeStrategy
-    });
-  }
+  });
 
-  EXTENSIONAPI static const core::Relationship Merge;
-  static auto relationships() {
-    return utils::array_cat(BinFiles::relationships(), std::array{Merge});
-  }
+
+  EXTENSIONAPI static constexpr auto Merge = core::RelationshipDefinition{"merged", "The FlowFile containing the merged content"};
+  EXTENSIONAPI static constexpr auto Relationships = utils::array_cat(BinFiles::Relationships, std::array{Merge});
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
@@ -336,14 +381,14 @@ class MergeContent : public processors::BinFiles {
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  void onSchedule(core::ProcessContext *context, core::ProcessSessionFactory *sessionFactory) override;
-  void onTrigger(core::ProcessContext *context, core::ProcessSession *session) override;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& sessionFactory) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
   void initialize() override;
-  bool processBin(core::ProcessContext *context, core::ProcessSession *session, std::unique_ptr<Bin> &bin) override;
+  bool processBin(core::ProcessSession &session, std::unique_ptr<Bin> &bin) override;
 
  protected:
   // Returns a group ID representing a bin. This allows flow files to be binned into like groups
-  std::string getGroupId(core::ProcessContext *context, const std::shared_ptr<core::FlowFile>& flow) override;
+  std::string getGroupId(const std::shared_ptr<core::FlowFile>& flow) override;
   // check whether the defragment bin is validate
   static bool checkDefragment(std::unique_ptr<Bin> &bin);
 

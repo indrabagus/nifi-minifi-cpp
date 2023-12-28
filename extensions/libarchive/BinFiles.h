@@ -29,6 +29,9 @@
 #include "FlowFileRecord.h"
 #include "core/Processor.h"
 #include "core/ProcessSession.h"
+#include "core/PropertyDefinitionBuilder.h"
+#include "core/PropertyType.h"
+#include "core/RelationshipDefinition.h"
 #include "core/logging/LoggerConfiguration.h"
 #include "utils/gsl.h"
 #include "utils/Id.h"
@@ -37,13 +40,8 @@
 
 namespace org::apache::nifi::minifi::processors {
 
-// Bin Class
 class Bin {
  public:
-  // Constructor
-  /*!
-   * Create a new Bin. Note: this object is not thread safe
-   */
   explicit Bin(const uint64_t &minSize, const uint64_t &maxSize, const size_t &minEntries, const size_t & maxEntries, std::string fileCount, std::string groupId)
       : minSize_(minSize),
         maxSize_(maxSize),
@@ -54,12 +52,11 @@ class Bin {
     queued_data_size_ = 0;
     creation_dated_ = std::chrono::system_clock::now();
     uuid_ = utils::IdGenerator::getIdGenerator()->generate();
-    logger_->log_debug("Bin %s for group %s created", getUUIDStr(), groupId_);
+    logger_->log_debug("Bin {} for group {} created", getUUIDStr(), groupId_);
   }
   virtual ~Bin() {
-    logger_->log_debug("Bin %s for group %s destroyed", getUUIDStr(), groupId_);
+    logger_->log_debug("Bin {} for group {} destroyed", getUUIDStr(), groupId_);
   }
-  // check whether the bin is full
   [[nodiscard]] bool isFull() const {
     return queued_data_size_ >= maxSize_ || queue_.size() >= maxEntries_;
   }
@@ -67,14 +64,12 @@ class Bin {
   [[nodiscard]] bool isReadyForMerge() const {
     return closed_ || isFull() || (queued_data_size_ >= minSize_ && queue_.size() >= minEntries_);
   }
-  // check whether the bin is older than the time specified in msec
   [[nodiscard]] bool isOlderThan(const std::chrono::milliseconds duration) const {
     return std::chrono::system_clock::now() > (creation_dated_ + duration);
   }
   std::deque<std::shared_ptr<core::FlowFile>>& getFlowFile() {
     return queue_;
   }
-  // offer the flowfile to the bin
   bool offer(const std::shared_ptr<core::FlowFile>& flow) {
     if (!fileCount_.empty()) {
       std::string value;
@@ -96,22 +91,19 @@ class Bin {
 
     queue_.push_back(flow);
     queued_data_size_ += flow->getSize();
-    logger_->log_debug("Bin %s for group %s offer size %zu byte %" PRIu64 " min_entry %zu max_entry %zu", getUUIDStr(), groupId_, queue_.size(), queued_data_size_, minEntries_, maxEntries_);
+    logger_->log_debug("Bin {} for group {} offer size {} byte {} min_entry {} max_entry {}", getUUIDStr(), groupId_, queue_.size(), queued_data_size_, minEntries_, maxEntries_);
 
     return true;
   }
-  // getBinAge
   [[nodiscard]] std::chrono::system_clock::time_point getCreationDate() const {
     return creation_dated_;
   }
   [[nodiscard]] int getSize() const {
     return gsl::narrow<int>(queue_.size());
   }
-
   [[nodiscard]] utils::SmallString<36> getUUIDStr() const {
     return uuid_.to_string();
   }
-
   [[nodiscard]] std::string getGroupId() const {
     return groupId_;
   }
@@ -121,20 +113,16 @@ class Bin {
   uint64_t maxSize_;
   size_t maxEntries_;
   size_t minEntries_;
-  // Queued data size
   uint64_t queued_data_size_;
   bool closed_{false};
-  // Queue for the Flow File
   std::deque<std::shared_ptr<core::FlowFile>> queue_;
   std::chrono::system_clock::time_point creation_dated_;
   std::string fileCount_;
   std::string groupId_;
   std::shared_ptr<core::logging::Logger> logger_ = core::logging::LoggerFactory<Bin>::getLogger();
-  // A global unique identifier
   utils::Identifier uuid_;
 };
 
-// BinManager Class
 class BinManager {
  public:
   virtual ~BinManager() {
@@ -172,8 +160,8 @@ class BinManager {
   void gatherReadyBins();
   // marks oldest bin as ready
   void removeOldestBin();
-  // get ready bin from binManager
   void getReadyBin(std::deque<std::unique_ptr<Bin>> &retBins);
+  void addReadyBin(std::unique_ptr<Bin> ready_bin);
 
  private:
   std::mutex mutex_;
@@ -199,15 +187,39 @@ class BinFiles : public core::Processor {
 
   EXTENSIONAPI static constexpr const char* Description = "Bins flow files into buckets based on the number of entries or size of entries";
 
-  EXTENSIONAPI static const core::Property MinSize;
-  EXTENSIONAPI static const core::Property MaxSize;
-  EXTENSIONAPI static const core::Property MinEntries;
-  EXTENSIONAPI static const core::Property MaxEntries;
-  EXTENSIONAPI static const core::Property MaxBinCount;
-  EXTENSIONAPI static const core::Property MaxBinAge;
-  EXTENSIONAPI static const core::Property BatchSize;
-  static auto properties() {
-    return std::array{
+  EXTENSIONAPI static constexpr auto MinSize = core::PropertyDefinitionBuilder<>::createProperty("Minimum Group Size")
+      .withDescription("The minimum size of for the bundle")
+      .withPropertyType(core::StandardPropertyTypes::UNSIGNED_LONG_TYPE)
+      .withDefaultValue("0")
+      .build();
+  EXTENSIONAPI static constexpr auto MaxSize = core::PropertyDefinitionBuilder<>::createProperty("Maximum Group Size")
+      .withDescription("The maximum size for the bundle. If not specified, there is no maximum.")
+      .withPropertyType(core::StandardPropertyTypes::UNSIGNED_LONG_TYPE)
+      .build();
+  EXTENSIONAPI static constexpr auto MinEntries = core::PropertyDefinitionBuilder<>::createProperty("Minimum Number of Entries")
+      .withDescription("The minimum number of files to include in a bundle")
+      .withPropertyType(core::StandardPropertyTypes::UNSIGNED_INT_TYPE)
+      .withDefaultValue("1")
+      .build();
+  EXTENSIONAPI static constexpr auto MaxEntries = core::PropertyDefinitionBuilder<>::createProperty("Maximum Number of Entries")
+      .withDescription("The maximum number of files to include in a bundle. If not specified, there is no maximum.")
+      .withPropertyType(core::StandardPropertyTypes::UNSIGNED_INT_TYPE)
+      .build();
+  EXTENSIONAPI static constexpr auto MaxBinAge = core::PropertyDefinitionBuilder<>::createProperty("Max Bin Age")
+      .withDescription("The maximum age of a Bin that will trigger a Bin to be complete. Expected format is <duration> <time unit>")
+      .withPropertyType(core::StandardPropertyTypes::TIME_PERIOD_TYPE)
+      .build();
+  EXTENSIONAPI static constexpr auto MaxBinCount = core::PropertyDefinitionBuilder<>::createProperty("Maximum number of Bins")
+      .withDescription("Specifies the maximum number of bins that can be held in memory at any one time")
+      .withPropertyType(core::StandardPropertyTypes::UNSIGNED_INT_TYPE)
+      .withDefaultValue("100")
+      .build();
+  EXTENSIONAPI static constexpr auto BatchSize = core::PropertyDefinitionBuilder<>::createProperty("Batch Size")
+      .withDescription("Maximum number of FlowFiles processed in a single session")
+      .withPropertyType(core::StandardPropertyTypes::UNSIGNED_INT_TYPE)
+      .withDefaultValue("1")
+      .build();
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 7>{
       MinSize,
       MaxSize,
       MinEntries,
@@ -215,17 +227,17 @@ class BinFiles : public core::Processor {
       MaxBinCount,
       MaxBinAge,
       BatchSize
-    };
-  }
+  };
 
-  EXTENSIONAPI static const core::Relationship Failure;
-  EXTENSIONAPI static const core::Relationship Original;
-  static auto relationships() {
-    return std::array{
+
+  EXTENSIONAPI static constexpr auto Failure = core::RelationshipDefinition{"failure",
+      "If the bundle cannot be created, all FlowFiles that would have been used to create the bundle will be transferred to failure"};
+  EXTENSIONAPI static constexpr auto Original = core::RelationshipDefinition{"original",
+      "The FlowFiles that were used to create the bundle"};
+  EXTENSIONAPI static constexpr auto Relationships = std::array{
       Failure,
       Original
-    };
-  }
+  };
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
@@ -234,7 +246,6 @@ class BinFiles : public core::Processor {
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  // attributes
   EXTENSIONAPI static const char *FRAGMENT_ID_ATTRIBUTE;
   EXTENSIONAPI static const char *FRAGMENT_INDEX_ATTRIBUTE;
   EXTENSIONAPI static const char *FRAGMENT_COUNT_ATTRIBUTE;
@@ -245,10 +256,8 @@ class BinFiles : public core::Processor {
   EXTENSIONAPI static const char *SEGMENT_ORIGINAL_FILENAME;
   EXTENSIONAPI static const char *TAR_PERMISSIONS_ATTRIBUTE;
 
-  void onSchedule(core::ProcessContext *context, core::ProcessSessionFactory *sessionFactory) override;
-  void onTrigger(core::ProcessContext* /*context*/, core::ProcessSession* /*session*/) override {
-  }
-  void onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) override;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& session_factory) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
   void initialize() override;
 
   void restore(const std::shared_ptr<core::FlowFile>& flowFile) override;
@@ -257,19 +266,22 @@ class BinFiles : public core::Processor {
 
  protected:
   // Allows general pre-processing of a flow file before it is offered to a bin. This is called before getGroupId().
-  virtual void preprocessFlowFile(core::ProcessContext *context, core::ProcessSession *session, const std::shared_ptr<core::FlowFile>& flow);
+  virtual void preprocessFlowFile(const std::shared_ptr<core::FlowFile>& flow);
   // Returns a group ID representing a bin. This allows flow files to be binned into like groups
-  virtual std::string getGroupId(core::ProcessContext* /*context*/, const std::shared_ptr<core::FlowFile>& /*flow*/) {
+  virtual std::string getGroupId(const std::shared_ptr<core::FlowFile>& /*flow*/) {
     return "";
   }
-  // Processes a single bin.
-  virtual bool processBin(core::ProcessContext* /*context*/, core::ProcessSession* /*session*/, std::unique_ptr<Bin>& /*bin*/) {
+  virtual bool processBin(core::ProcessSession& /*session*/, std::unique_ptr<Bin>& /*bin*/) {
     return false;
   }
-  // transfer flows to failure in bin
-  static void transferFlowsToFail(core::ProcessContext *context, core::ProcessSession *session, std::unique_ptr<Bin> &bin);
-  // moves owned flows to session
-  static void addFlowsToSession(core::ProcessContext *context, core::ProcessSession *session, std::unique_ptr<Bin> &bin);
+  static void transferFlowsToFail(core::ProcessSession &session, std::unique_ptr<Bin> &bin);
+  static void addFlowsToSession(core::ProcessSession &session, std::unique_ptr<Bin> &bin);
+
+  // Sort flow files retrieved from the flow file repository after restart to their respective bins
+  bool resurrectFlowFiles(core::ProcessSession &session);
+  void assumeOwnershipOfNextBatch(core::ProcessSession &session);
+  std::deque<std::unique_ptr<Bin>> gatherReadyBins(core::ProcessContext &context);
+  void processReadyBins(std::deque<std::unique_ptr<Bin>> ready_bins, core::ProcessSession &session);
 
   BinManager binManager_;
 
@@ -281,4 +293,3 @@ class BinFiles : public core::Processor {
 };
 
 }  // namespace org::apache::nifi::minifi::processors
-

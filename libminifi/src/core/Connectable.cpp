@@ -20,20 +20,21 @@
 #include <memory>
 #include <string>
 #include <set>
+#include "core/RelationshipDefinition.h"
 #include "core/logging/LoggerConfiguration.h"
 #include "core/Relationship.h"
 
 namespace org::apache::nifi::minifi::core {
 
-Connectable::Connectable(std::string name, const utils::Identifier &uuid)
-    : CoreComponent(std::move(name), uuid),
+Connectable::Connectable(std::string_view name, const utils::Identifier &uuid)
+    : CoreComponent(name, uuid),
       max_concurrent_tasks_(1),
       connectable_version_(nullptr),
       logger_(logging::LoggerFactory<Connectable>::getLogger(uuid_)) {
 }
 
-Connectable::Connectable(std::string name)
-    : CoreComponent(std::move(name)),
+Connectable::Connectable(std::string_view name)
+    : CoreComponent(name),
       max_concurrent_tasks_(1),
       connectable_version_(nullptr),
       logger_(logging::LoggerFactory<Connectable>::getLogger(uuid_)) {
@@ -41,9 +42,9 @@ Connectable::Connectable(std::string name)
 
 Connectable::~Connectable() = default;
 
-void Connectable::setSupportedRelationships(gsl::span<const core::Relationship> relationships) {
+void Connectable::setSupportedRelationships(std::span<const core::RelationshipDefinition> relationships) {
   if (isRunning()) {
-    logger_->log_warn("Can not set processor supported relationship while the process %s is running", name_);
+    logger_->log_warn("Cannot set processor supported relationship while the process {} is running", name_);
     return;
   }
 
@@ -51,8 +52,8 @@ void Connectable::setSupportedRelationships(gsl::span<const core::Relationship> 
 
   relationships_.clear();
   for (const auto& item : relationships) {
-    relationships_[item.getName()] = item;
-    logger_->log_debug("Processor %s supported relationship name %s", name_, item.getName());
+    relationships_.emplace(item.name, item);
+    logger_->log_debug("Processor {} supported relationship name {}", name_, item.name);
   }
 }
 
@@ -74,9 +75,9 @@ bool Connectable::isSupportedRelationship(const core::Relationship &relationship
   return relationships_.contains(relationship.getName());
 }
 
-void Connectable::setAutoTerminatedRelationships(gsl::span<const core::Relationship> relationships) {
+void Connectable::setAutoTerminatedRelationships(std::span<const core::Relationship> relationships) {
   if (isRunning()) {
-    logger_->log_warn("Can not set processor auto terminated relationship while the process %s is running", name_);
+    logger_->log_warn("Can not set processor auto terminated relationship while the process {} is running", name_);
     return;
   }
 
@@ -85,7 +86,7 @@ void Connectable::setAutoTerminatedRelationships(gsl::span<const core::Relations
   auto_terminated_relationships_.clear();
   for (const auto& item : relationships) {
     auto_terminated_relationships_[item.getName()] = item;
-    logger_->log_debug("Processor %s auto terminated relationship name %s", name_, item.getName());
+    logger_->log_debug("Processor {} auto terminated relationship name {}", name_, item.getName());
   }
 }
 

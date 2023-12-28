@@ -27,7 +27,7 @@ namespace org::apache::nifi::minifi::extensions::gcp {
 namespace {
 std::shared_ptr<google::cloud::storage::oauth2::Credentials> getCredentials(core::ProcessContext& context) {
   std::string service_name;
-  if (context.getProperty(GCSProcessor::GCPCredentials.getName(), service_name) && !IsNullOrEmpty(service_name)) {
+  if (context.getProperty(GCSProcessor::GCPCredentials, service_name) && !IsNullOrEmpty(service_name)) {
     auto gcp_credentials_controller_service = std::dynamic_pointer_cast<const GCPCredentialsControllerService>(context.getControllerService(service_name));
     if (!gcp_credentials_controller_service)
       return nullptr;
@@ -37,20 +37,19 @@ std::shared_ptr<google::cloud::storage::oauth2::Credentials> getCredentials(core
 }
 }  // namespace
 
-void GCSProcessor::onSchedule(const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSessionFactory>&) {
-  gsl_Expects(context);
-  if (auto number_of_retries = context->getProperty<uint64_t>(NumberOfRetries)) {
+void GCSProcessor::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory&) {
+  if (auto number_of_retries = context.getProperty<uint64_t>(NumberOfRetries)) {
     retry_policy_ = std::make_shared<google::cloud::storage::LimitedErrorCountRetryPolicy>(*number_of_retries);
   }
 
-  gcp_credentials_ = getCredentials(*context);
+  gcp_credentials_ = getCredentials(context);
   if (!gcp_credentials_) {
     throw minifi::Exception(ExceptionType::PROCESS_SCHEDULE_EXCEPTION, "Missing GCP Credentials");
   }
 
-  endpoint_url_ = context->getProperty(EndpointOverrideURL);
+  endpoint_url_ = context.getProperty(EndpointOverrideURL);
   if (endpoint_url_)
-    logger_->log_debug("Endpoint overwritten: %s", *endpoint_url_);
+    logger_->log_debug("Endpoint overwritten: {}", *endpoint_url_);
 }
 
 gcs::Client GCSProcessor::getClient() const {

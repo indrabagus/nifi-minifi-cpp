@@ -35,11 +35,11 @@ class DeleteAzureDataLakeStorage final : public AzureDataLakeStorageFileProcesso
  public:
   EXTENSIONAPI static constexpr const char* Description = "Deletes the provided file from Azure Data Lake Storage";
 
-  static auto properties() { return AzureDataLakeStorageFileProcessorBase::properties(); }
+  EXTENSIONAPI static constexpr auto Properties = AzureDataLakeStorageFileProcessorBase::Properties;
 
-  EXTENSIONAPI static const core::Relationship Success;
-  EXTENSIONAPI static const core::Relationship Failure;
-  static auto relationships() { return std::array{Success, Failure}; }
+  EXTENSIONAPI static constexpr auto Success = core::RelationshipDefinition{"success", "If file deletion from Azure storage succeeds the flowfile is transferred to this relationship"};
+  EXTENSIONAPI static constexpr auto Failure = core::RelationshipDefinition{"failure", "If file deletion from Azure storage fails the flowfile is transferred to this relationship"};
+  EXTENSIONAPI static constexpr auto Relationships = std::array{Success, Failure};
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
@@ -48,20 +48,20 @@ class DeleteAzureDataLakeStorage final : public AzureDataLakeStorageFileProcesso
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  explicit DeleteAzureDataLakeStorage(std::string name, const minifi::utils::Identifier& uuid = minifi::utils::Identifier())
-    : AzureDataLakeStorageFileProcessorBase(std::move(name), uuid, core::logging::LoggerFactory<DeleteAzureDataLakeStorage>::getLogger(uuid)) {
+  explicit DeleteAzureDataLakeStorage(std::string_view name, const minifi::utils::Identifier& uuid = minifi::utils::Identifier())
+    : AzureDataLakeStorageFileProcessorBase(name, uuid, core::logging::LoggerFactory<DeleteAzureDataLakeStorage>::getLogger(uuid)) {
   }
 
   ~DeleteAzureDataLakeStorage() override = default;
 
   void initialize() override;
-  void onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
 
  private:
   friend class ::AzureDataLakeStorageTestsFixture<DeleteAzureDataLakeStorage>;
 
-  explicit DeleteAzureDataLakeStorage(std::string name, const minifi::utils::Identifier& uuid, std::unique_ptr<storage::DataLakeStorageClient> data_lake_storage_client)
-    : AzureDataLakeStorageFileProcessorBase(std::move(name), uuid, core::logging::LoggerFactory<DeleteAzureDataLakeStorage>::getLogger(), std::move(data_lake_storage_client)) {
+  explicit DeleteAzureDataLakeStorage(std::string_view name, const minifi::utils::Identifier& uuid, std::unique_ptr<storage::DataLakeStorageClient> data_lake_storage_client)
+    : AzureDataLakeStorageFileProcessorBase(name, uuid, core::logging::LoggerFactory<DeleteAzureDataLakeStorage>::getLogger(), std::move(data_lake_storage_client)) {
   }
 
   std::optional<storage::DeleteAzureDataLakeStorageParameters> buildDeleteParameters(core::ProcessContext& context, const std::shared_ptr<core::FlowFile>& flow_file);

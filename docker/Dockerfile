@@ -16,10 +16,10 @@
 # under the License.
 #
 
-ARG BASE_ALPINE_IMAGE="alpine:3.16"
+ARG BASE_IMAGE="alpine:3.18"
 
 # Build image
-FROM ${BASE_ALPINE_IMAGE} AS build
+FROM ${BASE_IMAGE} AS build
 LABEL maintainer="Apache NiFi <dev@nifi.apache.org>"
 
 ARG MINIFI_VERSION
@@ -56,7 +56,6 @@ RUN apk --no-cache add gcc \
   libusb-dev \
   gpsd-dev \
   python3-dev \
-  boost-dev \
   doxygen \
   ccache \
   lua-dev
@@ -84,7 +83,7 @@ RUN export PATH=/usr/lib64/ccache/bin${PATH:+:${PATH}} && \
     tar -xzvf "${MINIFI_BASE_DIR}/build/nifi-minifi-cpp-${MINIFI_VERSION}.tar.gz" -C "${MINIFI_BASE_DIR}"
 
 # Release image
-FROM ${BASE_ALPINE_IMAGE} AS release
+FROM ${BASE_IMAGE} AS release
 LABEL maintainer="Apache NiFi <dev@nifi.apache.org>"
 
 ARG UID=1000
@@ -110,7 +109,6 @@ RUN addgroup -g ${GID} ${USER} && adduser -u ${UID} -D -G ${USER} -g "" ${USER} 
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_JNI=ON"; then apk add --no-cache openjdk8-jre-base; fi && \
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_PCAP=ON"; then apk add --no-cache libpcap; fi && \
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_USB_CAMERA=ON"; then apk add --no-cache libpng libusb; fi && \
-    if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_OPENCV=ON" || echo "$MINIFI_OPTIONS" | grep -q "ENABLE_BUSTACHE=ON"; then apk add --no-cache boost; fi && \
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_LUA_SCRIPTING=ON"; then apk add --no-cache lua; fi && \
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_PYTHON_SCRIPTING=ON"; then apk add --no-cache python3; fi
 

@@ -47,13 +47,13 @@
 #include "FlowController.h"
 #include "properties/Configure.h"
 #include "unit/ProvenanceTestHelper.h"
-#include "io/StreamFactory.h"
 #include "processors/ListSFTP.h"
 #include "processors/GenerateFlowFile.h"
 #include "processors/LogAttribute.h"
 #include "processors/UpdateAttribute.h"
 #include "tools/SFTPTestServer.h"
 #include "utils/TestUtils.h"
+
 using namespace std::literals::chrono_literals;
 
 class ListSFTPTestsFixture {
@@ -80,6 +80,11 @@ class ListSFTPTestsFixture {
     // Build MiNiFi processing graph
     createPlan(nullptr, configuration);
   }
+
+  ListSFTPTestsFixture(ListSFTPTestsFixture&&) = delete;
+  ListSFTPTestsFixture(const ListSFTPTestsFixture&) = delete;
+  ListSFTPTestsFixture& operator=(ListSFTPTestsFixture&&) = delete;
+  ListSFTPTestsFixture& operator=(const ListSFTPTestsFixture&) = delete;
 
   virtual ~ListSFTPTestsFixture() {
     LogTestController::getInstance().reset();
@@ -133,7 +138,7 @@ class ListSFTPTestsFixture {
   }
 
   // Create source file
-  void createFile(const std::filesystem::path& relative_path, const std::string& content, std::optional<std::filesystem::file_time_type> modification_time) {
+  void createFile(const std::filesystem::path& relative_path, const std::string& content, std::optional<std::chrono::file_clock::time_point> modification_time) {
     std::fstream file;
     std::filesystem::path full_path = src_dir / "vfs" / relative_path;
     std::filesystem::create_directories(full_path.parent_path());
@@ -176,12 +181,12 @@ TEST_CASE_METHOD(ListSFTPTestsFixture, "ListSFTP list one file", "[ListSFTP][bas
 
 TEST_CASE_METHOD(ListSFTPTestsFixture, "ListSFTP public key authentication", "[ListSFTP][basic]") {
   plan->setProperty(list_sftp, "Remote File", "nifi_test/tstFile.ext");
-  plan->setProperty(list_sftp, "Private Key Path", get_sftp_test_dir() / "resources" / "id_rsa");
+  plan->setProperty(list_sftp, "Private Key Path", (get_sftp_test_dir() / "resources" / "id_rsa").string());
   plan->setProperty(list_sftp, "Private Key Passphrase", "privatekeypassword");
 
   createFileWithModificationTimeDiff("nifi_test/tstFile.ext", "Test content 1");
 
-  testController.runSession(plan, true);
+  TestController::runSession(plan, true);
 
   REQUIRE(LogTestController::getInstance().contains("Successfully authenticated with publickey"));
 
@@ -227,7 +232,7 @@ TEST_CASE_METHOD(ListSFTPTestsFixture, "ListSFTP list one file writes attributes
   uint64_t uid = 0;
   uint64_t gid = 0;
   REQUIRE(true == utils::file::FileUtils::get_uid_gid(file, uid, gid));
-  uint32_t permissions;
+  uint32_t permissions = 0;
   REQUIRE(true == utils::file::FileUtils::get_permissions(file, permissions));
   std::stringstream permissions_ss;
   permissions_ss << std::setfill('0') << std::setw(4) << std::oct << permissions;

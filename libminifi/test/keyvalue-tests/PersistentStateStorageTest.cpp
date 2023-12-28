@@ -25,6 +25,7 @@
 
 #include "../TestBase.h"
 #include "../Catch.h"
+#include "catch2/catch_session.hpp"
 #include "core/controller/ControllerService.h"
 #include "core/ProcessGroup.h"
 #include "core/yaml/YamlConfiguration.h"
@@ -40,7 +41,7 @@ int main(int argc, char* argv[]) {
   Catch::Session session;
 
   auto cli = session.cli()
-      | Catch::clara::Opt{config_yaml, "config-yaml"}
+      | Catch::Clara::Opt{config_yaml, "config-yaml"}
           ["--config-yaml"]
           ("path to the config.yaml containing the StateStorage controller service configuration");
   session.cli(cli);
@@ -69,6 +70,11 @@ class PersistentStateStorageTestsFixture {
     loadYaml();
   }
 
+  PersistentStateStorageTestsFixture(PersistentStateStorageTestsFixture&&) = delete;
+  PersistentStateStorageTestsFixture(const PersistentStateStorageTestsFixture&) = delete;
+  PersistentStateStorageTestsFixture& operator=(PersistentStateStorageTestsFixture&&) = delete;
+  PersistentStateStorageTestsFixture& operator=(const PersistentStateStorageTestsFixture&) = delete;
+
   virtual ~PersistentStateStorageTestsFixture() {
     LogTestController::getInstance().reset();
     std::filesystem::current_path(minifi::utils::file::get_executable_dir());
@@ -81,7 +87,6 @@ class PersistentStateStorageTestsFixture {
     process_group.reset();
     yaml_config.reset();
 
-    stream_factory.reset();
     content_repo.reset();
     test_flow_repo.reset();
     test_repo.reset();
@@ -95,9 +100,8 @@ class PersistentStateStorageTestsFixture {
 
     content_repo = std::make_shared<core::repository::VolatileContentRepository>();
     content_repo->initialize(configuration);
-    stream_factory = minifi::io::StreamFactory::getInstance(configuration);
 
-    yaml_config = std::make_unique<core::YamlConfiguration>(core::ConfigurationContext{test_repo, content_repo, stream_factory, configuration, config_yaml});
+    yaml_config = std::make_unique<core::YamlConfiguration>(core::ConfigurationContext{test_repo, content_repo, configuration, config_yaml});
 
     process_group = yaml_config->getRoot();
     persistable_key_value_store_service_node = process_group->findControllerService("testcontroller");
@@ -115,7 +119,6 @@ class PersistentStateStorageTestsFixture {
   std::shared_ptr<core::Repository> test_repo;
   std::shared_ptr<core::Repository> test_flow_repo;
   std::shared_ptr<core::ContentRepository> content_repo;
-  std::shared_ptr<minifi::io::StreamFactory> stream_factory;
 
   std::unique_ptr<core::YamlConfiguration> yaml_config;
   std::unique_ptr<core::ProcessGroup> process_group;

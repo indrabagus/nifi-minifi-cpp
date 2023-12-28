@@ -24,14 +24,15 @@
 #include <thread>
 #include <algorithm>
 
-namespace org {
-namespace apache {
-namespace nifi {
-namespace minifi {
-namespace utils {
+namespace org::apache::nifi::minifi::utils {
 #ifndef WIN32
-ProcessCpuUsageTracker::ProcessCpuUsageTracker() :
-    cpu_times_(0), sys_cpu_times_(0), user_cpu_times_(0) {
+ProcessCpuUsageTracker::ProcessCpuUsageTracker()
+    : cpu_times_(0),
+      sys_cpu_times_(0),
+      user_cpu_times_(0),
+      previous_cpu_times_(0),
+      previous_sys_cpu_times_(0),
+      previous_user_cpu_times_(0) {
   queryCpuTimes();
 }
 
@@ -49,7 +50,7 @@ void ProcessCpuUsageTracker::queryCpuTimes() {
   previous_sys_cpu_times_ = sys_cpu_times_;
   previous_user_cpu_times_ = user_cpu_times_;
 
-  struct tms timeSample;
+  struct tms timeSample{};
   cpu_times_ = times(&timeSample);
   sys_cpu_times_ = timeSample.tms_stime;
   user_cpu_times_ = timeSample.tms_utime;
@@ -114,7 +115,6 @@ void ProcessCpuUsageTracker::queryCpuTimes() {
   previous_cpu_times_ = cpu_times_;
   previous_sys_cpu_times_ = sys_cpu_times_;
   previous_user_cpu_times_ = user_cpu_times_;
-  SYSTEM_INFO sysInfo;
   FILETIME ftime, fsys, fuser;
   GetSystemTimeAsFileTime(&ftime);
 
@@ -138,8 +138,4 @@ double ProcessCpuUsageTracker::getProcessCpuUsageBetweenLastTwoQueries() const {
 }
 #endif
 
-} /* namespace utils */
-} /* namespace minifi */
-} /* namespace nifi */
-} /* namespace apache */
-} /* namespace org */
+}  // namespace org::apache::nifi::minifi::utils

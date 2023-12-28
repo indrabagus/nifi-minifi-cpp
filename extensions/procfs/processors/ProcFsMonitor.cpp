@@ -16,6 +16,7 @@
  */
 
 #include "ProcFsMonitor.h"
+
 #include <limits>
 #include <utility>
 #include <vector>
@@ -24,52 +25,26 @@
 #include "core/Resource.h"
 #include "core/ProcessContext.h"
 #include "core/ProcessSession.h"
-#include "core/PropertyBuilder.h"
 #include "../ProcFsJsonSerialization.h"
 #include "utils/JsonCallback.h"
 #include "utils/OpenTelemetryLogDataModelUtils.h"
 #include "utils/gsl.h"
+#include "utils/ProcessorConfigUtils.h"
 
 using namespace std::literals::chrono_literals;
 
 namespace org::apache::nifi::minifi::extensions::procfs {
 
-const core::Relationship ProcFsMonitor::Success("success", "All files are routed to success");
-
-const core::Property ProcFsMonitor::OutputFormatProperty(
-    core::PropertyBuilder::createProperty("Output Format")
-        ->withDescription("The output type of the new flowfile")
-        ->withAllowableValues<std::string>(OutputFormat::values())
-        ->withDefaultValue(toString(OutputFormat::JSON))->build());
-
-const core::Property ProcFsMonitor::OutputCompactnessProperty(
-    core::PropertyBuilder::createProperty("Output Compactness")
-        ->withDescription("The output format of the new flowfile")
-        ->withAllowableValues<std::string>(OutputCompactness::values())
-        ->withDefaultValue(toString(OutputCompactness::PRETTY))->build());
-
-const core::Property ProcFsMonitor::DecimalPlaces(
-    core::PropertyBuilder::createProperty("Round to decimal places")
-        ->withDescription("The number of decimal places to round the values to (blank for no rounding)")->build());
-
-const core::Property ProcFsMonitor::ResultRelativenessProperty(
-    core::PropertyBuilder::createProperty("Result Type")
-        ->withDescription("Absolute returns the current procfs values, relative calculates the usage between triggers")
-        ->withAllowableValues<std::string>(ResultRelativeness::values())
-        ->withDefaultValue(toString(ResultRelativeness::ABSOLUTE))->build());
-
-
 void ProcFsMonitor::initialize() {
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
-void ProcFsMonitor::onSchedule(const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSessionFactory>&) {
-  gsl_Expects(context);
-  context->getProperty(OutputFormatProperty.getName(), output_format_);
-  context->getProperty(OutputCompactnessProperty.getName(), output_compactness_);
-  context->getProperty(ResultRelativenessProperty.getName(), result_relativeness_);
-  setupDecimalPlacesFromProperties(*context);
+void ProcFsMonitor::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory&) {
+  output_format_ = utils::parseEnumProperty<OutputFormat>(context, OutputFormatProperty);
+  output_compactness_ = utils::parseEnumProperty<OutputCompactness>(context, OutputCompactnessProperty);
+  result_relativeness_ = utils::parseEnumProperty<ResultRelativeness>(context, ResultRelativenessProperty);
+  setupDecimalPlacesFromProperties(context);
 }
 
 namespace {
@@ -93,9 +68,8 @@ std::optional<std::chrono::duration<double>> getAggregateCpuDiff(std::vector<std
 }
 }  // namespace
 
-void ProcFsMonitor::onTrigger(core::ProcessContext*, core::ProcessSession* session) {
-  gsl_Expects(session);
-  std::shared_ptr<core::FlowFile> flowFile = session->create();
+void ProcFsMonitor::onTrigger(core::ProcessContext&, core::ProcessSession& session) {
+  std::shared_ptr<core::FlowFile> flowFile = session.create();
 
   rapidjson::Document root = rapidjson::Document(rapidjson::kObjectType);
   rapidjson::Value& body = prepareJSONBody(root);
@@ -119,21 +93,21 @@ void ProcFsMonitor::onTrigger(core::ProcessContext*, core::ProcessSession* sessi
   processProcessInformation(current_process_stats, last_cpu_period, body, root.GetAllocator());
   processMemoryInformation(body, root.GetAllocator());
 
-  if (output_compactness_ == OutputCompactness::PRETTY) {
+  if (output_compactness_ == OutputCompactness::Pretty) {
     utils::PrettyJsonOutputCallback callback(std::move(root), decimal_places_);
-    session->write(flowFile, std::ref(callback));
-    session->transfer(flowFile, Success);
-  } else if (output_compactness_ == OutputCompactness::COMPACT) {
+    session.write(flowFile, std::ref(callback));
+    session.transfer(flowFile, Success);
+  } else if (output_compactness_ == OutputCompactness::Compact) {
     utils::JsonOutputCallback callback(std::move(root), decimal_places_);
-    session->write(flowFile, std::ref(callback));
-    session->transfer(flowFile, Success);
+    session.write(flowFile, std::ref(callback));
+    session.transfer(flowFile, Success);
   } else {
     throw Exception(GENERAL_EXCEPTION, "Invalid output compactness");
   }
 }
 
 rapidjson::Value& ProcFsMonitor::prepareJSONBody(rapidjson::Document& root) {
-  if (output_format_ == OutputFormat::OPENTELEMETRY) {
+  if (output_format_ == OutputFormat::OpenTelemetry) {
     utils::OpenTelemetryLogDataModel::appendEventInformation(root, "PerformanceData");
     utils::OpenTelemetryLogDataModel::appendHostInformation(root);
     utils::OpenTelemetryLogDataModel::appendBody(root);
@@ -147,7 +121,7 @@ rapidjson::Value& ProcFsMonitor::prepareJSONBody(rapidjson::Document& root) {
 
 void ProcFsMonitor::setupDecimalPlacesFromProperties(const core::ProcessContext& context) {
   std::string decimal_places_str;
-  if (!context.getProperty(DecimalPlaces.getName(), decimal_places_str) || decimal_places_str.empty()) {
+  if (!context.getProperty(DecimalPlaces, decimal_places_str) || decimal_places_str.empty()) {
     decimal_places_ = std::nullopt;
     return;
   }
@@ -158,9 +132,9 @@ void ProcFsMonitor::setupDecimalPlacesFromProperties(const core::ProcessContext&
       throw Exception(PROCESS_SCHEDULE_EXCEPTION, "ProcFsMonitor Decimal Places property is zero or too large");
     }
     decimal_places_ = gsl::narrow<uint8_t>(decimal_places);
-    logger_->log_trace("Rounding is enabled with %d decimal places", decimal_places_.value());
+    logger_->log_trace("Rounding is enabled with {} decimal places", decimal_places_.value());
   } catch (const std::exception&) {
-    logger_->log_error("ProcFsMonitor Decimal Places property is invalid or out of range: %s", decimal_places_str);
+    logger_->log_error("ProcFsMonitor Decimal Places property is invalid or out of range: {}", decimal_places_str);
     throw Exception(PROCESS_SCHEDULE_EXCEPTION, "ProcFsMonitor Decimal Places property is invalid or out of range");
   }
 }
@@ -301,9 +275,9 @@ void ProcFsMonitor::processCPUInformation(const std::vector<std::pair<std::strin
   if (!cpu_stats_are_valid(current_cpu_stats))
     return;
 
-  if (result_relativeness_ == ResultRelativeness::RELATIVE)
+  if (result_relativeness_ == ResultRelativeness::Relative)
     processRelativeCPUInformation(current_cpu_stats, last_cpu_stats_, body, alloc);
-  else if (result_relativeness_ == ResultRelativeness::ABSOLUTE)
+  else if (result_relativeness_ == ResultRelativeness::Absolute)
     processAbsoluteCPUInformation(current_cpu_stats, body, alloc);
   else
     throw Exception(GENERAL_EXCEPTION, "Invalid result relativeness");
@@ -315,9 +289,9 @@ void ProcFsMonitor::processDiskInformation(const std::vector<std::pair<std::stri
   if (current_disk_stats.empty())
     return;
 
-  if (result_relativeness_ == ResultRelativeness::RELATIVE)
+  if (result_relativeness_ == ResultRelativeness::Relative)
     processRelativeDiskInformation(current_disk_stats, last_disk_stats_, last_trigger_, body, alloc);
-  else if (result_relativeness_ == ResultRelativeness::ABSOLUTE)
+  else if (result_relativeness_ == ResultRelativeness::Absolute)
     processAbsoluteDiskInformation(current_disk_stats, body, alloc);
   else
     throw Exception(GENERAL_EXCEPTION, "Invalid result relativeness");
@@ -329,9 +303,9 @@ void ProcFsMonitor::processNetworkInformation(const std::vector<std::pair<std::s
   if (current_net_devs.empty())
     return;
 
-  if (result_relativeness_ == ResultRelativeness::RELATIVE)
+  if (result_relativeness_ == ResultRelativeness::Relative)
     processRelativeNetworkInformation(current_net_devs, last_net_devs_, last_trigger_, body, alloc);
-  else if (result_relativeness_ == ResultRelativeness::ABSOLUTE)
+  else if (result_relativeness_ == ResultRelativeness::Absolute)
     processAbsoluteNetworkInformation(current_net_devs, body, alloc);
   else
     throw Exception(GENERAL_EXCEPTION, "Invalid result relativeness");
@@ -345,9 +319,9 @@ void ProcFsMonitor::processProcessInformation(const std::map<pid_t, ProcessStat>
     return;
 
   rapidjson::Value process_root{rapidjson::kObjectType};
-  if (result_relativeness_ == ResultRelativeness::RELATIVE)
+  if (result_relativeness_ == ResultRelativeness::Relative)
     processRelativeProcessInformation(current_process_stats, last_process_stats_, last_cpu_period, body, alloc);
-  else if (result_relativeness_ == ResultRelativeness::ABSOLUTE)
+  else if (result_relativeness_ == ResultRelativeness::Absolute)
     processAbsoluteProcessInformation(current_process_stats, body, alloc);
   else
     throw Exception(GENERAL_EXCEPTION, "Invalid result relativeness");

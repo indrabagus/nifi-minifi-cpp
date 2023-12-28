@@ -27,6 +27,11 @@
 #include "utils/StringUtils.h"
 #include "c2/C2Payload.h"
 #include "properties/Configuration.h"
+#include "io/AsioStream.h"
+#include "asio/ssl/stream.hpp"
+#include "asio/detached.hpp"
+#include "utils/net/AsioSocketUtils.h"
+#include "c2/C2Utils.h"
 
 namespace org::apache::nifi::minifi::c2 {
 
@@ -66,7 +71,69 @@ ControllerSocketProtocol::ControllerSocketProtocol(core::controller::ControllerS
         configuration_(std::move(configuration)),
         socket_restart_processor_(update_sink_) {
   gsl_Expects(configuration_);
-  stream_factory_ = minifi::io::StreamFactory::getInstance(configuration_);
+}
+
+ControllerSocketProtocol::~ControllerSocketProtocol() {
+  stopListener();
+}
+
+void ControllerSocketProtocol::stopListener() {
+  if (acceptor_) {
+    asio::post(io_context_, [this] {
+      acceptor_->close();
+    });
+  }
+  if (server_thread_.joinable()) {
+    server_thread_.join();
+  }
+  io_context_.restart();
+}
+
+asio::awaitable<void> ControllerSocketProtocol::startAccept() {
+  while (true) {
+    auto [accept_error, socket] = co_await acceptor_->async_accept(utils::net::use_nothrow_awaitable);
+    if (accept_error) {
+      if (accept_error == asio::error::operation_aborted || accept_error == asio::error::bad_descriptor) {
+        logger_->log_debug("Controller socket accept aborted");
+        co_return;
+      }
+      logger_->log_error("Controller socket accept failed with the following message: '{}'", accept_error.message());
+      continue;
+    }
+    auto stream = std::make_unique<io::AsioStream<asio::ip::tcp::socket>>(std::move(socket));
+    co_spawn(io_context_, handleCommand(std::move(stream)), asio::detached);
+  }
+}
+
+asio::awaitable<void> ControllerSocketProtocol::handshakeAndHandleCommand(asio::ip::tcp::socket&& socket, std::shared_ptr<minifi::controllers::SSLContextService> ssl_context_service) {
+  asio::ssl::context ssl_context = utils::net::getSslContext(*ssl_context_service, asio::ssl::context::tls_server);
+  ssl_context.set_options(utils::net::MINIFI_SSL_OPTIONS);
+  asio::ssl::stream<asio::ip::tcp::socket> ssl_socket(std::move(socket), ssl_context);
+
+  auto [handshake_error] = co_await ssl_socket.async_handshake(utils::net::HandshakeType::server, utils::net::use_nothrow_awaitable);
+  if (handshake_error) {
+    logger_->log_error("Controller socket handshake failed with the following message: '{}'", handshake_error.message());
+    co_return;
+  }
+
+  auto stream = std::make_unique<io::AsioStream<asio::ssl::stream<asio::ip::tcp::socket>>>(std::move(ssl_socket));
+  co_return co_await handleCommand(std::move(stream));
+}
+
+asio::awaitable<void> ControllerSocketProtocol::startAcceptSsl(std::shared_ptr<minifi::controllers::SSLContextService> ssl_context_service) {
+  while (true) {  // NOLINT(clang-analyzer-core.NullDereference) suppressing asio library linter warning
+    auto [accept_error, socket] = co_await acceptor_->async_accept(utils::net::use_nothrow_awaitable);
+    if (accept_error) {
+      if (accept_error == asio::error::operation_aborted || accept_error == asio::error::bad_descriptor) {
+        logger_->log_debug("Controller socket accept aborted");
+        co_return;
+      }
+      logger_->log_error("Controller socket accept failed with the following message: '{}'", accept_error.message());
+      continue;
+    }
+
+    co_spawn(io_context_, handshakeAndHandleCommand(std::move(socket), ssl_context_service), asio::detached);
+  }
 }
 
 void ControllerSocketProtocol::initialize() {
@@ -95,40 +162,29 @@ void ControllerSocketProtocol::initialize() {
   configuration_->get(Configuration::controller_socket_host, host);
 
   std::string port;
+  stopListener();
   if (configuration_->get(Configuration::controller_socket_port, port)) {
-    if (nullptr != secure_context) {
-#ifdef OPENSSL_SUPPORT
-      // if there is no openssl support we won't be using SSL
-      auto tls_context = std::make_shared<io::TLSContext>(configuration_, secure_context);
-      server_socket_ = std::unique_ptr<io::BaseServerSocket>(new io::TLSServerSocket(tls_context, host, std::stoi(port), 2));
-#else
-      server_socket_ = std::unique_ptr<io::BaseServerSocket>(new io::ServerSocket(nullptr, host, std::stoi(port), 2));
-#endif
-    } else {
-      server_socket_ = std::unique_ptr<io::BaseServerSocket>(new io::ServerSocket(nullptr, host, std::stoi(port), 2));
-    }
-    // if we have a localhost hostname and we did not manually specify any.interface we will
-    // bind only to the loopback adapter
+    // if we have a localhost hostname and we did not manually specify any.interface we will bind only to the loopback adapter
     if ((host == "localhost" || host == "127.0.0.1" || host == "::") && !any_interface) {
-      server_socket_->initialize(true);
+      acceptor_ = std::make_unique<asio::ip::tcp::acceptor>(io_context_, asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), std::stoi(port)));
     } else {
-      server_socket_->initialize(false);
+      acceptor_ = std::make_unique<asio::ip::tcp::acceptor>(io_context_, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), std::stoi(port)));
     }
 
-    auto check = [this]() -> bool {
-      return update_sink_.isRunning();
-    };
-
-    auto handler = [this](io::BaseStream *stream) {
-      handleCommand(stream);
-    };
-    server_socket_->registerCallback(check, handler);
+    if (secure_context) {
+      co_spawn(io_context_, startAcceptSsl(std::move(secure_context)), asio::detached);
+    } else {
+      co_spawn(io_context_, startAccept(), asio::detached);
+    }
+    server_thread_ = std::thread([this] {
+      io_context_.run();
+    });
   }
 }
 
-void ControllerSocketProtocol::handleStart(io::BaseStream *stream) {
+void ControllerSocketProtocol::handleStart(io::BaseStream &stream) {
   std::string component_str;
-  const auto size = stream->read(component_str);
+  const auto size = stream.read(component_str);
   if (!io::isError(size)) {
     if (component_str == "FlowController") {
       // Starting flow controller resets socket
@@ -139,45 +195,45 @@ void ControllerSocketProtocol::handleStart(io::BaseStream *stream) {
       });
     }
   } else {
-    logger_->log_debug("Connection broke");
+    logger_->log_error("Connection broke");
   }
 }
 
-void ControllerSocketProtocol::handleStop(io::BaseStream *stream) {
+void ControllerSocketProtocol::handleStop(io::BaseStream &stream) {
   std::string component_str;
-  const auto size = stream->read(component_str);
+  const auto size = stream.read(component_str);
   if (!io::isError(size)) {
     update_sink_.executeOnComponent(component_str, [](state::StateController& component) {
       component.stop();
     });
   } else {
-    logger_->log_debug("Connection broke");
+    logger_->log_error("Connection broke");
   }
 }
 
-void ControllerSocketProtocol::handleClear(io::BaseStream *stream) {
+void ControllerSocketProtocol::handleClear(io::BaseStream &stream) {
   std::string connection;
-  const auto size = stream->read(connection);
+  const auto size = stream.read(connection);
   if (!io::isError(size)) {
     update_sink_.clearConnection(connection);
   }
 }
 
-void ControllerSocketProtocol::handleUpdate(io::BaseStream *stream) {
+void ControllerSocketProtocol::handleUpdate(io::BaseStream &stream) {
   std::string what;
   {
-    const auto size = stream->read(what);
+    const auto size = stream.read(what);
     if (io::isError(size)) {
-      logger_->log_debug("Connection broke");
+      logger_->log_error("Connection broke");
       return;
     }
   }
   if (what == "flow") {
     std::string ff_loc;
     {
-      const auto size = stream->read(ff_loc);
+      const auto size = stream.read(ff_loc);
       if (io::isError(size)) {
-        logger_->log_debug("Connection broke");
+        logger_->log_error("Connection broke");
         return;
       }
     }
@@ -188,11 +244,11 @@ void ControllerSocketProtocol::handleUpdate(io::BaseStream *stream) {
   }
 }
 
-void ControllerSocketProtocol::writeQueueSizesResponse(io::BaseStream *stream) {
+void ControllerSocketProtocol::writeQueueSizesResponse(io::BaseStream &stream) {
   std::string connection;
-  const auto size_ = stream->read(connection);
+  const auto size_ = stream.read(connection);
   if (io::isError(size_)) {
-    logger_->log_debug("Connection broke");
+    logger_->log_error("Connection broke");
     return;
   }
   std::unordered_map<std::string, ControllerSocketReporter::QueueSize> sizes;
@@ -206,19 +262,19 @@ void ControllerSocketProtocol::writeQueueSizesResponse(io::BaseStream *stream) {
     response << "not found";
   }
   io::BufferStream resp;
-  uint8_t op = Operation::DESCRIBE;
+  auto op = static_cast<uint8_t>(Operation::describe);
   resp.write(&op, 1);
   resp.write(response.str());
-  stream->write(resp.getBuffer());
+  stream.write(resp.getBuffer());
 }
 
-void ControllerSocketProtocol::writeComponentsResponse(io::BaseStream *stream) {
+void ControllerSocketProtocol::writeComponentsResponse(io::BaseStream &stream) {
   std::vector<std::pair<std::string, bool>> components;
   update_sink_.executeOnAllComponents([&components](state::StateController& component) {
     components.emplace_back(component.getComponentName(), component.isRunning());
   });
   io::BufferStream resp;
-  uint8_t op = Operation::DESCRIBE;
+  auto op = static_cast<uint8_t>(Operation::describe);
   resp.write(&op, 1);
   resp.write(gsl::narrow<uint16_t>(components.size()));
   for (const auto& [name, is_running] : components) {
@@ -226,12 +282,12 @@ void ControllerSocketProtocol::writeComponentsResponse(io::BaseStream *stream) {
     resp.write(is_running ? "true" : "false");
   }
 
-  stream->write(resp.getBuffer());
+  stream.write(resp.getBuffer());
 }
 
-void ControllerSocketProtocol::writeConnectionsResponse(io::BaseStream *stream) {
+void ControllerSocketProtocol::writeConnectionsResponse(io::BaseStream &stream) {
   io::BufferStream resp;
-  uint8_t op = Operation::DESCRIBE;
+  auto op = static_cast<uint8_t>(Operation::describe);
   resp.write(&op, 1);
   std::unordered_set<std::string> connections;
   if (auto controller_socket_reporter = controller_socket_reporter_.lock()) {
@@ -243,12 +299,12 @@ void ControllerSocketProtocol::writeConnectionsResponse(io::BaseStream *stream) 
   for (const auto &connection : connections) {
     resp.write(connection, false);
   }
-  stream->write(resp.getBuffer());
+  stream.write(resp.getBuffer());
 }
 
-void ControllerSocketProtocol::writeGetFullResponse(io::BaseStream *stream) {
+void ControllerSocketProtocol::writeGetFullResponse(io::BaseStream &stream) {
   io::BufferStream resp;
-  uint8_t op = Operation::DESCRIBE;
+  auto op = static_cast<uint8_t>(Operation::describe);
   resp.write(&op, 1);
   std::unordered_set<std::string> full_connections;
   if (auto controller_socket_reporter = controller_socket_reporter_.lock()) {
@@ -260,19 +316,19 @@ void ControllerSocketProtocol::writeGetFullResponse(io::BaseStream *stream) {
   for (const auto &connection : full_connections) {
     resp.write(connection, false);
   }
-  stream->write(resp.getBuffer());
+  stream.write(resp.getBuffer());
 }
 
-void ControllerSocketProtocol::writeManifestResponse(io::BaseStream *stream) {
+void ControllerSocketProtocol::writeManifestResponse(io::BaseStream &stream) {
   io::BufferStream resp;
-  uint8_t op = Operation::DESCRIBE;
+  auto op = static_cast<uint8_t>(Operation::describe);
   resp.write(&op, 1);
   std::string manifest;
   if (auto controller_socket_reporter = controller_socket_reporter_.lock()) {
     manifest = controller_socket_reporter->getAgentManifest();
   }
   resp.write(manifest, true);
-  stream->write(resp.getBuffer());
+  stream.write(resp.getBuffer());
 }
 
 std::string ControllerSocketProtocol::getJstack() {
@@ -289,23 +345,23 @@ std::string ControllerSocketProtocol::getJstack() {
   return result.str();
 }
 
-void ControllerSocketProtocol::writeJstackResponse(io::BaseStream *stream) {
+void ControllerSocketProtocol::writeJstackResponse(io::BaseStream &stream) {
   io::BufferStream resp;
-  uint8_t op = Operation::DESCRIBE;
+  auto op = static_cast<uint8_t>(Operation::describe);
   resp.write(&op, 1);
   std::string jstack_response;
   if (auto controller_socket_reporter = controller_socket_reporter_.lock()) {
     jstack_response = getJstack();
   }
   resp.write(jstack_response, true);
-  stream->write(resp.getBuffer());
+  stream.write(resp.getBuffer());
 }
 
-void ControllerSocketProtocol::handleDescribe(io::BaseStream *stream) {
+void ControllerSocketProtocol::handleDescribe(io::BaseStream &stream) {
   std::string what;
-  const auto size = stream->read(what);
+  const auto size = stream.read(what);
   if (io::isError(size)) {
-    logger_->log_debug("Connection broke");
+    logger_->log_error("Connection broke");
     return;
   }
   if (what == "queue") {
@@ -321,40 +377,85 @@ void ControllerSocketProtocol::handleDescribe(io::BaseStream *stream) {
   } else if (what == "jstack") {
     writeJstackResponse(stream);
   } else {
-    logger_->log_error("Unknown C2 describe parameter: %s", what);
+    logger_->log_error("Unknown C2 describe parameter: {}", what);
   }
 }
 
-void ControllerSocketProtocol::handleCommand(io::BaseStream *stream) {
-  uint8_t head;
-  if (stream->read(head) != 1) {
-    logger_->log_debug("Connection broke");
+void ControllerSocketProtocol::writeDebugBundleResponse(io::BaseStream &stream) {
+  auto files = update_sink_.getDebugInfo();
+  auto bundle = createDebugBundleArchive(files);
+  io::BufferStream resp;
+  auto op = static_cast<uint8_t>(Operation::transfer);
+  resp.write(&op, 1);
+  if (!bundle) {
+    logger_->log_error("Creating debug bundle failed: {}", bundle.error());
+    resp.write(static_cast<size_t>(0));
+    stream.write(resp.getBuffer());
     return;
+  }
+
+  size_t bundle_size = bundle.value()->size();
+  resp.write(bundle_size);
+  const size_t BUFFER_SIZE = 4096;
+  std::array<std::byte, BUFFER_SIZE> out_buffer{};
+  while (bundle_size > 0) {
+    const auto next_write_size = (std::min)(bundle_size, BUFFER_SIZE);
+    const auto size_read = bundle.value()->read(std::as_writable_bytes(std::span(out_buffer).subspan(0, next_write_size)));
+    resp.write(reinterpret_cast<const uint8_t*>(out_buffer.data()), size_read);
+    bundle_size -= size_read;
+  }
+
+  stream.write(resp.getBuffer());
+}
+
+void ControllerSocketProtocol::handleTransfer(io::BaseStream &stream) {
+  std::string what;
+  const auto size = stream.read(what);
+  if (io::isError(size)) {
+    logger_->log_error("Connection broke");
+    return;
+  }
+  if (what == "debug") {
+    writeDebugBundleResponse(stream);
+  } else {
+    logger_->log_error("Unknown C2 transfer parameter: {}", what);
+  }
+}
+
+asio::awaitable<void> ControllerSocketProtocol::handleCommand(std::unique_ptr<io::BaseStream> stream) {
+  uint8_t head = 0;
+  if (stream->read(head) != 1) {
+    logger_->log_error("Connection broke");
+    co_return;
   }
 
   if (socket_restart_processor_.isSocketRestarting()) {
     logger_->log_debug("Socket restarting, dropping command");
-    return;
+    co_return;
   }
 
-  switch (head) {
-    case Operation::START:
-      handleStart(stream);
+  auto op = static_cast<Operation>(head);
+  switch (op) {
+    case Operation::start:
+      handleStart(*stream);
       break;
-    case Operation::STOP:
-      handleStop(stream);
+    case Operation::stop:
+      handleStop(*stream);
       break;
-    case Operation::CLEAR:
-      handleClear(stream);
+    case Operation::clear:
+      handleClear(*stream);
       break;
-    case Operation::UPDATE:
-      handleUpdate(stream);
+    case Operation::update:
+      handleUpdate(*stream);
       break;
-    case Operation::DESCRIBE:
-      handleDescribe(stream);
+    case Operation::describe:
+      handleDescribe(*stream);
+      break;
+    case Operation::transfer:
+      handleTransfer(*stream);
       break;
     default:
-      logger_->log_error("Unhandled C2 operation: %s", std::to_string(head));
+      logger_->log_error("Unhandled C2 operation: {}", head);
   }
 }
 

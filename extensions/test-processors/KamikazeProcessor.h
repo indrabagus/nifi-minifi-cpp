@@ -21,6 +21,10 @@
 
 #include "core/Processor.h"
 #include "core/ProcessSession.h"
+#include "core/PropertyDefinition.h"
+#include "core/PropertyDefinitionBuilder.h"
+#include "core/PropertyType.h"
+#include "core/RelationshipDefinition.h"
 #include "core/Core.h"
 
 #pragma once
@@ -35,22 +39,31 @@ class KamikazeProcessor : public core::Processor {
   EXTENSIONAPI static const std::string OnTriggerLogStr;
   EXTENSIONAPI static const std::string OnUnScheduleLogStr;
 
-  explicit KamikazeProcessor(std::string name, const utils::Identifier& uuid = utils::Identifier())
-      : Processor(std::move(name), uuid) {
+  explicit KamikazeProcessor(std::string_view name, const utils::Identifier& uuid = utils::Identifier())
+      : Processor(name, uuid) {
   }
 
   EXTENSIONAPI static constexpr const char* Description = "This processor can throw exceptions in onTrigger and onSchedule calls based on configuration. Only for testing purposes.";
 
-  EXTENSIONAPI static const core::Property ThrowInOnSchedule;
-  EXTENSIONAPI static const core::Property ThrowInOnTrigger;
-  static auto properties() {
-    return std::array{
+  EXTENSIONAPI static constexpr auto ThrowInOnSchedule = core::PropertyDefinitionBuilder<>::createProperty("Throw in onSchedule")
+      .withDescription("Set to throw expcetion during onSchedule call")
+      .isRequired(true)
+      .withPropertyType(core::StandardPropertyTypes::BOOLEAN_TYPE)
+      .withDefaultValue("false")
+      .build();
+  EXTENSIONAPI static constexpr auto ThrowInOnTrigger = core::PropertyDefinitionBuilder<>::createProperty("Throw in onTrigger")
+      .withDescription("Set to throw expcetion during onTrigger call")
+      .isRequired(true)
+      .withPropertyType(core::StandardPropertyTypes::BOOLEAN_TYPE)
+      .withDefaultValue("false")
+      .build();
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 2>{
       ThrowInOnSchedule,
       ThrowInOnTrigger
-    };
-  }
+  };
 
-  static auto relationships() { return std::array<core::Relationship, 0>{}; }
+
+  EXTENSIONAPI static constexpr auto Relationships = std::array<core::RelationshipDefinition, 0>{};
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
@@ -59,8 +72,8 @@ class KamikazeProcessor : public core::Processor {
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  void onSchedule(core::ProcessContext *context, core::ProcessSessionFactory *sessionFactory) override;
-  void onTrigger(core::ProcessContext *context, core::ProcessSession *session) override;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& session_factory) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
   void initialize() override;
   void onUnSchedule() override;
 

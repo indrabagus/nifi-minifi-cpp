@@ -16,22 +16,20 @@
  */
 #include "HTTPClient.h"
 
-#include <algorithm>
 #include <cinttypes>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "Exception.h"
-#include "utils/gsl.h"
-#include "utils/StringUtils.h"
 #include "core/Resource.h"
-#include "utils/RegexUtils.h"
+#include "magic_enum.hpp"
 #include "range/v3/algorithm/all_of.hpp"
 #include "range/v3/action/transform.hpp"
+#include "utils/gsl.h"
 #include "utils/HTTPUtils.h"
 #include "utils/Literals.h"
+#include "utils/StringUtils.h"
 
 using namespace std::literals::chrono_literals;
 
@@ -44,8 +42,8 @@ HTTPClient::HTTPClient(std::string url, std::shared_ptr<minifi::controllers::SSL
   http_session_.reset(curl_easy_init());
 }
 
-HTTPClient::HTTPClient(std::string name, const utils::Identifier& uuid)
-    : core::Connectable(std::move(name), uuid) {
+HTTPClient::HTTPClient(std::string_view name, const utils::Identifier& uuid)
+    : core::Connectable(name, uuid) {
   http_session_.reset(curl_easy_init());
 }
 
@@ -74,7 +72,7 @@ HTTPClient::~HTTPClient() {
   // out of good hygiene.
   forceClose();
   content_.close();
-  logger_->log_trace("Closing HTTPClient for %s", url_);
+  logger_->log_trace("Closing HTTPClient for {}", url_);
 }
 
 void HTTPClient::forceClose() {
@@ -93,7 +91,7 @@ int HTTPClient::debug_callback(CURL *handle, curl_infotype type, char *data, siz
     return 0;
   }
   if (type == CURLINFO_TEXT) {
-    core::logging::LOG_DEBUG(*logger) << "CURL(" << reinterpret_cast<void*>(handle) << "): " << std::string(data, size);
+    (*logger)->log_debug("CURL({}): {:.{}}", handle, data, size);
   }
   return 0;
 }
@@ -112,8 +110,8 @@ bool isSecure(const std::string& url) {
 }
 }  // namespace
 
-void HTTPClient::initialize(std::string method, std::string url, std::shared_ptr<minifi::controllers::SSLContextService> ssl_context_service) {
-  set_request_method(std::move(method));
+void HTTPClient::initialize(utils::HttpRequestMethod method, std::string url, std::shared_ptr<minifi::controllers::SSLContextService> ssl_context_service) {
+  set_request_method(method);
   if (ssl_context_service) {
     ssl_context_service_ = std::move(ssl_context_service);
   }
@@ -125,12 +123,16 @@ void HTTPClient::initialize(std::string method, std::string url, std::shared_ptr
 }
 
 void HTTPClient::setPeerVerification(bool peer_verification) {
-  logger_->log_debug("%s peer verification", peer_verification ? "Enabling" : "Disabling");
+  if (peer_verification) {
+    logger_->log_debug("Enabling peer verification");
+  } else {
+    logger_->log_warn("Disabling peer verification: the authenticity of https servers will not be verified!");
+  }
   curl_easy_setopt(http_session_.get(), CURLOPT_SSL_VERIFYPEER, peer_verification);
 }
 
 void HTTPClient::setHostVerification(bool host_verification) {
-  logger_->log_debug("%s host verification", host_verification ? "Enabling" : "Disabling");
+  logger_->log_debug("{} host verification", host_verification ? "Enabling" : "Disabling");
   curl_easy_setopt(http_session_.get(), CURLOPT_SSL_VERIFYHOST, host_verification);
 }
 
@@ -145,6 +147,34 @@ void HTTPClient::clearBasicAuth() {
 }
 
 bool HTTPClient::setSpecificSSLVersion(utils::SSLVersion specific_version) {
+#ifdef OPENSSL_SUPPORT
+  if (ssl_context_service_) {
+    switch (specific_version) {
+      case utils::SSLVersion::TLSv1_0: {
+        ssl_context_service_->setMinTlsVersion(TLS1_VERSION);
+        ssl_context_service_->setMaxTlsVersion(TLS1_VERSION);
+        break;
+      }
+      case utils::SSLVersion::TLSv1_1: {
+        ssl_context_service_->setMinTlsVersion(TLS1_1_VERSION);
+        ssl_context_service_->setMaxTlsVersion(TLS1_1_VERSION);
+        break;
+      }
+      case utils::SSLVersion::TLSv1_2: {
+        ssl_context_service_->setMinTlsVersion(TLS1_2_VERSION);
+        ssl_context_service_->setMaxTlsVersion(TLS1_2_VERSION);
+        break;
+      }
+      case utils::SSLVersion::TLSv1_3: {
+        ssl_context_service_->setMinTlsVersion(TLS1_3_VERSION);
+        ssl_context_service_->setMaxTlsVersion(TLS1_3_VERSION);
+        break;
+      }
+      default: break;
+    }
+  }
+#endif
+
 #if CURL_AT_LEAST_VERSION(7, 54, 0)
   // bitwise or of different enum types is deprecated in C++20, but the curl api explicitly supports ORing one of CURL_SSLVERSION and one of CURL_SSLVERSION_MAX
   switch (specific_version) {
@@ -154,6 +184,8 @@ bool HTTPClient::setSpecificSSLVersion(utils::SSLVersion specific_version) {
       return CURLE_OK == curl_easy_setopt(http_session_.get(), CURLOPT_SSLVERSION, static_cast<int>(CURL_SSLVERSION_TLSv1_1) | static_cast<int>(CURL_SSLVERSION_MAX_TLSv1_1));
     case utils::SSLVersion::TLSv1_2:
       return CURLE_OK == curl_easy_setopt(http_session_.get(), CURLOPT_SSLVERSION, static_cast<int>(CURL_SSLVERSION_TLSv1_2) | static_cast<int>(CURL_SSLVERSION_MAX_TLSv1_2));
+    case utils::SSLVersion::TLSv1_3:
+      return CURLE_OK == curl_easy_setopt(http_session_.get(), CURLOPT_SSLVERSION, static_cast<int>(CURL_SSLVERSION_TLSv1_3) | static_cast<int>(CURL_SSLVERSION_MAX_TLSv1_3));
     default: return false;
   }
 #else
@@ -163,6 +195,30 @@ bool HTTPClient::setSpecificSSLVersion(utils::SSLVersion specific_version) {
 
 // If not set, the default will be TLS 1.0, see https://curl.haxx.se/libcurl/c/CURLOPT_SSLVERSION.html
 bool HTTPClient::setMinimumSSLVersion(utils::SSLVersion minimum_version) {
+#ifdef OPENSSL_SUPPORT
+  if (ssl_context_service_) {
+    switch (minimum_version) {
+      case utils::SSLVersion::TLSv1_0: {
+        ssl_context_service_->setMinTlsVersion(TLS1_VERSION);
+        break;
+      }
+      case utils::SSLVersion::TLSv1_1: {
+        ssl_context_service_->setMinTlsVersion(TLS1_1_VERSION);
+        break;
+      }
+      case utils::SSLVersion::TLSv1_2: {
+        ssl_context_service_->setMinTlsVersion(TLS1_2_VERSION);
+        break;
+      }
+      case utils::SSLVersion::TLSv1_3: {
+        ssl_context_service_->setMinTlsVersion(TLS1_3_VERSION);
+        break;
+      }
+      default: break;
+    }
+  }
+#endif
+
   CURLcode ret = CURLE_UNKNOWN_OPTION;
   switch (minimum_version) {
     case utils::SSLVersion::TLSv1_0:
@@ -173,6 +229,9 @@ bool HTTPClient::setMinimumSSLVersion(utils::SSLVersion minimum_version) {
       break;
     case utils::SSLVersion::TLSv1_2:
       ret = curl_easy_setopt(http_session_.get(), CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+      break;
+    case utils::SSLVersion::TLSv1_3:
+      ret = curl_easy_setopt(http_session_.get(), CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_3);
       break;
   }
 
@@ -191,7 +250,7 @@ void HTTPClient::setKeepAliveProbe(std::optional<KeepAliveProbeData> probe_data)
 
 void HTTPClient::setConnectionTimeout(std::chrono::milliseconds timeout) {
   if (timeout < 0ms) {
-    logger_->log_error("Invalid HTTP connection timeout %" PRId64 " ms", timeout.count());
+    logger_->log_error("Invalid HTTP connection timeout {}", timeout);
     return;
   }
   connect_timeout_ = timeout;
@@ -199,7 +258,7 @@ void HTTPClient::setConnectionTimeout(std::chrono::milliseconds timeout) {
 
 void HTTPClient::setReadTimeout(std::chrono::milliseconds timeout) {
   if (timeout < 0ms) {
-    logger_->log_error("Invalid HTTP read timeout %" PRId64 " ms", timeout.count());
+    logger_->log_error("Invalid HTTP read timeout {}", timeout);
     return;
   }
   read_timeout_ = timeout;
@@ -212,9 +271,9 @@ void HTTPClient::setReadCallback(std::unique_ptr<utils::HTTPReadCallback> callba
 }
 
 void HTTPClient::setUploadCallback(std::unique_ptr<utils::HTTPUploadCallback> callback) {
-  logger_->log_debug("Setting callback for %s", url_);
+  logger_->log_debug("Setting callback for {}", url_);
   write_callback_ = std::move(callback);
-  if (method_ == "PUT") {
+  if (method_ == utils::HttpRequestMethod::PUT) {
     curl_easy_setopt(http_session_.get(), CURLOPT_INFILESIZE_LARGE, (curl_off_t) write_callback_->size());
   }
   curl_easy_setopt(http_session_.get(), CURLOPT_READFUNCTION, &utils::HTTPRequestResponse::send_write);
@@ -267,18 +326,16 @@ void HTTPClient::setRequestHeader(std::string key, std::optional<std::string> va
 }
 
 namespace {
-struct CurlSListFreeAll {
-  void operator()(struct curl_slist* slist) const {
-    curl_slist_free_all(slist);
-  }
-};
+using CurlSlistDeleter = decltype([](struct curl_slist* slist) { curl_slist_free_all(slist); });
 
-std::unique_ptr<struct curl_slist, CurlSListFreeAll> getCurlSList(const std::unordered_map<std::string, std::string>& request_headers) {
-  curl_slist* new_list = nullptr;
+std::unique_ptr<struct curl_slist, CurlSlistDeleter> toCurlSlist(const std::unordered_map<std::string, std::string>& request_headers) {
+  gsl::owner<curl_slist*> new_list = nullptr;
+  const auto guard = gsl::finally([&new_list]() { curl_slist_free_all(new_list); });
   for (const auto& [header_key, header_value] : request_headers)
-    new_list = curl_slist_append(new_list, utils::StringUtils::join_pack(header_key, ": ", header_value).c_str());
+    new_list = (utils::optional_from_ptr(curl_slist_append(new_list, utils::StringUtils::join_pack(header_key, ": ", header_value).c_str()))  // NOLINT(cppcoreguidelines-owning-memory)
+        | utils::orElse([]() { throw std::runtime_error{"curl_slist_append failed"}; })).value();
 
-  return {new_list, {}};
+  return {std::exchange(new_list, nullptr), {}};
 }
 }  // namespace
 
@@ -286,6 +343,10 @@ std::unique_ptr<struct curl_slist, CurlSListFreeAll> getCurlSList(const std::uno
 bool HTTPClient::submit() {
   if (url_.empty()) {
     logger_->log_error("Tried to submit to an empty url");
+    return false;
+  }
+  if (!method_) {
+    logger_->log_error("Tried to use HTTPClient without setting an HTTP method");
     return false;
   }
 
@@ -305,14 +366,14 @@ bool HTTPClient::submit() {
     curl_easy_setopt(http_session_.get(), CURLOPT_NOPROGRESS, 1);
   }
 
-  auto headers = getCurlSList(request_headers_);
+  const auto headers = toCurlSlist(request_headers_);
   if (headers) {
     curl_slist_append(headers.get(), "Expect:");
     curl_easy_setopt(http_session_.get(), CURLOPT_HTTPHEADER, headers.get());
   }
 
   curl_easy_setopt(http_session_.get(), CURLOPT_URL, url_.c_str());
-  logger_->log_debug("Submitting to %s", url_);
+  logger_->log_debug("Submitting to {}", url_);
   if (read_callback_ == nullptr) {
     curl_easy_setopt(http_session_.get(), CURLOPT_WRITEFUNCTION, &utils::HTTPRequestResponse::receiveWrite);
     curl_easy_setopt(http_session_.get(), CURLOPT_WRITEDATA, static_cast<void*>(&content_));
@@ -328,20 +389,20 @@ bool HTTPClient::submit() {
   if (read_callback_ == nullptr) {
     content_.close();
   }
-  long http_code;  // NOLINT(runtime/int) long due to libcurl API
+  long http_code = 0;  // NOLINT(runtime/int,google-runtime-int) long due to libcurl API
   curl_easy_getinfo(http_session_.get(), CURLINFO_RESPONSE_CODE, &http_code);
   response_data_.response_code = http_code;
   curl_easy_getinfo(http_session_.get(), CURLINFO_CONTENT_TYPE, &response_data_.response_content_type);
   if (res_ == CURLE_OPERATION_TIMEDOUT) {
-    logger_->log_error("HTTP operation timed out, with absolute timeout %" PRId64 "ms\n", getAbsoluteTimeout().count());
+    logger_->log_error("HTTP operation timed out, with absolute timeout {}\n", getAbsoluteTimeout());
   }
   if (res_ != CURLE_OK) {
-    logger_->log_info("%d", request_headers_.size());
-    logger_->log_error("curl_easy_perform() failed %s on %s, error code %d\n", curl_easy_strerror(res_), url_, res_);
+    logger_->log_info("{}", request_headers_.size());
+    logger_->log_error("curl_easy_perform() failed {} on {}, error code {}\n", curl_easy_strerror(res_), url_, magic_enum::enum_underlying(res_));
     return false;
   }
 
-  logger_->log_debug("Finished with %s", url_);
+  logger_->log_debug("Finished with {}", url_);
   return true;
 }
 
@@ -364,34 +425,40 @@ const std::vector<char> &HTTPClient::getResponseBody() {
   return response_data_.response_body;
 }
 
-void HTTPClient::set_request_method(std::string method) {
-  ranges::actions::transform(method, [](auto ch) { return ::toupper(static_cast<unsigned char>(ch)); });
+void HTTPClient::set_request_method(utils::HttpRequestMethod method) {
   if (method_ == method)
     return;
-  method_ = std::move(method);
-  if (method_ == "POST") {
-    curl_easy_setopt(http_session_.get(), CURLOPT_POST, 1L);
-    curl_easy_setopt(http_session_.get(), CURLOPT_CUSTOMREQUEST, nullptr);
-  } else if (method_ == "HEAD") {
-    curl_easy_setopt(http_session_.get(), CURLOPT_NOBODY, 1L);
-    curl_easy_setopt(http_session_.get(), CURLOPT_CUSTOMREQUEST, nullptr);
-  } else if (method_ == "GET") {
-    curl_easy_setopt(http_session_.get(), CURLOPT_HTTPGET, 1L);
-    curl_easy_setopt(http_session_.get(), CURLOPT_CUSTOMREQUEST, nullptr);
-  } else if (method_ == "PUT") {
-    curl_easy_setopt(http_session_.get(), CURLOPT_UPLOAD, 1L);
-    curl_easy_setopt(http_session_.get(), CURLOPT_CUSTOMREQUEST, nullptr);
-  } else {
-    curl_easy_setopt(http_session_.get(), CURLOPT_POST, 0L);
-    curl_easy_setopt(http_session_.get(), CURLOPT_NOBODY, 0L);
-    curl_easy_setopt(http_session_.get(), CURLOPT_HTTPGET, 0L);
-    curl_easy_setopt(http_session_.get(), CURLOPT_UPLOAD, 0L);
-    curl_easy_setopt(http_session_.get(), CURLOPT_CUSTOMREQUEST, method_.c_str());
+  method_ = method;
+  switch (*method_) {
+    case utils::HttpRequestMethod::POST:
+      curl_easy_setopt(http_session_.get(), CURLOPT_POST, 1L);
+      curl_easy_setopt(http_session_.get(), CURLOPT_CUSTOMREQUEST, nullptr);
+      break;
+    case utils::HttpRequestMethod::HEAD:
+      curl_easy_setopt(http_session_.get(), CURLOPT_NOBODY, 1L);
+      curl_easy_setopt(http_session_.get(), CURLOPT_CUSTOMREQUEST, nullptr);
+      break;
+    case utils::HttpRequestMethod::GET:
+      curl_easy_setopt(http_session_.get(), CURLOPT_HTTPGET, 1L);
+      curl_easy_setopt(http_session_.get(), CURLOPT_CUSTOMREQUEST, nullptr);
+      break;
+    case utils::HttpRequestMethod::PUT:
+      curl_easy_setopt(http_session_.get(), CURLOPT_UPLOAD, 1L);
+      curl_easy_setopt(http_session_.get(), CURLOPT_CUSTOMREQUEST, nullptr);
+      break;
+    default:
+      curl_easy_setopt(http_session_.get(), CURLOPT_POST, 0L);
+      curl_easy_setopt(http_session_.get(), CURLOPT_NOBODY, 0L);
+      curl_easy_setopt(http_session_.get(), CURLOPT_HTTPGET, 0L);
+      curl_easy_setopt(http_session_.get(), CURLOPT_UPLOAD, 0L);
+      curl_easy_setopt(http_session_.get(), CURLOPT_CUSTOMREQUEST, std::string(magic_enum::enum_name(*method_)).c_str());
+      break;
   }
 }
 
 int HTTPClient::onProgress(void *clientp, curl_off_t /*dltotal*/, curl_off_t dlnow, curl_off_t /*ultotal*/, curl_off_t ulnow) {
-  HTTPClient& client = *reinterpret_cast<HTTPClient*>(clientp);
+  gsl_Expects(clientp);
+  HTTPClient& client = *static_cast<HTTPClient*>(clientp);
   auto now = std::chrono::steady_clock::now();
   auto elapsed = now - client.progress_.last_transferred_;
   if (dlnow != client.progress_.downloaded_data_ || ulnow != client.progress_.uploaded_data_) {
@@ -404,9 +471,7 @@ int HTTPClient::onProgress(void *clientp, curl_off_t /*dltotal*/, curl_off_t dln
   // did not transfer data
   if (elapsed > client.read_timeout_) {
     // timeout
-    client.logger_->log_error("HTTP operation has been idle for %" PRId64 " ms, limit (%" PRId64 "ms) reached, terminating connection\n",
-        int64_t{std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()},
-        int64_t{client.read_timeout_.count()});
+    client.logger_->log_error("HTTP operation has been idle for {}, limit ({}) reached, terminating connection\n", elapsed, client.read_timeout_);
     return 1;
   }
   return 0;
@@ -415,26 +480,22 @@ int HTTPClient::onProgress(void *clientp, curl_off_t /*dltotal*/, curl_off_t dln
 void HTTPClient::configure_secure_connection() {
 #ifdef OPENSSL_SUPPORT
   if (ssl_context_service_) {
-    logger_->log_debug("Using certificate file \"%s\"", ssl_context_service_->getCertificateFile().string());
-    logger_->log_debug("Using private key file \"%s\"", ssl_context_service_->getPrivateKeyFile().string());
-    logger_->log_debug("Using CA certificate file \"%s\"", ssl_context_service_->getCACertificate().string());
-
     curl_easy_setopt(http_session_.get(), CURLOPT_SSL_CTX_FUNCTION, &configure_ssl_context);
     curl_easy_setopt(http_session_.get(), CURLOPT_SSL_CTX_DATA, static_cast<void *>(ssl_context_service_.get()));
     curl_easy_setopt(http_session_.get(), CURLOPT_CAINFO, nullptr);
     curl_easy_setopt(http_session_.get(), CURLOPT_CAPATH, nullptr);
   } else {
-    static const auto default_ca_path = utils::getDefaultCAPath();
+    static const auto default_ca_file = utils::getDefaultCAFile();
 
-    if (default_ca_path)
-      logger_->log_debug("Using CA certificate file \"%s\"", default_ca_path->string());
+    if (default_ca_file)
+      logger_->log_debug("Using CA certificate file \"{}\"", *default_ca_file);
     else
       logger_->log_error("Could not find valid CA certificate file");
 
     curl_easy_setopt(http_session_.get(), CURLOPT_SSL_CTX_FUNCTION, nullptr);
     curl_easy_setopt(http_session_.get(), CURLOPT_SSL_CTX_DATA, nullptr);
-    if (default_ca_path)
-      curl_easy_setopt(http_session_.get(), CURLOPT_CAINFO, default_ca_path->string().c_str());
+    if (default_ca_file)
+      curl_easy_setopt(http_session_.get(), CURLOPT_CAINFO, std::string(*default_ca_file).c_str());
     else
       curl_easy_setopt(http_session_.get(), CURLOPT_CAINFO, nullptr);
     curl_easy_setopt(http_session_.get(), CURLOPT_CAPATH, nullptr);
@@ -448,6 +509,14 @@ void HTTPClient::setInterface(const std::string &ifc) {
 
 void HTTPClient::setFollowRedirects(bool follow) {
   curl_easy_setopt(http_session_.get(), CURLOPT_FOLLOWLOCATION, follow);
+}
+
+void HTTPClient::setMaximumUploadSpeed(uint64_t max_bytes_per_second) {
+  curl_easy_setopt(http_session_.get(), CURLOPT_MAX_SEND_SPEED_LARGE, max_bytes_per_second);
+}
+
+void HTTPClient::setMaximumDownloadSpeed(uint64_t max_bytes_per_second) {
+  curl_easy_setopt(http_session_.get(), CURLOPT_MAX_RECV_SPEED_LARGE, max_bytes_per_second);
 }
 
 bool HTTPClient::isValidHttpHeaderField(std::string_view field_name) {
@@ -465,12 +534,10 @@ std::string HTTPClient::replaceInvalidCharactersInHttpHeaderFieldName(std::strin
     return "X-MiNiFi-Empty-Attribute-Name";
   }
 
-  std::string result;
-  result.reserve(field_name.size());
   // RFC822 3.1.2: The  field-name must be composed of printable ASCII characters
   // (i.e., characters that  have  values  between  33.  and  126., decimal, except colon).
-  ranges::actions::transform(field_name, [](char ch) {
-      return (ch >= 33 && ch <= 126 && ch != ':') ? ch : '-';
+  ranges::actions::transform(field_name, [](char ch) {  // NOLINT: false positive: Add #include <algorithm> for transform  [build/include_what_you_use] [4]
+    return (ch >= 33 && ch <= 126 && ch != ':') ? ch : '-';
   });
   return field_name;
 }

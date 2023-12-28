@@ -26,12 +26,9 @@
 #include <map>
 #include <memory>
 
-#define DEFAULT_DYNAMIC_PROPERTY_DESC "Dynamic Property"
-
-#define STAR_PROPERTIES "Property"
-
 #include "logging/Logger.h"
 #include "Property.h"
+#include "PropertyDefinition.h"
 #include "utils/gsl.h"
 
 namespace org::apache::nifi::minifi::core {
@@ -59,9 +56,11 @@ class ConfigurableComponent {
   template<typename T>
   bool getProperty(const std::string& name, T &value) const;
 
-  template<typename T = std::string>
-  std::enable_if_t<std::is_default_constructible<T>::value, std::optional<T>>
-  getProperty(const std::string& property_name) const {
+  template<typename T>
+  bool getProperty(const core::PropertyReference& property, T& value) const { return getProperty(std::string{property.name}, value); }
+
+  template<typename T = std::string> requires(std::is_default_constructible_v<T>)
+  std::optional<T> getProperty(const std::string& property_name) const {
     T value;
     try {
       if (!getProperty(property_name, value)) return std::nullopt;
@@ -70,6 +69,9 @@ class ConfigurableComponent {
     }
     return value;
   }
+
+  template<typename T = std::string> requires(std::is_default_constructible_v<T>)
+  std::optional<T> getProperty(const core::PropertyReference& property) const { return getProperty<T>(std::string(property.name)); }
 
   /**
    * Provides a reference for the property.
@@ -88,6 +90,9 @@ class ConfigurableComponent {
    * to the collection of values within the Property.
    */
   bool updateProperty(const std::string &name, const std::string &value);
+
+  bool updateProperty(const PropertyReference& property, std::string_view value);
+
   /**
    * Sets the property using the provided name
    * @param property name
@@ -95,6 +100,8 @@ class ConfigurableComponent {
    * @return whether property was set or not
    */
   bool setProperty(const Property& prop, const std::string& value);
+
+  bool setProperty(const PropertyReference& property, std::string_view value);
 
   /**
      * Sets the property using the provided name
@@ -104,7 +111,7 @@ class ConfigurableComponent {
      */
   bool setProperty(const Property& prop, PropertyValue &value);
 
-  void setSupportedProperties(gsl::span<const core::Property> properties);
+  void setSupportedProperties(std::span<const core::PropertyReference> properties);
 
   /**
    * Gets whether or not this processor supports dynamic properties.
@@ -177,6 +184,7 @@ class ConfigurableComponent {
    * @return if property exists and is explicitly set, not just falling back to default value
    */
   bool isPropertyExplicitlySet(const Property&) const;
+  bool isPropertyExplicitlySet(const PropertyReference&) const;
 
   virtual ~ConfigurableComponent();
 
@@ -220,13 +228,13 @@ bool ConfigurableComponent::getProperty(const std::string& name, T &value) const
     if (property.getValue().getValue() == nullptr) {
       // empty value
       if (property.getRequired()) {
-        logger_->log_error("Component %s required property %s is empty", name, property.getName());
+        logger_->log_error("Component {} required property {} is empty", name, property.getName());
         throw utils::internal::RequiredPropertyMissingException("Required property is empty: " + property.getName());
       }
-      logger_->log_debug("Component %s property name %s, empty value", name, property.getName());
+      logger_->log_debug("Component {} property name {}, empty value", name, property.getName());
       return false;
     }
-    logger_->log_debug("Component %s property name %s value %s", name, property.getName(), property.getValue().to_string());
+    logger_->log_debug("Component {} property name {} value {}", name, property.getName(), property.getValue().to_string());
 
     if constexpr (std::is_base_of<TransformableValue, T>::value) {
       value = T(property.getValue().operator std::string());
@@ -235,7 +243,7 @@ bool ConfigurableComponent::getProperty(const std::string& name, T &value) const
     }
     return true;
   } else {
-    logger_->log_warn("Could not find property %s", name);
+    logger_->log_warn("Could not find property {}", name);
     return false;
   }
 }

@@ -37,14 +37,14 @@ void setClock(std::shared_ptr<SteadyClock> clock) {
 
 std::optional<std::chrono::system_clock::time_point> parseRfc3339(const std::string& str) {
   std::istringstream stream(str);
-  date::year_month_day date_part;
+  date::year_month_day date_part{};
   date::from_stream(stream, "%F", date_part);
 
   if (stream.fail())
     return std::nullopt;
 
   constexpr std::string_view accepted_delimiters = "tT_ ";
-  char delimiter_char;
+  char delimiter_char = 0;
   stream.get(delimiter_char);
 
   if (stream.fail() || !ranges::contains(accepted_delimiters, delimiter_char))

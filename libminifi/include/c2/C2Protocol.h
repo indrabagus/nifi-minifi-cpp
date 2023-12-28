@@ -34,8 +34,8 @@ namespace org::apache::nifi::minifi::c2 {
  */
 class C2Protocol : public core::Connectable {
  public:
-  C2Protocol(std::string name, const utils::Identifier &uuid)
-      : core::Connectable(std::move(name), uuid),
+  C2Protocol(std::string_view name, const utils::Identifier &uuid)
+      : core::Connectable(name, uuid),
         running_(true) {
   }
 
@@ -74,7 +74,7 @@ class C2Protocol : public core::Connectable {
   virtual C2Payload consumePayload(const C2Payload &operation, Direction direction = TRANSMIT, bool async = false) = 0;
 
   virtual C2Payload fetch(const std::string& url, const std::vector<std::string>& /*accepted_formats*/ = {}, bool async = false) {
-    return consumePayload(url, C2Payload(Operation::TRANSFER, true), Direction::RECEIVE, async);
+    return consumePayload(url, C2Payload(Operation::transfer, true), Direction::RECEIVE, async);
   }
 
   /**

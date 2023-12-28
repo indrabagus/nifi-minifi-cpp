@@ -83,12 +83,12 @@ int SociRow::getInteger(std::size_t index) const {
   return current_->get<int>(index);
 }
 
-long long SociRow::getLongLong(std::size_t index) const {
-  return current_->get<long long>(index);
+long long SociRow::getLongLong(std::size_t index) const {  // NOLINT(google-runtime-int)
+  return current_->get<long long>(index);  // NOLINT(google-runtime-int)
 }
 
-unsigned long long SociRow::getUnsignedLongLong(std::size_t index) const {
-  return current_->get<unsigned long long>(index);
+unsigned long long SociRow::getUnsignedLongLong(std::size_t index) const {  // NOLINT(google-runtime-int)
+  return current_->get<unsigned long long>(index);  // NOLINT(google-runtime-int)
 }
 
 std::tm SociRow::getDate(std::size_t index) const {
@@ -123,7 +123,7 @@ std::unique_ptr<Rowset> SociStatement::execute(const std::vector<std::string>& a
     }
     return std::make_unique<SociRowset>(stmt);
   } catch (const soci::soci_error& ex) {
-    logger_->log_error("Error while evaluating query, type: %s, what: %s", typeid(ex).name(), ex.what());
+    logger_->log_error("Error while evaluating query, type: {}, what: {}", typeid(ex).name(), ex.what());
     if (ex.get_error_category() == soci::soci_error::error_category::connection_error
         || ex.get_error_category() == soci::soci_error::error_category::system_error) {
       throw sql::ConnectionError(ex.get_error_message());
@@ -131,7 +131,7 @@ std::unique_ptr<Rowset> SociStatement::execute(const std::vector<std::string>& a
       throw sql::StatementError(ex.get_error_message());
     }
   } catch (const std::exception& ex) {
-    logger_->log_error("Error while evaluating query, type: %s, what: %s", typeid(ex).name(), ex.what());
+    logger_->log_error("Error while evaluating query, type: {}, what: {}", typeid(ex).name(), ex.what());
     throw sql::StatementError(ex.what());
   }
 }

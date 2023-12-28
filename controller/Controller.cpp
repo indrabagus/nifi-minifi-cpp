@@ -17,198 +17,253 @@
 #include "Controller.h"
 
 #include <utility>
+#include <fstream>
 
 #include "io/BufferStream.h"
 #include "c2/C2Payload.h"
+#include "io/AsioStream.h"
+#include "asio/ssl/context.hpp"
+#include "asio/ssl/stream.hpp"
+#include "asio/connect.hpp"
+#include "core/logging/Logger.h"
+#include "utils/net/AsioSocketUtils.h"
+#include "utils/file/FileUtils.h"
 
 namespace org::apache::nifi::minifi::controller {
 
-bool sendSingleCommand(std::unique_ptr<io::Socket> socket, uint8_t op, const std::string& value) {
-  if (socket->initialize() < 0) {
+bool sendSingleCommand(const utils::net::SocketData& socket_data, uint8_t op, const std::string& value) {
+  std::unique_ptr<io::BaseStream> connection_stream = std::make_unique<utils::net::AsioSocketConnection>(socket_data);
+  if (connection_stream->initialize() < 0) {
     return false;
   }
-  io::BufferStream stream;
-  stream.write(&op, 1);
-  stream.write(value);
-  return socket->write(stream.getBuffer()) == stream.size();
+  io::BufferStream buffer;
+  buffer.write(&op, 1);
+  buffer.write(value);
+  return connection_stream->write(buffer.getBuffer()) == buffer.size();
 }
 
-bool stopComponent(std::unique_ptr<io::Socket> socket, const std::string& component) {
-  return sendSingleCommand(std::move(socket), c2::Operation::STOP, component);
+bool stopComponent(const utils::net::SocketData& socket_data, const std::string& component) {
+  return sendSingleCommand(socket_data, static_cast<uint8_t>(c2::Operation::stop), component);
 }
 
-bool startComponent(std::unique_ptr<io::Socket> socket, const std::string& component) {
-  return sendSingleCommand(std::move(socket), c2::Operation::START, component);
+bool startComponent(const utils::net::SocketData& socket_data, const std::string& component) {
+  return sendSingleCommand(socket_data, static_cast<uint8_t>(c2::Operation::start), component);
 }
 
-bool clearConnection(std::unique_ptr<io::Socket> socket, const std::string& connection) {
-  return sendSingleCommand(std::move(socket), c2::Operation::CLEAR, connection);
+bool clearConnection(const utils::net::SocketData& socket_data, const std::string& connection) {
+  return sendSingleCommand(socket_data, static_cast<uint8_t>(c2::Operation::clear), connection);
 }
 
-int updateFlow(std::unique_ptr<io::Socket> socket, std::ostream &out, const std::string& file) {
-  if (socket->initialize() < 0) {
-    return -1;
+bool updateFlow(const utils::net::SocketData& socket_data, std::ostream &out, const std::string& file) {
+  std::unique_ptr<io::BaseStream> connection_stream = std::make_unique<utils::net::AsioSocketConnection>(socket_data);
+  if (connection_stream->initialize() < 0) {
+    return false;
   }
-  uint8_t op = c2::Operation::UPDATE;
-  io::BufferStream stream;
-  stream.write(&op, 1);
-  stream.write("flow");
-  stream.write(file);
-  if (io::isError(socket->write(stream.getBuffer()))) {
-    return -1;
+  auto op = static_cast<uint8_t>(c2::Operation::update);
+  io::BufferStream buffer;
+  buffer.write(&op, 1);
+  buffer.write("flow");
+  buffer.write(file);
+  if (io::isError(connection_stream->write(buffer.getBuffer()))) {
+    return false;
   }
   // read the response
   uint8_t resp = 0;
-  socket->read(resp);
-  if (resp == c2::Operation::DESCRIBE) {
+  connection_stream->read(resp);
+  if (resp == static_cast<uint8_t>(c2::Operation::describe)) {
     uint16_t connections = 0;
-    socket->read(connections);
+    connection_stream->read(connections);
     out << connections << " are full" << std::endl;
     for (int i = 0; i < connections; i++) {
       std::string fullcomponent;
-      socket->read(fullcomponent);
+      connection_stream->read(fullcomponent);
       out << fullcomponent << " is full" << std::endl;
     }
   }
-  return 0;
+  return true;
 }
 
-int getFullConnections(std::unique_ptr<io::Socket> socket, std::ostream &out) {
-  if (socket->initialize() < 0) {
-    return -1;
+bool getFullConnections(const utils::net::SocketData& socket_data, std::ostream &out) {
+  std::unique_ptr<io::BaseStream> connection_stream = std::make_unique<utils::net::AsioSocketConnection>(socket_data);
+  if (connection_stream->initialize() < 0) {
+    return false;
   }
-  uint8_t op = c2::Operation::DESCRIBE;
-  io::BufferStream stream;
-  stream.write(&op, 1);
-  stream.write("getfull");
-  if (io::isError(socket->write(stream.getBuffer()))) {
-    return -1;
+  auto op = static_cast<uint8_t>(c2::Operation::describe);
+  io::BufferStream buffer;
+  buffer.write(&op, 1);
+  buffer.write("getfull");
+  if (io::isError(connection_stream->write(buffer.getBuffer()))) {
+    return false;
   }
   // read the response
   uint8_t resp = 0;
-  socket->read(resp);
-  if (resp == c2::Operation::DESCRIBE) {
+  connection_stream->read(resp);
+  if (resp == static_cast<uint8_t>(c2::Operation::describe)) {
     uint16_t connections = 0;
-    socket->read(connections);
+    connection_stream->read(connections);
     out << connections << " are full" << std::endl;
     for (int i = 0; i < connections; i++) {
       std::string fullcomponent;
-      socket->read(fullcomponent);
+      connection_stream->read(fullcomponent);
       out << fullcomponent << " is full" << std::endl;
     }
   }
-  return 0;
+  return true;
 }
 
-int getConnectionSize(std::unique_ptr<io::Socket> socket, std::ostream &out, const std::string& connection) {
-  if (socket->initialize() < 0) {
-    return -1;
+bool getConnectionSize(const utils::net::SocketData& socket_data, std::ostream &out, const std::string& connection) {
+  std::unique_ptr<io::BaseStream> connection_stream = std::make_unique<utils::net::AsioSocketConnection>(socket_data);
+  if (connection_stream->initialize() < 0) {
+    return false;
   }
-  uint8_t op = c2::Operation::DESCRIBE;
-  io::BufferStream stream;
-  stream.write(&op, 1);
-  stream.write("queue");
-  stream.write(connection);
-  if (io::isError(socket->write(stream.getBuffer()))) {
-    return -1;
+  auto op = static_cast<uint8_t>(c2::Operation::describe);
+  io::BufferStream buffer;
+  buffer.write(&op, 1);
+  buffer.write("queue");
+  buffer.write(connection);
+  if (io::isError(connection_stream->write(buffer.getBuffer()))) {
+    return false;
   }
   // read the response
   uint8_t resp = 0;
-  socket->read(resp);
-  if (resp == c2::Operation::DESCRIBE) {
+  connection_stream->read(resp);
+  if (resp == static_cast<uint8_t>(c2::Operation::describe)) {
     std::string size;
-    socket->read(size);
+    connection_stream->read(size);
     out << "Size/Max of " << connection << " " << size << std::endl;
   }
-  return 0;
+  return true;
 }
 
-int listComponents(std::unique_ptr<io::Socket> socket, std::ostream &out, bool show_header) {
-  if (socket->initialize() < 0) {
-    return -1;
+bool listComponents(const utils::net::SocketData& socket_data, std::ostream &out, bool show_header) {
+  std::unique_ptr<io::BaseStream> connection_stream = std::make_unique<utils::net::AsioSocketConnection>(socket_data);
+  if (connection_stream->initialize() < 0) {
+    return false;
   }
-  io::BufferStream stream;
-  uint8_t op = c2::Operation::DESCRIBE;
-  stream.write(&op, 1);
-  stream.write("components");
-  if (io::isError(socket->write(stream.getBuffer()))) {
-    return -1;
+  io::BufferStream buffer;
+  auto op = static_cast<uint8_t>(c2::Operation::describe);
+  buffer.write(&op, 1);
+  buffer.write("components");
+  if (io::isError(connection_stream->write(buffer.getBuffer()))) {
+    return false;
   }
   uint16_t responses = 0;
-  socket->read(op);
-  socket->read(responses);
+  connection_stream->read(op);
+  connection_stream->read(responses);
   if (show_header)
     out << "Components:" << std::endl;
 
   for (int i = 0; i < responses; i++) {
     std::string name;
-    socket->read(name, false);
+    connection_stream->read(name, false);
     std::string status;
-    socket->read(status, false);
+    connection_stream->read(status, false);
     out << name << ", running: " << status << std::endl;
   }
-  return 0;
+  return true;
 }
 
-int listConnections(std::unique_ptr<io::Socket> socket, std::ostream &out, bool show_header) {
-  if (socket->initialize() < 0) {
-    return -1;
+bool listConnections(const utils::net::SocketData& socket_data, std::ostream &out, bool show_header) {
+  std::unique_ptr<io::BaseStream> connection_stream = std::make_unique<utils::net::AsioSocketConnection>(socket_data);
+  if (connection_stream->initialize() < 0) {
+    return false;
   }
-  io::BufferStream stream;
-  uint8_t op = c2::Operation::DESCRIBE;
-  stream.write(&op, 1);
-  stream.write("connections");
-  if (io::isError(socket->write(stream.getBuffer()))) {
-    return -1;
+  io::BufferStream buffer;
+  auto op = static_cast<uint8_t>(c2::Operation::describe);
+  buffer.write(&op, 1);
+  buffer.write("connections");
+  if (io::isError(connection_stream->write(buffer.getBuffer()))) {
+    return false;
   }
   uint16_t responses = 0;
-  socket->read(op);
-  socket->read(responses);
+  connection_stream->read(op);
+  connection_stream->read(responses);
   if (show_header)
     out << "Connection Names:" << std::endl;
 
   for (int i = 0; i < responses; i++) {
     std::string name;
-    socket->read(name, false);
+    connection_stream->read(name, false);
     out << name << std::endl;
   }
-  return 0;
+  return true;
 }
 
-int printManifest(std::unique_ptr<io::Socket> socket, std::ostream &out) {
-  if (socket->initialize() < 0) {
-    return -1;
+bool printManifest(const utils::net::SocketData& socket_data, std::ostream &out) {
+  std::unique_ptr<io::BaseStream> connection_stream = std::make_unique<utils::net::AsioSocketConnection>(socket_data);
+  if (connection_stream->initialize() < 0) {
+    return false;
   }
-  io::BufferStream stream;
-  uint8_t op = c2::Operation::DESCRIBE;
-  stream.write(&op, 1);
-  stream.write("manifest");
-  if (io::isError(socket->write(stream.getBuffer()))) {
-    return -1;
+  io::BufferStream buffer;
+  auto op = static_cast<uint8_t>(c2::Operation::describe);
+  buffer.write(&op, 1);
+  buffer.write("manifest");
+  if (io::isError(connection_stream->write(buffer.getBuffer()))) {
+    return false;
   }
-  socket->read(op);
+  connection_stream->read(op);
   std::string manifest;
-  socket->read(manifest, true);
+  connection_stream->read(manifest, true);
   out << manifest << std::endl;
-  return 0;
+  return true;
 }
 
-int getJstacks(std::unique_ptr<io::Socket> socket, std::ostream &out) {
-  if (socket->initialize() < 0) {
-    return -1;
+bool getJstacks(const utils::net::SocketData& socket_data, std::ostream &out) {
+  std::unique_ptr<io::BaseStream> connection_stream = std::make_unique<utils::net::AsioSocketConnection>(socket_data);
+  if (connection_stream->initialize() < 0) {
+    return false;
   }
-  io::BufferStream stream;
-  uint8_t op = c2::Operation::DESCRIBE;
-  stream.write(&op, 1);
-  stream.write("jstack");
-  if (io::isError(socket->write(stream.getBuffer()))) {
-    return -1;
+  io::BufferStream buffer;
+  auto op = static_cast<uint8_t>(c2::Operation::describe);
+  buffer.write(&op, 1);
+  buffer.write("jstack");
+  if (io::isError(connection_stream->write(buffer.getBuffer()))) {
+    return false;
   }
-  socket->read(op);
+  connection_stream->read(op);
   std::string manifest;
-  socket->read(manifest, true);
+  connection_stream->read(manifest, true);
   out << manifest << std::endl;
-  return 0;
+  return true;
+}
+
+nonstd::expected<void, std::string> getDebugBundle(const utils::net::SocketData& socket_data, const std::filesystem::path& target_dir) {
+  std::unique_ptr<io::BaseStream> connection_stream = std::make_unique<utils::net::AsioSocketConnection>(socket_data);
+  if (connection_stream->initialize() < 0) {
+    return nonstd::make_unexpected("Could not connect to remote host " + socket_data.host + ":" + std::to_string(socket_data.port));
+  }
+  io::BufferStream buffer;
+  auto op = static_cast<uint8_t>(c2::Operation::transfer);
+  buffer.write(&op, 1);
+  buffer.write("debug");
+  if (io::isError(connection_stream->write(buffer.getBuffer()))) {
+    return nonstd::make_unexpected("Could not write to connection " + socket_data.host + ":" + std::to_string(socket_data.port));
+  }
+  connection_stream->read(op);
+  size_t bundle_size = 0;
+  connection_stream->read(bundle_size);
+  if (bundle_size == 0) {
+    return nonstd::make_unexpected("Failed to retrieve debug bundle");
+  }
+
+  if (std::filesystem::exists(target_dir) && !std::filesystem::is_directory(target_dir)) {
+    return nonstd::make_unexpected("Object specified as the target directory already exists and it is not a directory");
+  }
+
+  if (!std::filesystem::exists(target_dir) && utils::file::create_dir(target_dir) != 0) {
+    return nonstd::make_unexpected("Failed to create target directory: " + target_dir.string());
+  }
+
+  std::ofstream out_file(target_dir / "debug.tar.gz");
+  const size_t BUFFER_SIZE = 4096;
+  std::array<char, BUFFER_SIZE> out_buffer{};
+  while (bundle_size > 0) {
+    const auto next_read_size = (std::min)(bundle_size, BUFFER_SIZE);
+    const auto size_read = connection_stream->read(std::as_writable_bytes(std::span(out_buffer).subspan(0, next_read_size)));
+    bundle_size -= size_read;
+    out_file.write(out_buffer.data(), gsl::narrow<std::streamsize>(size_read));
+  }
+  return {};
 }
 
 }  // namespace org::apache::nifi::minifi::controller

@@ -38,6 +38,10 @@
 #include "core/logging/LoggerConfiguration.h"
 #include "core/Processor.h"
 #include "core/ProcessSession.h"
+#include "core/PropertyDefinition.h"
+#include "core/PropertyDefinitionBuilder.h"
+#include "core/PropertyType.h"
+#include "core/RelationshipDefinition.h"
 #include "FlowFileRecord.h"
 #include "utils/gsl.h"
 
@@ -45,8 +49,8 @@ namespace org::apache::nifi::minifi::processors {
 
 class ExecuteProcess : public core::Processor {
  public:
-  explicit ExecuteProcess(std::string name, const utils::Identifier& uuid = {})
-      : Processor(std::move(name), uuid),
+  explicit ExecuteProcess(std::string_view name, const utils::Identifier& uuid = {})
+      : Processor(name, uuid),
         working_dir_(".") {
   }
   ~ExecuteProcess() override {
@@ -60,23 +64,36 @@ class ExecuteProcess : public core::Processor {
       "When this option is used, the output is expected to be in textual format, as it typically does not make sense to split binary data on arbitrary time-based intervals. "
       "This processor is not available on Windows systems.";
 
-  EXTENSIONAPI static core::Property Command;
-  EXTENSIONAPI static core::Property CommandArguments;
-  EXTENSIONAPI static core::Property WorkingDir;
-  EXTENSIONAPI static core::Property BatchDuration;
-  EXTENSIONAPI static core::Property RedirectErrorStream;
-  static auto properties() {
-    return std::array{
+  EXTENSIONAPI static constexpr auto Command = core::PropertyDefinitionBuilder<>::createProperty("Command")
+      .withDescription("Specifies the command to be executed; if just the name of an executable is provided, it must be in the user's environment PATH.")
+      .build();
+  EXTENSIONAPI static constexpr auto CommandArguments = core::PropertyDefinitionBuilder<>::createProperty("Command Arguments")
+      .withDescription("The arguments to supply to the executable delimited by white space. White space can be escaped by enclosing it in double-quotes.")
+      .build();
+  EXTENSIONAPI static constexpr auto WorkingDir = core::PropertyDefinitionBuilder<>::createProperty("Working Directory")
+      .withDescription("The directory to use as the current working directory when executing the command")
+      .build();
+  EXTENSIONAPI static constexpr auto BatchDuration = core::PropertyDefinitionBuilder<>::createProperty("Batch Duration")
+      .withDescription("If the process is expected to be long-running and produce textual output, a batch duration can be specified.")
+      .withPropertyType(core::StandardPropertyTypes::TIME_PERIOD_TYPE)
+      .withDefaultValue("0 sec")
+      .build();
+  EXTENSIONAPI static constexpr auto RedirectErrorStream = core::PropertyDefinitionBuilder<>::createProperty("Redirect Error Stream")
+      .withDescription("If true will redirect any error stream output of the process to the output stream.")
+      .withPropertyType(core::StandardPropertyTypes::BOOLEAN_TYPE)
+      .withDefaultValue("false")
+      .build();
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 5>{
       Command,
       CommandArguments,
       WorkingDir,
       BatchDuration,
       RedirectErrorStream
-    };
-  }
+  };
 
-  EXTENSIONAPI static core::Relationship Success;
-  static auto relationships() { return std::array{Success}; }
+
+  EXTENSIONAPI static constexpr auto Success = core::RelationshipDefinition{"success", "All created FlowFiles are routed to this relationship."};
+  EXTENSIONAPI static constexpr auto Relationships = std::array{Success};
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
@@ -84,8 +101,8 @@ class ExecuteProcess : public core::Processor {
   EXTENSIONAPI static constexpr bool IsSingleThreaded = true;
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  void onTrigger(core::ProcessContext *context, core::ProcessSession *session) override;
-  void onSchedule(core::ProcessContext *context, core::ProcessSessionFactory *session_factory) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& session_factory) override;
   void initialize() override;
 
  private:
@@ -95,7 +112,7 @@ class ExecuteProcess : public core::Processor {
   void collectChildProcessOutput(core::ProcessSession& session);
   void readOutputInBatches(core::ProcessSession& session);
   void readOutput(core::ProcessSession& session);
-  bool writeToFlowFile(core::ProcessSession& session, std::shared_ptr<core::FlowFile>& flow_file, gsl::span<const char> buffer) const;
+  bool writeToFlowFile(core::ProcessSession& session, std::shared_ptr<core::FlowFile>& flow_file, std::span<const char> buffer) const;
 
   std::shared_ptr<core::logging::Logger> logger_ = core::logging::LoggerFactory<ExecuteProcess>::getLogger(uuid_);
   std::string command_;

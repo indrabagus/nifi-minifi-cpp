@@ -17,6 +17,9 @@
  */
 #include <vector>
 #include <iostream>
+#include <string>
+#include <string_view>
+#include <filesystem>
 
 #include "MainHelper.h"
 #include "properties/Configure.h"
@@ -24,11 +27,11 @@
 #include "c2/ControllerSocketProtocol.h"
 #include "core/controller/ControllerService.h"
 #include "core/extension/ExtensionManager.h"
-#include "io/StreamFactory.h"
 #include "core/ConfigurationFactory.h"
 #include "Exception.h"
-
-#include "cxxopts.hpp"
+#include "argparse/argparse.hpp"
+#include "range/v3/algorithm/contains.hpp"
+#include "agent/agent_version.h"
 
 namespace minifi = org::apache::nifi::minifi;
 
@@ -39,12 +42,10 @@ std::shared_ptr<minifi::core::controller::ControllerService> getControllerServic
   minifi::core::extension::ExtensionManager::get().initialize(configuration);
 
   configuration->get(minifi::Configure::nifi_configuration_class_name, nifi_configuration_class_name);
-  const auto stream_factory = minifi::io::StreamFactory::getInstance(configuration);
   auto flow_configuration = minifi::core::createFlowConfiguration(
     minifi::core::ConfigurationContext{
       .flow_file_repo = nullptr,
       .content_repo = nullptr,
-      .stream_factory = stream_factory,
       .configuration = configuration,
       .path = configuration->get(minifi::Configure::nifi_flow_configuration_file)},
     nifi_configuration_class_name);
@@ -89,7 +90,7 @@ std::shared_ptr<minifi::controllers::SSLContextService> getSSLContextService(con
 int main(int argc, char **argv) {
   const auto logger = minifi::core::logging::LoggerConfiguration::getConfiguration().getLogger("controller");
 
-  const std::string minifi_home = determineMinifiHome(logger);
+  const auto minifi_home = determineMinifiHome(logger);
   if (minifi_home.empty()) {
     // determineMinifiHome already logged everything we need
     return -1;
@@ -104,158 +105,179 @@ int main(int argc, char **argv) {
   log_properties->loadConfigureFile(DEFAULT_LOG_PROPERTIES_FILE);
   minifi::core::logging::LoggerConfiguration::getConfiguration().initialize(log_properties);
 
-  std::shared_ptr<minifi::controllers::SSLContextService> secure_context;
+  minifi::utils::net::SocketData socket_data;
   try {
-    secure_context = getSSLContextService(configuration);
+    socket_data.ssl_context_service = getSSLContextService(configuration);
   } catch(const minifi::Exception& ex) {
-    logger->log_error(ex.what());
-    exit(1);
+    logger->log_error("{}", ex.what());
+    std::exit(1);
   }
-  auto stream_factory_ = minifi::io::StreamFactory::getInstance(configuration);
 
-  std::string host = "localhost";
-  std::string port_str;
-  std::string ca_cert;
-  int port = -1;
+  argparse::ArgumentParser argument_parser("Apache MiNiFi C++ Controller", minifi::AgentBuild::VERSION);
+  argument_parser.add_argument("--host").metavar("HOSTNAME")
+    .help("Specifies connecting host name");
+  argument_parser.add_argument("--port")
+    .metavar("PORT")
+    .help("Specifies connecting host port")
+    .scan<'d', int>();
+  argument_parser.add_argument("--stop")
+    .metavar("COMPONENT")
+    .nargs(argparse::nargs_pattern::at_least_one)
+    .help("Shuts down the provided components");
+  argument_parser.add_argument("--start")
+    .metavar("COMPONENT")
+    .nargs(argparse::nargs_pattern::at_least_one)
+    .help("Starts provided components");
+  argument_parser.add_argument("-l", "--list")
+    .action([](const std::string& value) {
+      if (ranges::contains(std::array{"components", "connections"}, value)) {
+        return value;
+      }
+      throw std::runtime_error("List command only accepts the following parameters: [components, connections]");
+    })
+    .help("Provides a list of connections or components (processors). Accepted parameters: [components, components]");
+  argument_parser.add_argument("-c", "--clear")
+    .metavar("CONNECTION")
+    .nargs(argparse::nargs_pattern::at_least_one)
+    .help("Clears the associated connection queues");
+  argument_parser.add_argument("--getsize")
+    .metavar("CONNECTION")
+    .nargs(argparse::nargs_pattern::at_least_one)
+    .help("Reports the size of the associated connection queues");
+  argument_parser.add_argument("--updateflow")
+    .metavar("FLOW_CONFIG_PATH")
+    .help("Updates the flow of the agent using the provided flow file");
 
-  cxxopts::Options options("MiNiFiController", "MiNiFi local agent controller");
-  options.positional_help("[optional args]").show_positional_help();
+  auto addFlagOption = [&](std::string_view name, const std::string& help) {
+    argument_parser.add_argument(name)
+      .default_value(false)
+      .implicit_value(true)
+      .help(help);
+  };
+  addFlagOption("--getfull", "Reports a list of full connections");
+  addFlagOption("--jstack", "Returns backtraces from the agent");
+  addFlagOption("--manifest", "Generates a manifest for the current binary");
+  addFlagOption("--noheaders", "Removes headers from output streams");
 
-  options.add_options()
-      ("h,help", "Shows Help")
-      ("host", "Specifies connecting host name", cxxopts::value<std::string>())
-      ("port", "Specifies connecting host port", cxxopts::value<int>())
-      ("stop", "Shuts down the provided component", cxxopts::value<std::vector<std::string>>())
-      ("start", "Starts provided component", cxxopts::value<std::vector<std::string>>())
-      ("l,list", "Provides a list of connections or processors", cxxopts::value<std::string>())
-      ("c,clear", "Clears the associated connection queue", cxxopts::value<std::vector<std::string>>())
-      ("getsize", "Reports the size of the associated connection queue", cxxopts::value<std::vector<std::string>>())
-      ("updateflow", "Updates the flow of the agent using the provided flow file", cxxopts::value<std::string>())
-      ("getfull", "Reports a list of full connections")
-      ("jstack", "Returns backtraces from the agent")
-      ("manifest", "Generates a manifest for the current binary")
-      ("noheaders", "Removes headers from output streams");
+  argument_parser.add_argument("-d", "--debug").metavar("BUNDLE_OUT_DIR")
+    .help("Get debug bundle");
 
   bool show_headers = true;
 
+  if (argc <= 1) {
+    std::cerr << argument_parser;
+    std::exit(1);
+  }
+
   try {
-    auto result = options.parse(argc, argv);
+    argument_parser.parse_args(argc, argv);
+  } catch (const std::runtime_error& err) {
+    std::cerr << err.what() << std::endl;
+    std::cerr << argument_parser;
+    std::exit(1);
+  }
 
-    if (result.count("help")) {
-      std::cout << options.help({ "", "Group" }) << std::endl;
-      exit(0);
-    }
-
-    if (result.count("host")) {
-      host = result["host"].as<std::string>();
+  try {
+    if (const auto& host = argument_parser.present("--host")) {
+      socket_data.host = *host;
     } else {
-      configuration->get(minifi::Configure::controller_socket_host, host);
+      configuration->get(minifi::Configure::controller_socket_host, socket_data.host);
     }
 
-    if (result.count("port")) {
-      port = result["port"].as<int>();
-    } else {
-      if (port == -1 && configuration->get(minifi::Configure::controller_socket_port, port_str)) {
-        port = std::stoi(port_str);
-      }
+    std::string port_str;
+    if (const auto& port = argument_parser.present<int>("--port")) {
+      socket_data.port = *port;
+    } else if (socket_data.port == -1 && configuration->get(minifi::Configure::controller_socket_port, port_str)) {
+      socket_data.port = std::stoi(port_str);
     }
 
-    if ((minifi::IsNullOrEmpty(host) && port == -1)) {
+    if ((minifi::IsNullOrEmpty(socket_data.host) && socket_data.port == -1)) {
       std::cout << "MiNiFi Controller is disabled" << std::endl;
-      exit(0);
+      std::exit(0);
     }
-    if (result.count("noheaders")) {
+    if (argument_parser.get<bool>("--noheaders")) {
       show_headers = false;
     }
 
-    if (result.count("stop") > 0) {
-      auto& components = result["stop"].as<std::vector<std::string>>();
-      for (const auto& component : components) {
-        auto socket = secure_context != nullptr ? stream_factory_->createSecureSocket(host, port, secure_context) : stream_factory_->createSocket(host, port);
-        if (minifi::controller::stopComponent(std::move(socket), component))
+    if (const auto& components = argument_parser.present<std::vector<std::string>>("--stop")) {
+      for (const auto& component : *components) {
+        if (minifi::controller::stopComponent(socket_data, component))
           std::cout << component << " requested to stop" << std::endl;
         else
-          std::cout << "Could not connect to remote host " << host << ":" << port << std::endl;
+          std::cout << "Could not connect to remote host " << socket_data.host << ":" << socket_data.port << std::endl;
       }
     }
 
-    if (result.count("start") > 0) {
-      auto& components = result["start"].as<std::vector<std::string>>();
-      for (const auto& component : components) {
-        auto socket = secure_context != nullptr ? stream_factory_->createSecureSocket(host, port, secure_context) : stream_factory_->createSocket(host, port);
-        if (minifi::controller::startComponent(std::move(socket), component))
+    if (const auto& components = argument_parser.present<std::vector<std::string>>("--start")) {
+      for (const auto& component : *components) {
+        if (minifi::controller::startComponent(socket_data, component))
           std::cout << component << " requested to start" << std::endl;
         else
-          std::cout << "Could not connect to remote host " << host << ":" << port << std::endl;
+          std::cout << "Could not connect to remote host " << socket_data.host << ":" << socket_data.port << std::endl;
       }
     }
 
-    if (result.count("c") > 0) {
-      auto& components = result["c"].as<std::vector<std::string>>();
-      for (const auto& connection : components) {
-        auto socket = secure_context != nullptr ? stream_factory_->createSecureSocket(host, port, secure_context)
-                                                : stream_factory_->createSocket(host, port);
-        if (minifi::controller::clearConnection(std::move(socket), connection)) {
-          std::cout << "Sent clear command to " << connection << ". Size before clear operation sent: " << std::endl;
-          socket = secure_context != nullptr ? stream_factory_->createSecureSocket(host, port, secure_context)
-                                             : stream_factory_->createSocket(host, port);
-          if (minifi::controller::getConnectionSize(std::move(socket), std::cout, connection) < 0)
-            std::cout << "Could not connect to remote host " << host << ":" << port << std::endl;
+    if (const auto& components = argument_parser.present<std::vector<std::string>>("--clear")) {
+      for (const auto& connection : *components) {
+        if (minifi::controller::clearConnection(socket_data, connection)) {
+          std::cout << "Sent clear command to " << connection << "." << std::endl;
         } else {
-          std::cout << "Could not connect to remote host " << host << ":" << port << std::endl;
+          std::cout << "Could not connect to remote host " << socket_data.host << ":" << socket_data.port << std::endl;
         }
       }
     }
 
-    if (result.count("getsize") > 0) {
-      auto& components = result["getsize"].as<std::vector<std::string>>();
-      for (const auto& component : components) {
-        auto socket = secure_context != nullptr ? stream_factory_->createSecureSocket(host, port, secure_context) : stream_factory_->createSocket(host, port);
-        if (minifi::controller::getConnectionSize(std::move(socket), std::cout, component) < 0)
-          std::cout << "Could not connect to remote host " << host << ":" << port << std::endl;
+    if (const auto& components = argument_parser.present<std::vector<std::string>>("--getsize")) {
+      for (const auto& component : *components) {
+        if (!minifi::controller::getConnectionSize(socket_data, std::cout, component))
+          std::cout << "Could not connect to remote host " << socket_data.host << ":" << socket_data.port << std::endl;
       }
     }
-    if (result.count("l") > 0) {
-      auto& option = result["l"].as<std::string>();
-      auto socket = secure_context != nullptr ? stream_factory_->createSecureSocket(host, port, secure_context) : stream_factory_->createSocket(host, port);
-      if (option == "components") {
-        if (minifi::controller::listComponents(std::move(socket), std::cout, show_headers) < 0)
-          std::cout << "Could not connect to remote host " << host << ":" << port << std::endl;
-      } else if (option == "connections") {
-        if (minifi::controller::listConnections(std::move(socket), std::cout, show_headers) < 0)
-          std::cout << "Could not connect to remote host " << host << ":" << port << std::endl;
+
+    if (const auto& option = argument_parser.present("--list")) {
+      if (*option == "components") {
+        if (!minifi::controller::listComponents(socket_data, std::cout, show_headers))
+          std::cout << "Could not connect to remote host " << socket_data.host << ":" << socket_data.port << std::endl;
+      } else if (*option == "connections") {
+        if (!minifi::controller::listConnections(socket_data, std::cout, show_headers))
+          std::cout << "Could not connect to remote host " << socket_data.host << ":" << socket_data.port << std::endl;
       }
     }
-    if (result.count("getfull") > 0) {
-      auto socket = secure_context != nullptr ? stream_factory_->createSecureSocket(host, port, secure_context) : stream_factory_->createSocket(host, port);
-      if (minifi::controller::getFullConnections(std::move(socket), std::cout) < 0)
-        std::cout << "Could not connect to remote host " << host << ":" << port << std::endl;
+
+    if (argument_parser.get<bool>("--getfull")) {
+      if (!minifi::controller::getFullConnections(socket_data, std::cout))
+        std::cout << "Could not connect to remote host " << socket_data.host << ":" << socket_data.port << std::endl;
     }
 
-    if (result.count("updateflow") > 0) {
-      auto& flow_file = result["updateflow"].as<std::string>();
-      auto socket = secure_context != nullptr ? stream_factory_->createSecureSocket(host, port, secure_context) : stream_factory_->createSocket(host, port);
-      if (minifi::controller::updateFlow(std::move(socket), std::cout, flow_file) < 0)
-        std::cout << "Could not connect to remote host " << host << ":" << port << std::endl;
+    if (const auto& flow_file = argument_parser.present("--updateflow")) {
+      if (!minifi::controller::updateFlow(socket_data, std::cout, *flow_file))
+        std::cout << "Could not connect to remote host " << socket_data.host << ":" << socket_data.port << std::endl;
     }
 
-    if (result.count("manifest") > 0) {
-      auto socket = secure_context != nullptr ? stream_factory_->createSecureSocket(host, port, secure_context) : stream_factory_->createSocket(host, port);
-      if (minifi::controller::printManifest(std::move(socket), std::cout) < 0)
-        std::cout << "Could not connect to remote host " << host << ":" << port << std::endl;
+    if (argument_parser.get<bool>("--manifest")) {
+      if (!minifi::controller::printManifest(socket_data, std::cout))
+        std::cout << "Could not connect to remote host " << socket_data.host << ":" << socket_data.port << std::endl;
     }
 
-    if (result.count("jstack") > 0) {
-      auto socket = secure_context != nullptr ? stream_factory_->createSecureSocket(host, port, secure_context) : stream_factory_->createSocket(host, port);
-      if (minifi::controller::getJstacks(std::move(socket), std::cout) < 0)
-        std::cout << "Could not connect to remote host " << host << ":" << port << std::endl;
+    if (argument_parser.get<bool>("--jstack")) {
+      if (!minifi::controller::getJstacks(socket_data, std::cout))
+        std::cout << "Could not connect to remote host " << socket_data.host << ":" << socket_data.port << std::endl;
+    }
+
+    if (const auto& debug_path = argument_parser.present("--debug")) {
+      auto debug_res = minifi::controller::getDebugBundle(socket_data, std::filesystem::path(*debug_path));
+      if (!debug_res)
+        std::cout << debug_res.error() << std::endl;
+      else
+        std::cout << "Debug bundle written to " << std::filesystem::path(*debug_path) / "debug.tar.gz";
     }
   } catch (const std::exception &exc) {
     // catch anything thrown within try block that derives from std::exception
     std::cerr << exc.what() << std::endl;
+    std::exit(1);
   } catch (...) {
-    std::cout << options.help({ "", "Group" }) << std::endl;
-    exit(0);
+    std::cerr << "Caught unknown exception" << std::endl;
+    std::exit(1);
   }
   return 0;
 }

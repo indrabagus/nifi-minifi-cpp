@@ -28,8 +28,8 @@
 namespace org::apache::nifi::minifi::azure::processors {
 
 void DeleteAzureDataLakeStorage::initialize() {
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
 std::optional<storage::DeleteAzureDataLakeStorageParameters> DeleteAzureDataLakeStorage::buildDeleteParameters(
@@ -42,29 +42,30 @@ std::optional<storage::DeleteAzureDataLakeStorageParameters> DeleteAzureDataLake
   return params;
 }
 
-void DeleteAzureDataLakeStorage::onTrigger(const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSession>& session) {
-  gsl_Expects(context && session);
+void DeleteAzureDataLakeStorage::onTrigger(core::ProcessContext& context, core::ProcessSession& session) {
   logger_->log_trace("DeleteAzureDataLakeStorage onTrigger");
-  std::shared_ptr<core::FlowFile> flow_file = session->get();
+  std::shared_ptr<core::FlowFile> flow_file = session.get();
   if (!flow_file) {
-    context->yield();
+    context.yield();
     return;
   }
 
-  const auto params = buildDeleteParameters(*context, flow_file);
+  const auto params = buildDeleteParameters(context, flow_file);
   if (!params) {
-    session->transfer(flow_file, Failure);
+    session.transfer(flow_file, Failure);
     return;
   }
 
   auto result = azure_data_lake_storage_.deleteFile(*params);
   if (!result) {
-    logger_->log_error("Failed to delete file '%s' to Azure Data Lake storage", params->filename);
-    session->transfer(flow_file, Failure);
+    logger_->log_error("Failed to delete file '{}' to Azure Data Lake storage", params->filename);
+    session.transfer(flow_file, Failure);
   } else {
-    logger_->log_debug("Successfully deleted file '%s' of filesystem '%s' on Azure Data Lake storage", params->filename, params->file_system_name);
-    session->transfer(flow_file, Success);
+    logger_->log_debug("Successfully deleted file '{}' of filesystem '{}' on Azure Data Lake storage", params->filename, params->file_system_name);
+    session.transfer(flow_file, Success);
   }
 }
+
+REGISTER_RESOURCE(DeleteAzureDataLakeStorage, Processor);
 
 }  // namespace org::apache::nifi::minifi::azure::processors

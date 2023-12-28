@@ -21,6 +21,22 @@
 
 namespace org::apache::nifi::minifi::state::response {
 
+std::vector<SerializedResponseNode> QueueMetrics::serialize() {
+  std::vector<SerializedResponseNode> serialized;
+  for (const auto& [_, connection] : connection_store_.getConnections()) {
+    serialized.push_back({
+      .name = connection->getName(),
+      .children = {
+        {.name = "datasize", .value = std::to_string(connection->getQueueDataSize())},
+        {.name = "datasizemax", .value = std::to_string(connection->getBackpressureThresholdDataSize())},
+        {.name = "queued", .value = std::to_string(connection->getQueueSize())},
+        {.name = "queuedmax", .value = std::to_string(connection->getBackpressureThresholdCount())},
+      }
+    });
+  }
+  return serialized;
+}
+
 REGISTER_RESOURCE(QueueMetrics, DescriptionOnly);
 
 }  // namespace org::apache::nifi::minifi::state::response

@@ -51,7 +51,7 @@ class HttpSiteToSiteClient : public sitetosite::SiteToSiteClient {
   }
   ~HttpSiteToSiteClient() override = default;
 
-  static auto properties() { return std::array<core::Property, 0>{}; }
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 0>{};
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
 
@@ -71,10 +71,8 @@ class HttpSiteToSiteClient : public sitetosite::SiteToSiteClient {
 
   std::shared_ptr<sitetosite::Transaction> createTransaction(sitetosite::TransferDirection direction) override;
 
-  // Transfer flow files for the process session
-  // virtual bool transferFlowFiles(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session);
   //! Transfer string for the process session
-  bool transmitPayload(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session, const std::string &payload,
+  bool transmitPayload(core::ProcessContext& context, core::ProcessSession& session, const std::string &payload,
                                std::map<std::string, std::string> attributes) override;
   // deleteTransaction
   void deleteTransaction(const utils::Identifier& transactionID) override;
@@ -127,7 +125,7 @@ class HttpSiteToSiteClient : public sitetosite::SiteToSiteClient {
 
   static std::optional<utils::Identifier> parseTransactionId(const std::string &uri);
 
-  std::unique_ptr<minifi::extensions::curl::HTTPClient> create_http_client(const std::string &uri, const std::string &method = "POST", bool setPropertyHeaders = false) {
+  std::unique_ptr<minifi::extensions::curl::HTTPClient> create_http_client(const std::string &uri, utils::HttpRequestMethod method = utils::HttpRequestMethod::POST, bool setPropertyHeaders = false) {
     std::unique_ptr<minifi::extensions::curl::HTTPClient> http_client_ = std::make_unique<minifi::extensions::curl::HTTPClient>(uri, ssl_context_service_);
     http_client_->initialize(method, uri, ssl_context_service_);
     if (setPropertyHeaders) {
@@ -136,11 +134,11 @@ class HttpSiteToSiteClient : public sitetosite::SiteToSiteClient {
       }
     }
     if (!this->peer_->getInterface().empty()) {
-      logger_->log_info("HTTP Site2Site bind local network interface %s", this->peer_->getInterface());
+      logger_->log_info("HTTP Site2Site bind local network interface {}", this->peer_->getInterface());
       http_client_->setInterface(this->peer_->getInterface());
     }
     if (!this->peer_->getHTTPProxy().host.empty()) {
-      logger_->log_info("HTTP Site2Site setup http proxy host %s", this->peer_->getHTTPProxy().host);
+      logger_->log_info("HTTP Site2Site setup http proxy host {}", this->peer_->getHTTPProxy().host);
       http_client_->setHTTPProxy(this->peer_->getHTTPProxy());
     }
     http_client_->setReadTimeout(idle_timeout_);

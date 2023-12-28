@@ -30,8 +30,8 @@ namespace org::apache::nifi::minifi::state::response {
 
 class SupportedOperations : public DeviceInformation {
  public:
-  SupportedOperations(std::string name, const utils::Identifier &uuid);
-  explicit SupportedOperations(std::string name);
+  SupportedOperations(std::string_view name, const utils::Identifier &uuid);
+  explicit SupportedOperations(std::string_view name);
 
   MINIFIAPI static constexpr const char* Description = "Metric node that defines the supported C2 operations in the Agent Manifest.";
 
@@ -54,7 +54,8 @@ class SupportedOperations : public DeviceInformation {
 
   template<typename T>
   static void serializeProperty(SerializedResponseNode& properties, const std::unordered_map<std::string, Metadata>& operand_with_metadata = {}) {
-    for (const auto& operand_type: T::values()) {
+    for (const auto& operand_type_view : magic_enum::enum_names<T>()) {
+      std::string operand_type{operand_type_view};
       auto metadata_it = operand_with_metadata.find(operand_type);
       if (metadata_it != operand_with_metadata.end()) {
         addProperty(properties, operand_type, metadata_it->second);

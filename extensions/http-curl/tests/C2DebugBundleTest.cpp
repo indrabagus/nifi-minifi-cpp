@@ -19,7 +19,6 @@
 #undef NDEBUG
 
 #include "TestBase.h"
-#include "Catch.h"
 
 #include "c2/C2Agent.h"
 #include "protocols/RESTProtocol.h"
@@ -59,7 +58,7 @@ class C2DebugBundleHandler : public ServerAwareHandler {
  public:
   bool handlePost(CivetServer* /*server*/, struct mg_connection *conn) override {
     std::optional<std::string> file_content;
-    mg_form_data_handler form_handler;
+    mg_form_data_handler form_handler{};
     form_handler.field_found = field_found;
     form_handler.field_get = field_get;
     form_handler.user_data = &file_content;
@@ -92,7 +91,9 @@ class C2DebugBundleHandler : public ServerAwareHandler {
   }
   static int field_get(const char* /*key*/, const char* value, size_t valuelen, void* user_data) {
     auto& file_content = *static_cast<std::optional<std::string>*>(user_data);
-    file_content = "";
+    if (!file_content) {
+      file_content = "";
+    }
     (*file_content) += std::string(value, valuelen);
     return MG_FORM_FIELD_HANDLE_GET;
   }
@@ -168,7 +169,7 @@ int main() {
     while (auto info = decompressor->nextEntry()) {
       std::string file_content;
       file_content.resize(info->size);
-      assert(decompressor->read(gsl::make_span(file_content).as_span<std::byte>()) ==
+      assert(decompressor->read(as_writable_bytes(std::span(file_content))) ==
               file_content.length());
       archive_content[info->filename] = std::move(file_content);
     }
@@ -182,8 +183,9 @@ int main() {
     }
     std::string log_text;
     log_text.resize(log_stream->size());
-    log_stream->read(gsl::make_span(log_text).as_span<std::byte>());
+    log_stream->read(as_writable_bytes(std::span(log_text)));
     assert(log_text.find("Tis but a scratch") != std::string::npos);
+    assert(archive_content["manifest.json"].find("minifi-archive-extensions") != std::string::npos);
     return true;
   });
 

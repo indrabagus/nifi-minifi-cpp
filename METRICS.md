@@ -42,30 +42,80 @@ Aside from the publisher exposed metrics, metrics are also sent through C2 proto
 
 ## Configuration
 
-To configure the a metrics publisher first we have to set which publisher class should be used:
+Currently LogMetricsPublisher and PrometheusMetricsPublisher are available that can be configured as metrics publishers. C2 metrics are published through C2 specific properties, see [C2 documentation](C2.md) for more information on that.
+
+The LogMetricsPublisher serializes all the configured metrics into a json output and writes the json to the MiNiFi logs periodically. LogMetricsPublisher follows the conventions of the C2 metrics, and all information that is present in those metrics, including string data, is present in the log metrics as well. An example log entry may look like the following:
+
+    [2023-03-09 15:04:32.268] [org::apache::nifi::minifi::state::LogMetricsPublisher] [info] {"LogMetrics":{"RepositoryMetrics":{"flowfile":{"running":"true","full":"false","size":"0"},"provenance":{"running":"true","full":"false","size":"0"}}}}
+
+PrometheusMetricsPublisher publishes only numerical metrics to a Prometheus server in Prometheus specific format. This is different from the json format of the C2 and LogMetricsPublisher.
+
+### Common configuration properties
+
+To configure the a publisher first we have to specify the class in the properties. One or multiple publisher can be defined in comma separated format:
 
     # in minifi.properties
 
-    nifi.metrics.publisher.class=PrometheusMetricsPublisher
+    nifi.metrics.publisher.class=LogMetricsPublisher
 
-Currently PrometheusMetricsPublisher is the only available publisher in MiNiFi C++ which publishes metrics to a Prometheus server.
-To use the publisher a port should also be configured where the metrics will be available to be scraped through:
+    # alternatively
+
+    nifi.metrics.publisher.class=LogMetricsPublisher,PrometheusMetricsPublisher
+
+To define which metrics should be published either the generic or the publisher specific metrics property should be used. The generic metrics are applied to all publishers if no publisher specific metric is specified.
+
+    # in minifi.properties
+
+    # define generic metrics for all selected publisher classes
+
+    nifi.metrics.publisher.metrics=QueueMetrics,RepositoryMetrics,GetFileMetrics,DeviceInfoNode,FlowInformation,processorMetrics/Tail.*
+
+    # alternatively LogMetricsPublisher will only use the following metrics
+
+    nifi.metrics.publisher.LogMetricsPublisher.metrics=QueueMetrics,RepositoryMetrics
+
+Additional configuration properties may be required by specific publishers, these are listed below.
+
+### LogMetricsPublisher
+
+LogMetricsPublisher requires a logging interval to be configured which states how often the selected metrics should be logged
+
+    # in minifi.properties
+
+    # log the metrics in MiNiFi app logs every 30 seconds
+
+    nifi.metrics.publisher.LogMetricsPublisher.logging.interval=30s
+
+Optionally LogMetricsPublisher can be configured which log level should the publisher use. The default log level is INFO
+
+    # in minifi.properties
+
+    # change log level to debug
+
+    nifi.metrics.publisher.LogMetricsPublisher.log.level=DEBUG
+
+### PrometheusMetricsPublisher
+
+PrometheusMetricsPublisher requires a port to be configured where the metrics will be available to be scraped from:
 
     # in minifi.properties
 
     nifi.metrics.publisher.PrometheusMetricsPublisher.port=9936
-
-The following option defines which metric classes should be exposed through the metrics publisher in configured with a comma separated value:
-
-    # in minifi.properties
-
-    nifi.metrics.publisher.metrics=QueueMetrics,RepositoryMetrics,GetFileMetrics,DeviceInfoNode,FlowInformation,processorMetrics/Tail.*
 
 An agent identifier should also be defined to identify which agent the metric is exposed from. If not set, the hostname is used as the identifier.
 
     # in minifi.properties
 
     nifi.metrics.publisher.agent.identifier=Agent1
+
+### Configure Prometheus metrics publisher with SSL
+
+The communication between MiNiFi and Prometheus can be encrypted using SSL. This can be achieved by adding the SSL certificate path (a single file containing both the MiNiFi certificate and the MiNiFi SSL key) and optionally adding the root CA path if Prometheus uses a self-signed certificate, to the minifi.properties file. Here is an example with the SSL properties:
+
+    # in minifi.properties
+
+    nifi.metrics.publisher.PrometheusMetricsPublisher.certificate=/tmp/certs/prometheus-publisher/minifi-cpp.crt
+    nifi.metrics.publisher.PrometheusMetricsPublisher.ca.certificate=/tmp/certs/prometheus-publisher/root-ca.pem
 
 ## System Metrics
 
@@ -102,13 +152,15 @@ QueueMetrics is a system level metric that reports queue metrics for every conne
 
 RepositoryMetrics is a system level metric that reports metrics for the registered repositories (by default flowfile, content, and provenance repositories)
 
-| Metric name               | Labels          | Description                                     |
-|---------------------------|-----------------|-------------------------------------------------|
-| is_running                | repository_name | Is the repository running (1 or 0)              |
-| is_full                   | repository_name | Is the repository full (1 or 0)                 |
-| repository_size_bytes     | repository_name | Current size of the repository                  |
-| max_repository_size_bytes | repository_name | Maximum size of the repository (0 if unlimited) |
-| repository_entry_count    | repository_name | Current number of entries in the repository     |
+| Metric name                          | Labels          | Description                                                                                                      |
+|--------------------------------------|-----------------|------------------------------------------------------------------------------------------------------------------|
+| is_running                           | repository_name | Is the repository running (1 or 0)                                                                               |
+| is_full                              | repository_name | Is the repository full (1 or 0)                                                                                  |
+| repository_size_bytes                | repository_name | Current size of the repository                                                                                   |
+| max_repository_size_bytes            | repository_name | Maximum size of the repository (0 if unlimited)                                                                  |
+| repository_entry_count               | repository_name | Current number of entries in the repository                                                                      |
+| rocksdb_table_readers_size_bytes     | repository_name | RocksDB's estimated memory used for reading SST tables (only present if repository uses RocksDB)                 |
+| rocksdb_all_memory_tables_size_bytes | repository_name | RocksDB's approximate size of active and unflushed immutable memtables (only present if repository uses RocksDB) |
 
 | Label                    | Description                                                                                                                           |
 |--------------------------|---------------------------------------------------------------------------------------------------------------------------------------|
@@ -118,11 +170,12 @@ RepositoryMetrics is a system level metric that reports metrics for the register
 
 DeviceInfoNode is a system level metric that reports metrics about the system resources used and available
 
-| Metric name     | Labels       | Description                         |
-|-----------------|--------------|-------------------------------------|
-| physical_mem    | -            | Physical memory available           |
-| memory_usage    | -            | Physical memory usage of the system |
-| cpu_utilization | -            | CPU utilized by the system          |
+| Metric name      | Labels       | Description                                                                                                              |
+|------------------|--------------|--------------------------------------------------------------------------------------------------------------------------|
+| physical_mem     | -            | Physical memory available                                                                                                |
+| memory_usage     | -            | Physical memory usage of the system                                                                                      |
+| cpu_utilization  | -            | CPU utilized by the system                                                                                               |
+| cpu_load_average | -            | The number of processes in the system run queue averaged over the last minute. This metrics is not available on Windows. |
 
 ### FlowInformation
 
@@ -147,17 +200,19 @@ FlowInformation is a system level metric that reports component and queue relate
 
 AgentStatus is a system level metric that defines current agent status including repository, component and resource usage information.
 
-| Metric name               | Labels                         | Description                                                                                                |
-|---------------------------|--------------------------------|------------------------------------------------------------------------------------------------------------|
-| is_running                | repository_name                | Is the repository running (1 or 0)                                                                         |
-| is_full                   | repository_name                | Is the repository full (1 or 0)                                                                            |
-| repository_size_bytes     | repository_name                | Current size of the repository                                                                             |
-| max_repository_size_bytes | repository_name                | Maximum size of the repository (0 if unlimited)                                                            |
-| repository_entry_count    | repository_name                | Current number of entries in the repository                                                                |
-| uptime_milliseconds       | -                              | Agent uptime in milliseconds                                                                               |
-| is_running                | component_uuid, component_name | Check if the component is running (1 or 0)                                                                 |
-| agent_memory_usage_bytes  | -                              | Memory used by the agent process in bytes                                                                  |
-| agent_cpu_utilization     | -                              | CPU utilization of the agent process (between 0 and 1). In case of a query error the returned value is -1. |
+| Metric name                          | Labels                         | Description                                                                                                      |
+|--------------------------------------|--------------------------------|------------------------------------------------------------------------------------------------------------------|
+| is_running                           | repository_name                | Is the repository running (1 or 0)                                                                               |
+| is_full                              | repository_name                | Is the repository full (1 or 0)                                                                                  |
+| repository_size_bytes                | repository_name                | Current size of the repository                                                                                   |
+| max_repository_size_bytes            | repository_name                | Maximum size of the repository (0 if unlimited)                                                                  |
+| repository_entry_count               | repository_name                | Current number of entries in the repository                                                                      |
+| rocksdb_table_readers_size_bytes     | repository_name                | RocksDB's estimated memory used for reading SST tables (only present if repository uses RocksDB)                 |
+| rocksdb_all_memory_tables_size_bytes | repository_name                | RocksDB's approximate size of active and unflushed immutable memtables (only present if repository uses RocksDB) |
+| uptime_milliseconds                  | -                              | Agent uptime in milliseconds                                                                                     |
+| is_running                           | component_uuid, component_name | Check if the component is running (1 or 0)                                                                       |
+| agent_memory_usage_bytes             | -                              | Memory used by the agent process in bytes                                                                        |
+| agent_cpu_utilization                | -                              | CPU utilization of the agent process (between 0 and 1). In case of a query error the returned value is -1.       |
 
 | Label           | Description                                              |
 |-----------------|----------------------------------------------------------|

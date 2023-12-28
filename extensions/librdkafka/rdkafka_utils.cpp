@@ -22,11 +22,7 @@
 #include "Exception.h"
 #include "utils/StringUtils.h"
 
-namespace org {
-namespace apache {
-namespace nifi {
-namespace minifi {
-namespace utils {
+namespace org::apache::nifi::minifi::utils {
 
 void setKafkaConfigurationField(rd_kafka_conf_t& configuration, const std::string& field_name, const std::string& value) {
   static std::array<char, 512U> errstr{};
@@ -40,7 +36,7 @@ void setKafkaConfigurationField(rd_kafka_conf_t& configuration, const std::strin
 
 void print_topics_list(core::logging::Logger& logger, rd_kafka_topic_partition_list_t& kf_topic_partition_list) {
   for (int i = 0; i < kf_topic_partition_list.cnt; ++i) {
-    logger.log_debug("kf_topic_partition_list: topic: %s, partition: %d, offset: %" PRId64 ".",
+    logger.log_debug("kf_topic_partition_list: topic: {}, partition: {}, offset: {}.",
     kf_topic_partition_list.elems[i].topic, kf_topic_partition_list.elems[i].partition, kf_topic_partition_list.elems[i].offset);
   }
 }
@@ -55,7 +51,7 @@ std::string get_human_readable_kafka_message_timestamp(const rd_kafka_message_t&
   } else if (tstype == RD_KAFKA_TIMESTAMP_LOG_APPEND_TIME) {
     tsname = "log append time";
   }
-  const int64_t seconds_since_timestamp = timestamp == -1 ? 0 : static_cast<int64_t>(time(NULL)) - static_cast<int64_t>(timestamp / 1000);
+  const int64_t seconds_since_timestamp = timestamp == -1 ? 0 : static_cast<int64_t>(time(nullptr)) - static_cast<int64_t>(timestamp / 1000);
   return {"[Timestamp](" + std::string(tsname) + " " + std::to_string(timestamp) + " (" + std::to_string(seconds_since_timestamp) + " s ago)"};
 }
 
@@ -64,13 +60,13 @@ std::string get_human_readable_kafka_message_headers(const rd_kafka_message_t& r
   const rd_kafka_resp_err_t get_header_response = rd_kafka_message_headers(&rkmessage, &hdrs);
   if (RD_KAFKA_RESP_ERR_NO_ERROR == get_header_response) {
     std::vector<std::string> header_list;
-    kafka_headers_for_each(*hdrs, [&] (const std::string& key, gsl::span<const char> val) { header_list.emplace_back(key + ": " + std::string{ val.data(), val.size() }); });
+    kafka_headers_for_each(*hdrs, [&] (const std::string& key, std::span<const char> val) { header_list.emplace_back(key + ": " + std::string{ val.data(), val.size() }); });
     return StringUtils::join(", ", header_list);
   }
   if (RD_KAFKA_RESP_ERR__NOENT == get_header_response) {
     return "[None]";
   }
-  logger.log_error("Failed to fetch message headers: %d: %s", rd_kafka_last_error(), rd_kafka_err2str(rd_kafka_last_error()));
+  logger.log_error("Failed to fetch message headers: {}: {}", magic_enum::enum_underlying(rd_kafka_last_error()), rd_kafka_err2str(rd_kafka_last_error()));
   return "[Error]";
 }
 
@@ -94,7 +90,7 @@ void print_kafka_message(const rd_kafka_message_t& rkmessage, core::logging::Log
   message_as_string += get_human_readable_kafka_message_headers(rkmessage, logger) + ")";
   message_as_string += "[Payload](" + message + ")";
 
-  logger.log_debug("Message: %s", message_as_string.c_str());
+  logger.log_debug("Message: {}", message_as_string.c_str());
 }
 
 std::string get_encoded_string(const std::string& input, KafkaEncoding encoding) {
@@ -114,8 +110,4 @@ std::optional<std::string> get_encoded_message_key(const rd_kafka_message_t& mes
   return get_encoded_string({reinterpret_cast<const char*>(message.key), message.key_len}, encoding);
 }
 
-}  // namespace utils
-}  // namespace minifi
-}  // namespace nifi
-}  // namespace apache
-}  // namespace org
+}  // namespace org::apache::nifi::minifi::utils

@@ -28,8 +28,11 @@
 #include "processors/PutFile.h"
 #include "TestBase.h"
 #include "Catch.h"
+#include "utils/StringUtils.h"
 #include "utils/TestUtils.h"
+#include "utils/UnicodeConversion.h"
 #include "utils/file/FileUtils.h"
+#include "utils/gsl.h"
 
 core::Relationship Success{"success", "Everything is fine"};
 
@@ -50,17 +53,17 @@ class OutputFormatTestController : public TestController {
     std::shared_ptr<TestPlan> test_plan = createPlan();
 
     auto cwel_processor = test_plan->addProcessor("ConsumeWindowsEventLog", "cwel");
-    test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Channel.getName(), channel_);
-    test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Query.getName(), query_);
-    test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::OutputFormatProperty.getName(), output_format_);
+    test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Channel, channel_);
+    test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::Query, query_);
+    test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::OutputFormatProperty, output_format_);
     if (json_format_) {
-      test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::JsonFormatProperty.getName(), json_format_.value());
+      test_plan->setProperty(cwel_processor, ConsumeWindowsEventLog::JsonFormatProperty, json_format_.value());
     }
 
     auto dir = createTempDirectory();
 
     auto put_file = test_plan->addProcessor("PutFile", "putFile", Success, true);
-    test_plan->setProperty(put_file, PutFile::Directory.getName(), dir.string());
+    test_plan->setProperty(put_file, PutFile::Directory, dir.string());
 
     {
       dispatchBookmarkEvent();
@@ -94,3 +97,13 @@ class OutputFormatTestController : public TestController {
   std::string output_format_;
   std::optional<std::string> json_format_;
 };
+
+void generateLogFile(const std::wstring& channel, const std::filesystem::path& path) {
+  const auto channel_as_string = utils::to_string(channel);
+  HANDLE event_log = OpenEventLog(NULL, channel_as_string.c_str());
+  auto guard = gsl::finally([&] {CloseEventLog(event_log);});
+
+  if (!EvtExportLog(NULL, channel.c_str(), L"*", path.wstring().c_str(), EvtExportLogChannelPath)) {
+    throw std::system_error{gsl::narrow<int>(GetLastError()), std::system_category(), "Failed to export logs"};
+  }
+}

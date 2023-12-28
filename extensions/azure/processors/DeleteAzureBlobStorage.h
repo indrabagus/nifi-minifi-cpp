@@ -27,6 +27,8 @@
 #include <vector>
 
 #include "core/Property.h"
+#include "core/PropertyDefinition.h"
+#include "core/PropertyDefinitionBuilder.h"
 #include "AzureBlobStorageSingleBlobProcessorBase.h"
 #include "core/logging/LoggerConfiguration.h"
 #include "utils/ArrayUtils.h"
@@ -40,14 +42,18 @@ class DeleteAzureBlobStorage final : public AzureBlobStorageSingleBlobProcessorB
  public:
   EXTENSIONAPI static constexpr const char* Description = "Deletes the provided blob from Azure Storage";
 
-  EXTENSIONAPI static const core::Property DeleteSnapshotsOption;
-  static auto properties() {
-    return utils::array_cat(AzureBlobStorageSingleBlobProcessorBase::properties(), std::array{DeleteSnapshotsOption});
-  }
+  EXTENSIONAPI static constexpr auto DeleteSnapshotsOption = core::PropertyDefinitionBuilder<magic_enum::enum_count<storage::OptionalDeletion>()>::createProperty("Delete Snapshots Option")
+      .withDescription("Specifies the snapshot deletion options to be used when deleting a blob. None: Deletes the blob only. Include Snapshots: Delete the blob and its snapshots. "
+          "Delete Snapshots Only: Delete only the blob's snapshots.")
+      .isRequired(true)
+      .withDefaultValue(magic_enum::enum_name(storage::OptionalDeletion::NONE))
+      .withAllowedValues(magic_enum::enum_names<storage::OptionalDeletion>())
+      .build();
+  EXTENSIONAPI static constexpr auto Properties = utils::array_cat(AzureBlobStorageSingleBlobProcessorBase::Properties, std::array<core::PropertyReference, 1>{DeleteSnapshotsOption});
 
-  EXTENSIONAPI static const core::Relationship Success;
-  EXTENSIONAPI static const core::Relationship Failure;
-  static auto relationships() { return std::array{Success, Failure}; }
+  EXTENSIONAPI static constexpr auto Success = core::RelationshipDefinition{"success", "All successfully processed FlowFiles are routed to this relationship"};
+  EXTENSIONAPI static constexpr auto Failure = core::RelationshipDefinition{"failure", "Unsuccessful operations will be transferred to the failure relationship"};
+  EXTENSIONAPI static constexpr auto Relationships = std::array{Success, Failure};
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
@@ -56,19 +62,19 @@ class DeleteAzureBlobStorage final : public AzureBlobStorageSingleBlobProcessorB
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  explicit DeleteAzureBlobStorage(std::string name, const minifi::utils::Identifier& uuid = minifi::utils::Identifier())
-    : DeleteAzureBlobStorage(std::move(name), uuid, nullptr) {
+  explicit DeleteAzureBlobStorage(std::string_view name, const minifi::utils::Identifier& uuid = minifi::utils::Identifier())
+    : DeleteAzureBlobStorage(name, uuid, nullptr) {
   }
 
   void initialize() override;
-  void onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &session_factory) override;
-  void onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) override;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& session_factory) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
 
  private:
   friend class ::AzureBlobStorageTestsFixture<DeleteAzureBlobStorage>;
 
-  explicit DeleteAzureBlobStorage(std::string name, const minifi::utils::Identifier& uuid, std::unique_ptr<storage::BlobStorageClient> blob_storage_client)
-    : AzureBlobStorageSingleBlobProcessorBase(std::move(name), uuid, core::logging::LoggerFactory<DeleteAzureBlobStorage>::getLogger(), std::move(blob_storage_client)) {
+  explicit DeleteAzureBlobStorage(std::string_view name, const minifi::utils::Identifier& uuid, std::unique_ptr<storage::BlobStorageClient> blob_storage_client)
+    : AzureBlobStorageSingleBlobProcessorBase(name, uuid, core::logging::LoggerFactory<DeleteAzureBlobStorage>::getLogger(), std::move(blob_storage_client)) {
   }
 
   std::optional<storage::DeleteAzureBlobStorageParameters> buildDeleteAzureBlobStorageParameters(

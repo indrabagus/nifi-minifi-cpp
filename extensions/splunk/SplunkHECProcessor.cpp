@@ -23,21 +23,20 @@
 namespace org::apache::nifi::minifi::extensions::splunk {
 
 void SplunkHECProcessor::initialize() {
-  setSupportedProperties(properties());
+  setSupportedProperties(Properties);
 }
 
-void SplunkHECProcessor::onSchedule(const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSessionFactory>&) {
-  gsl_Expects(context);
-  if (!context->getProperty(Hostname.getName(), hostname_))
+void SplunkHECProcessor::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory&) {
+  if (!context.getProperty(Hostname, hostname_))
     throw Exception(PROCESS_SCHEDULE_EXCEPTION, "Failed to get Hostname");
 
-  if (!context->getProperty(Port.getName(), port_))
+  if (!context.getProperty(Port, port_))
     throw Exception(PROCESS_SCHEDULE_EXCEPTION, "Failed to get Port");
 
-  if (!context->getProperty(Token.getName(), token_))
+  if (!context.getProperty(Token, token_))
     throw Exception(PROCESS_SCHEDULE_EXCEPTION, "Failed to get Token");
 
-  if (!context->getProperty(SplunkRequestChannel.getName(), request_channel_))
+  if (!context.getProperty(SplunkRequestChannel, request_channel_))
     throw Exception(PROCESS_SCHEDULE_EXCEPTION, "Failed to get SplunkRequestChannel");
 }
 
@@ -47,13 +46,13 @@ std::string SplunkHECProcessor::getNetworkLocation() const {
 
 std::shared_ptr<minifi::controllers::SSLContextService> SplunkHECProcessor::getSSLContextService(core::ProcessContext& context) {
   std::string context_name;
-  if (context.getProperty(SSLContext.getName(), context_name) && !IsNullOrEmpty(context_name))
+  if (context.getProperty(SSLContext, context_name) && !IsNullOrEmpty(context_name))
     return std::dynamic_pointer_cast<minifi::controllers::SSLContextService>(context.getControllerService(context_name));
   return nullptr;
 }
 
 void SplunkHECProcessor::initializeClient(curl::HTTPClient& client, const std::string &url, std::shared_ptr<minifi::controllers::SSLContextService> ssl_context_service) const {
-  client.initialize("POST", url, std::move(ssl_context_service));
+  client.initialize(utils::HttpRequestMethod::POST, url, std::move(ssl_context_service));
   client.setRequestHeader("Authorization", token_);
   client.setRequestHeader("X-Splunk-Request-Channel", request_channel_);
 }

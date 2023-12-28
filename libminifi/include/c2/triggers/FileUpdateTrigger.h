@@ -60,7 +60,7 @@ class FileUpdateTrigger : public C2Trigger {
     }
     auto update_time = utils::file::last_write_time(file_);
     auto last_update_l = getLastUpdate().value().time_since_epoch().count();
-    logger_->log_trace("Last Update is %d and update time is %d", last_update_l , update_time.value().time_since_epoch().count());
+    logger_->log_trace("Last Update is {} and update time is {}", last_update_l , update_time.value().time_since_epoch().count());
     if (update_time > getLastUpdate()) {
       setLastUpdate(update_time);
       update_ = true;
@@ -103,9 +103,9 @@ class FileUpdateTrigger : public C2Trigger {
     return true;
   }
 
-  std::optional<std::filesystem::file_time_type> getLastUpdate() const;
+  std::optional<std::chrono::file_clock::time_point> getLastUpdate() const;
 
-  void setLastUpdate(const std::optional<std::filesystem::file_time_type> &last_update);
+  void setLastUpdate(const std::optional<std::chrono::file_clock::time_point> &last_update);
 
  protected:
   std::string file_;
@@ -114,7 +114,7 @@ class FileUpdateTrigger : public C2Trigger {
  private:
   std::shared_ptr<core::logging::Logger> logger_ = core::logging::LoggerFactory<FileUpdateTrigger>::getLogger();
   mutable std::mutex last_update_lock;
-  std::optional<std::filesystem::file_time_type> last_update_;
+  std::optional<std::chrono::file_clock::time_point> last_update_;
 };
 
 }  // namespace org::apache::nifi::minifi::c2

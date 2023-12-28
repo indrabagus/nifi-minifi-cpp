@@ -19,11 +19,17 @@
 #pragma once
 
 #include <string>
+#include <optional>
 
 namespace org::apache::nifi::minifi::core {
 
 class RepositoryMetricsSource {
  public:
+  struct RocksDbStats {
+    uint64_t table_readers_size{};
+    uint64_t all_memory_tables_size{};
+  };
+
   virtual ~RepositoryMetricsSource() = default;
   virtual uint64_t getRepositorySize() const = 0;
   virtual uint64_t getRepositoryEntryCount() const = 0;
@@ -39,6 +45,10 @@ class RepositoryMetricsSource {
 
   virtual bool isRunning() const {
     return true;
+  }
+
+  virtual std::optional<RocksDbStats> getRocksDbStats() const {
+    return std::nullopt;
   }
 };
 

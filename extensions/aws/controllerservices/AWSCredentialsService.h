@@ -28,6 +28,9 @@
 #include "utils/AWSInitializer.h"
 #include "core/controller/ControllerService.h"
 #include "core/logging/LoggerConfiguration.h"
+#include "core/PropertyDefinition.h"
+#include "core/PropertyDefinitionBuilder.h"
+#include "core/PropertyType.h"
 #include "AWSCredentialsProvider.h"
 
 class AWSCredentialsServiceTestAccessor;
@@ -36,28 +39,40 @@ namespace org::apache::nifi::minifi::aws::controllers {
 
 class AWSCredentialsService : public core::controller::ControllerService {
  public:
-  explicit AWSCredentialsService(std::string name, const minifi::utils::Identifier &uuid = {})
-      : ControllerService(std::move(name), uuid) {
+  explicit AWSCredentialsService(std::string_view name, const minifi::utils::Identifier &uuid = {})
+      : ControllerService(name, uuid) {
   }
 
-  explicit AWSCredentialsService(std::string name, const std::shared_ptr<Configure>& /*configuration*/)
-      : ControllerService(std::move(name)) {
+  explicit AWSCredentialsService(std::string_view name, const std::shared_ptr<Configure>& /*configuration*/)
+      : ControllerService(name) {
   }
 
-  EXTENSIONAPI static constexpr const char* Description = "AWS Credentials Management Service";
+  EXTENSIONAPI static constexpr const char* Description = "Manages the Amazon Web Services (AWS) credentials for an AWS account. This allows for multiple "
+      "AWS credential services to be defined. This also allows for multiple AWS related processors to reference this single "
+      "controller service so that AWS credentials can be managed and controlled in a central location.";
 
-  EXTENSIONAPI static const core::Property UseDefaultCredentials;
-  EXTENSIONAPI static const core::Property AccessKey;
-  EXTENSIONAPI static const core::Property SecretKey;
-  EXTENSIONAPI static const core::Property CredentialsFile;
-  static auto properties() {
-    return std::array{
+  EXTENSIONAPI static constexpr auto UseDefaultCredentials = core::PropertyDefinitionBuilder<>::createProperty("Use Default Credentials")
+      .withDescription("If true, uses the Default Credential chain, including EC2 instance profiles or roles, environment variables, default user credentials, etc.")
+      .withPropertyType(core::StandardPropertyTypes::BOOLEAN_TYPE)
+      .withDefaultValue("false")
+      .isRequired(true)
+      .build();
+  EXTENSIONAPI static constexpr auto AccessKey = core::PropertyDefinitionBuilder<>::createProperty("Access Key")
+      .withDescription("Specifies the AWS Access Key.")
+      .build();
+  EXTENSIONAPI static constexpr auto SecretKey = core::PropertyDefinitionBuilder<>::createProperty("Secret Key")
+      .withDescription("Specifies the AWS Secret Key.")
+      .build();
+  EXTENSIONAPI static constexpr auto CredentialsFile = core::PropertyDefinitionBuilder<>::createProperty("Credentials File")
+      .withDescription("Path to a file containing AWS access key and secret key in properties file format. Properties used: accessKey and secretKey")
+      .build();
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 4>{
       UseDefaultCredentials,
       AccessKey,
       SecretKey,
       CredentialsFile
-    };
-  }
+  };
+
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_CONTROLLER_SERVICES

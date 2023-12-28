@@ -38,28 +38,19 @@
 
 namespace org::apache::nifi::minifi::processors {
 
-const core::Property ManipulateArchive::Operation("Operation", "Operation to perform on the archive (touch, remove, copy, move).", "");
-const core::Property ManipulateArchive::Target("Target", "An existing entry within the archive to perform the operation on.", "");
-const core::Property ManipulateArchive::Destination("Destination", "Destination for operations (touch, move or copy) which result in new entries.", "");
-const core::Property ManipulateArchive::Before("Before", "For operations which result in new entries, places the new entry before the entry specified by this property.", "");
-const core::Property ManipulateArchive::After("After", "For operations which result in new entries, places the new entry after the entry specified by this property.", "");
-
-const core::Relationship ManipulateArchive::Success("success", "FlowFiles will be transferred to the success relationship if the operation succeeds.");
-const core::Relationship ManipulateArchive::Failure("failure", "FlowFiles will be transferred to the failure relationship if the operation fails.");
-
 char const* ManipulateArchive::OPERATION_REMOVE = "remove";
 char const* ManipulateArchive::OPERATION_COPY =   "copy";
 char const* ManipulateArchive::OPERATION_MOVE =   "move";
 char const* ManipulateArchive::OPERATION_TOUCH =  "touch";
 
 void ManipulateArchive::initialize() {
-  setSupportedProperties(properties());
+  setSupportedProperties(Properties);
 
-  setSupportedRelationships(relationships());
+  setSupportedRelationships(Relationships);
 }
 
-void ManipulateArchive::onSchedule(core::ProcessContext *context, core::ProcessSessionFactory* /*sessionFactory*/) {
-    context->getProperty(Operation.getName(), operation_);
+void ManipulateArchive::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory&) {
+    context.getProperty(Operation, operation_);
     bool invalid = false;
     std::transform(operation_.begin(), operation_.end(), operation_.begin(), ::tolower);
 
@@ -69,24 +60,24 @@ void ManipulateArchive::onSchedule(core::ProcessContext *context, core::ProcessS
 
     // Operation must be one of copy, move, touch or remove
     if (!op_create && (operation_ != OPERATION_REMOVE)) {
-        logger_->log_error("Invalid operation %s for ManipulateArchive.", operation_);
+        logger_->log_error("Invalid operation {} for ManipulateArchive.", operation_);
         invalid = true;
     }
 
-    context->getProperty(Target.getName(), targetEntry_);
-    context->getProperty(Destination.getName(), destination_);
-    context->getProperty(Before.getName(), before_);
-    context->getProperty(After.getName(), after_);
+    context.getProperty(Target, targetEntry_);
+    context.getProperty(Destination, destination_);
+    context.getProperty(Before, before_);
+    context.getProperty(After, after_);
 
     // All operations which create new entries require a set destination
     if (op_create == destination_.empty()) {
-        logger_->log_error("ManipulateArchive requires a destination for %s.", operation_);
+        logger_->log_error("ManipulateArchive requires a destination for {}.", operation_);
         invalid = true;
     }
 
     // The only operation that doesn't require an existing target is touch
     if ((operation_ == OPERATION_TOUCH) != targetEntry_.empty()) {
-        logger_->log_error("ManipulateArchive requires a target for %s.", operation_);
+        logger_->log_error("ManipulateArchive requires a target for {}.", operation_);
         invalid = true;
     }
 
@@ -101,8 +92,8 @@ void ManipulateArchive::onSchedule(core::ProcessContext *context, core::ProcessS
     }
 }
 
-void ManipulateArchive::onTrigger(core::ProcessContext* /*context*/, core::ProcessSession *session) {
-    std::shared_ptr<core::FlowFile> flowFile = session->get();
+void ManipulateArchive::onTrigger(core::ProcessContext&, core::ProcessSession& session) {
+    std::shared_ptr<core::FlowFile> flowFile = session.get();
 
     if (!flowFile) {
         return;
@@ -111,28 +102,28 @@ void ManipulateArchive::onTrigger(core::ProcessContext* /*context*/, core::Proce
     ArchiveMetadata archiveMetadata;
     utils::file::FileManager file_man;
 
-    session->read(flowFile, FocusArchiveEntry::ReadCallback{this, &file_man, &archiveMetadata});
+    session.read(flowFile, FocusArchiveEntry::ReadCallback{this, &file_man, &archiveMetadata});
 
     auto entries_end = archiveMetadata.entryMetadata.end();
 
     auto target_position = archiveMetadata.find(targetEntry_);
 
     if (target_position == entries_end && operation_ != OPERATION_TOUCH) {
-        logger_->log_warn("ManipulateArchive could not find entry %s to %s!",
+        logger_->log_warn("ManipulateArchive could not find entry {} to {}!",
                           targetEntry_, operation_);
-        session->transfer(flowFile, Failure);
+        session.transfer(flowFile, Failure);
         return;
     } else {
-        logger_->log_info("ManipulateArchive found %s for %s.",
+        logger_->log_info("ManipulateArchive found {} for {}.",
                           targetEntry_, operation_);
     }
 
     if (!destination_.empty()) {
         auto dest_position = archiveMetadata.find(destination_);
         if (dest_position != entries_end) {
-            logger_->log_warn("ManipulateArchive cannot perform %s to existing destination_ %s!",
+            logger_->log_warn("ManipulateArchive cannot perform {} to existing destination_ {}!",
                               operation_, destination_);
-            session->transfer(flowFile, Failure);
+            session.transfer(flowFile, Failure);
             return;
         }
     }
@@ -145,13 +136,13 @@ void ManipulateArchive::onTrigger(core::ProcessContext* /*context*/, core::Proce
         position = archiveMetadata.find(positionEntry);
 
         if (position == entries_end)
-            logger_->log_warn("ManipulateArchive could not find entry %s to "
-                              "perform %s %s; appending to end of archive...",
+            logger_->log_warn("ManipulateArchive could not find entry {} to "
+                              "perform {} {}; appending to end of archive...",
                               positionEntry, operation_,
                               after_.empty() ? "before" : "after");
 
         else
-            logger_->log_info("ManipulateArchive found entry %s to %s %s.",
+            logger_->log_info("ManipulateArchive found entry {} to {} {}.",
                               positionEntry, operation_,
                               after_.empty() ? "before" : "after");
 
@@ -194,8 +185,8 @@ void ManipulateArchive::onTrigger(core::ProcessContext* /*context*/, core::Proce
         archiveMetadata.entryMetadata.insert(position, touchEntry);
     }
 
-    session->write(flowFile, UnfocusArchiveEntry::WriteCallback{&archiveMetadata});
-    session->transfer(flowFile, Success);
+    session.write(flowFile, UnfocusArchiveEntry::WriteCallback{&archiveMetadata});
+    session.transfer(flowFile, Success);
 }
 
 REGISTER_RESOURCE(ManipulateArchive, Processor);

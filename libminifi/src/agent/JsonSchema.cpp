@@ -121,8 +121,11 @@ static std::string buildSchema(const std::unordered_map<std::string, std::string
     all_rels << "\"relationships-" << escape(name) << "\": " << rels << ", ";
   }
 
+  const auto rpg_property_refs = minifi::RemoteProcessorGroupPort::Properties;
+  std::vector<core::Property> rpg_properties(rpg_property_refs.begin(), rpg_property_refs.end());
+
   std::stringstream remote_port_props;
-  writeProperties(minifi::RemoteProcessorGroupPort::properties(), minifi::RemoteProcessorGroupPort::SupportsDynamicProperties, remote_port_props);
+  writeProperties(rpg_properties, minifi::RemoteProcessorGroupPort::SupportsDynamicProperties, remote_port_props);
 
   std::string process_group_properties = R"(
     "Processors": {
@@ -350,7 +353,6 @@ static std::string buildSchema(const std::unordered_map<std::string, std::string
       "properties": {
         "name": {"type": "string"},
         "version": {"type": "integer"},
-        "onschedule retry interval": {"$ref": "#/definitions/time"},
         )" + process_group_properties + R"(
       }
     },
@@ -365,8 +367,7 @@ static std::string buildSchema(const std::unordered_map<std::string, std::string
           "required": ["name"],
           "properties": {
             "name": {"type": "string"},
-            "version": {"type": "integer"},
-            "onschedule retry interval": {"$ref": "#/definitions/time"}
+            "version": {"type": "integer"}
           }
         },
         )" + process_group_properties + R"(

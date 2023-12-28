@@ -32,8 +32,8 @@ using namespace std::literals::chrono_literals;
 
 namespace org::apache::nifi::minifi::c2 {
 
-RESTSender::RESTSender(std::string name, const utils::Identifier &uuid)
-    : C2Protocol(std::move(name), uuid) {
+RESTSender::RESTSender(std::string_view name, const utils::Identifier &uuid)
+    : C2Protocol(name, uuid) {
 }
 
 void RESTSender::initialize(core::controller::ControllerServiceProvider* controller, const std::shared_ptr<Configure> &configure) {
@@ -58,25 +58,25 @@ void RESTSender::initialize(core::controller::ControllerServiceProvider* control
       }
     }
     if (auto req_encoding_str = configure->get(Configuration::nifi_c2_rest_request_encoding)) {
-      if (auto req_encoding = RequestEncoding::parse(req_encoding_str->c_str(), RequestEncoding{}, false)) {
-        logger_->log_debug("Using request encoding '%s'", req_encoding.toString());
-        req_encoding_ = req_encoding;
+      if (auto req_encoding = magic_enum::enum_cast<RequestEncoding>(*req_encoding_str, magic_enum::case_insensitive)) {
+        logger_->log_debug("Using request encoding '{}'", magic_enum::enum_name(*req_encoding));
+        req_encoding_ = *req_encoding;
       } else {
-        logger_->log_error("Invalid request encoding '%s'", req_encoding_str.value());
-        req_encoding_ = RequestEncoding::None;
+        logger_->log_error("Invalid request encoding '{}'", req_encoding_str.value());
+        req_encoding_ = RequestEncoding::none;
       }
     } else {
-      logger_->log_debug("Request encoding is not specified, using default '%s'", toString(RequestEncoding::None));
-      req_encoding_ = RequestEncoding::None;
+      logger_->log_debug("Request encoding is not specified, using default '{}'", magic_enum::enum_name(RequestEncoding::none));
+      req_encoding_ = RequestEncoding::none;
     }
   }
-  logger_->log_debug("Submitting to %s", rest_uri_);
+  logger_->log_debug("Submitting to {}", rest_uri_);
 }
 
 C2Payload RESTSender::consumePayload(const std::string &url, const C2Payload &payload, Direction direction, bool /*async*/) {
   std::optional<std::string> data;
 
-  if (direction == Direction::TRANSMIT && payload.getOperation() != Operation::TRANSFER) {
+  if (direction == Direction::TRANSMIT && payload.getOperation() != Operation::transfer) {
     // treat payload as json
     data = serializeJsonRootPayload(payload);
   }
@@ -84,7 +84,7 @@ C2Payload RESTSender::consumePayload(const std::string &url, const C2Payload &pa
 }
 
 C2Payload RESTSender::consumePayload(const C2Payload &payload, Direction direction, bool async) {
-  if (payload.getOperation() == Operation::ACKNOWLEDGE) {
+  if (payload.getOperation() == Operation::acknowledge) {
     return consumePayload(ack_uri_, payload, direction, async);
   }
   return consumePayload(rest_uri_, payload, direction, async);
@@ -93,7 +93,7 @@ C2Payload RESTSender::consumePayload(const C2Payload &payload, Direction directi
 void RESTSender::update(const std::shared_ptr<Configure> &) {
 }
 
-void RESTSender::setSecurityContext(extensions::curl::HTTPClient &client, const std::string &type, const std::string &url) {
+void RESTSender::setSecurityContext(extensions::curl::HTTPClient &client, utils::HttpRequestMethod type, const std::string &url) {
   // only use the SSL Context if we have a secure URL.
   auto generatedService = std::make_shared<minifi::controllers::SSLContextService>("Service", configuration_);
   generatedService->onEnable();
@@ -111,7 +111,7 @@ C2Payload RESTSender::sendPayload(const std::string& url, const Direction direct
   client.setKeepAliveProbe(extensions::curl::KeepAliveProbeData{2s, 2s});
   client.setConnectionTimeout(2s);
 
-  auto setUpHttpRequest = [&](const std::string& http_method) {
+  auto setUpHttpRequest = [&](utils::HttpRequestMethod http_method) {
     client.set_request_method(http_method);
     if (url.find("https://") == 0) {
       if (!ssl_context_service_) {
@@ -122,8 +122,8 @@ C2Payload RESTSender::sendPayload(const std::string& url, const Direction direct
     }
   };
   if (direction == Direction::TRANSMIT) {
-    setUpHttpRequest("POST");
-    if (payload.getOperation() == Operation::TRANSFER) {
+    setUpHttpRequest(utils::HttpRequestMethod::POST);
+    if (payload.getOperation() == Operation::transfer) {
       // treat nested payloads as files
       for (const auto& file : payload.getNestedPayloads()) {
         std::string filename = file.getLabel();
@@ -136,11 +136,11 @@ C2Payload RESTSender::sendPayload(const std::string& url, const Direction direct
       }
     } else {
       auto data_input = std::make_unique<utils::HTTPUploadByteArrayInputCallback>();
-      if (data && req_encoding_ == RequestEncoding::Gzip) {
+      if (data && req_encoding_ == RequestEncoding::gzip) {
         io::BufferStream compressed_payload;
         bool compression_success = [&] {
           io::ZlibCompressStream compressor(gsl::make_not_null(&compressed_payload), io::ZlibCompressionFormat::GZIP, Z_BEST_COMPRESSION);
-          auto ret = compressor.write(gsl::span<const char>(data.value()).as_span<const std::byte>());
+          auto ret = compressor.write(as_bytes(std::span(data.value())));
           if (ret != data->length()) {
             return false;
           }
@@ -163,10 +163,10 @@ C2Payload RESTSender::sendPayload(const std::string& url, const Direction direct
   } else {
     // we do not need to set the upload callback
     // since we are not uploading anything on a get
-    setUpHttpRequest("GET");
+    setUpHttpRequest(utils::HttpRequestMethod::GET);
   }
 
-  if (payload.getOperation() == Operation::TRANSFER) {
+  if (payload.getOperation() == Operation::transfer) {
     auto read = std::make_unique<utils::HTTPReadCallback>(std::numeric_limits<size_t>::max());
     client.setReadCallback(std::move(read));
     if (accepted_formats && !accepted_formats->empty()) {
@@ -183,12 +183,12 @@ C2Payload RESTSender::sendPayload(const std::string& url, const Direction direct
   const bool clientError = 400 <= respCode && respCode < 500;
   const bool serverError = 500 <= respCode && respCode < 600;
   if (clientError || serverError) {
-    logger_->log_error("Error response code '" "%" PRId64 "' from '%s'", respCode, url);
+    logger_->log_error("Error response code '{}' from '{}'", respCode, url);
   } else {
-    logger_->log_debug("Response code '" "%" PRId64 "' from '%s'", respCode, url);
+    logger_->log_debug("Response code '{}' from '{}'", respCode, url);
   }
   const auto response_body_bytes = gsl::make_span(client.getResponseBody()).as_span<const std::byte>();
-  logger_->log_trace("Received response: \"%s\"", [&] {return utils::StringUtils::escapeUnprintableBytes(response_body_bytes);});
+  logger_->log_trace("Received response: \"{}\"", [&] { return utils::StringUtils::escapeUnprintableBytes(response_body_bytes); });
   if (isOkay && !clientError && !serverError) {
     if (accepted_formats) {
       C2Payload response_payload(payload.getOperation(), state::UpdateState::READ_COMPLETE, true);
@@ -202,7 +202,7 @@ C2Payload RESTSender::sendPayload(const std::string& url, const Direction direct
 }
 
 C2Payload RESTSender::fetch(const std::string& url, const std::vector<std::string>& accepted_formats, bool /*async*/) {
-  return sendPayload(url, Direction::RECEIVE, C2Payload(Operation::TRANSFER, true), std::nullopt, accepted_formats);
+  return sendPayload(url, Direction::RECEIVE, C2Payload(Operation::transfer, true), std::nullopt, accepted_formats);
 }
 
 REGISTER_RESOURCE(RESTSender, DescriptionOnly);

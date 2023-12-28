@@ -26,7 +26,11 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <chrono>
 
+#include "core/PropertyDefinition.h"
+#include "core/PropertyDefinitionBuilder.h"
+#include "core/PropertyType.h"
 #include "io/StreamPipe.h"
 #include "S3Processor.h"
 #include "utils/ArrayUtils.h"
@@ -40,27 +44,101 @@ namespace org::apache::nifi::minifi::aws::processors {
 
 class PutS3Object : public S3Processor {
  public:
-  static const std::set<std::string> CANNED_ACLS;
-  static const std::set<std::string> STORAGE_CLASSES;
-  static const std::set<std::string> SERVER_SIDE_ENCRYPTIONS;
+  static constexpr auto CANNED_ACLS = minifi::utils::getKeys(minifi::aws::s3::CANNED_ACL_MAP);
+  static constexpr auto STORAGE_CLASSES = minifi::utils::getKeys(minifi::aws::s3::STORAGE_CLASS_MAP);
+  static constexpr auto SERVER_SIDE_ENCRYPTIONS = minifi::utils::getKeys(minifi::aws::s3::SERVER_SIDE_ENCRYPTION_MAP);
 
-  EXTENSIONAPI static constexpr const char* Description = "Puts FlowFiles to an Amazon S3 Bucket. The upload uses the PutS3Object method. "
-      "The PutS3Object method send the file in a single synchronous call, but it has a 5GB size limit. Larger files sent using the multipart upload methods are currently not supported. "
-      "The AWS libraries select an endpoint URL based on the AWS region, but this can be overridden with the 'Endpoint Override URL' property for use with other S3-compatible endpoints. "
-      "The S3 API specifies that the maximum file size for a PutS3Object upload is 5GB.";
+  EXTENSIONAPI static constexpr const char* Description = "Puts FlowFiles to an Amazon S3 Bucket. The upload uses either the PutS3Object method or the PutS3MultipartUpload method. "
+      "The PutS3Object method sends the file in a single synchronous call, but it has a 5GB size limit. Larger files are sent using the PutS3MultipartUpload method. "
+      "This multipart process saves state after each step so that a large upload can be resumed with minimal loss if the processor or cluster is stopped and restarted. "
+      "A multipart upload consists of three steps: 1) initiate upload, 2) upload the parts, and 3) complete the upload. For multipart uploads, the processor saves state "
+      "locally tracking the upload ID and parts uploaded, which must both be provided to complete the upload. The AWS libraries select an endpoint URL based on the AWS region, "
+      "but this can be overridden with the 'Endpoint Override URL' property for use with other S3-compatible endpoints. The S3 API specifies that the maximum file size for a "
+      "PutS3Object upload is 5GB. It also requires that parts in a multipart upload must be at least 5MB in size, except for the last part. These limits establish the bounds "
+      "for the Multipart Upload Threshold and Part Size properties.";
 
-  static const core::Property ObjectKey;
-  static const core::Property ContentType;
-  static const core::Property StorageClass;
-  static const core::Property ServerSideEncryption;
-  static const core::Property FullControlUserList;
-  static const core::Property ReadPermissionUserList;
-  static const core::Property ReadACLUserList;
-  static const core::Property WriteACLUserList;
-  static const core::Property CannedACL;
-  static const core::Property UsePathStyleAccess;
-  static auto properties() {
-    return minifi::utils::array_cat(S3Processor::properties(), std::array{
+  EXTENSIONAPI static constexpr auto ObjectKey = core::PropertyDefinitionBuilder<>::createProperty("Object Key")
+      .withDescription("The key of the S3 object. If none is given the filename attribute will be used by default.")
+      .supportsExpressionLanguage(true)
+      .build();
+  EXTENSIONAPI static constexpr auto ContentType = core::PropertyDefinitionBuilder<>::createProperty("Content Type")
+      .withDescription("Sets the Content-Type HTTP header indicating the type of content stored in "
+          "the associated object. The value of this header is a standard MIME type. "
+          "If no content type is provided the default content type "
+          "\"application/octet-stream\" will be used.")
+      .supportsExpressionLanguage(true)
+      .withDefaultValue("application/octet-stream")
+      .build();
+  EXTENSIONAPI static constexpr auto StorageClass = core::PropertyDefinitionBuilder<STORAGE_CLASSES.size()>::createProperty("Storage Class")
+      .withDescription("AWS S3 Storage Class")
+      .isRequired(true)
+      .withDefaultValue("Standard")
+      .withAllowedValues(STORAGE_CLASSES)
+      .build();
+  EXTENSIONAPI static constexpr auto ServerSideEncryption = core::PropertyDefinitionBuilder<SERVER_SIDE_ENCRYPTIONS.size()>::createProperty("Server Side Encryption")
+      .isRequired(true)
+      .withDefaultValue("None")
+      .withAllowedValues(SERVER_SIDE_ENCRYPTIONS)
+      .withDescription("Specifies the algorithm used for server side encryption.")
+      .build();
+  EXTENSIONAPI static constexpr auto FullControlUserList = core::PropertyDefinitionBuilder<>::createProperty("FullControl User List")
+      .withDescription("A comma-separated list of Amazon User ID's or E-mail addresses that specifies who should have Full Control for an object.")
+      .supportsExpressionLanguage(true)
+      .build();
+  EXTENSIONAPI static constexpr auto ReadPermissionUserList = core::PropertyDefinitionBuilder<>::createProperty("Read Permission User List")
+      .withDescription("A comma-separated list of Amazon User ID's or E-mail addresses that specifies who should have Read Access for an object.")
+      .supportsExpressionLanguage(true)
+      .build();
+  EXTENSIONAPI static constexpr auto ReadACLUserList = core::PropertyDefinitionBuilder<>::createProperty("Read ACL User List")
+      .withDescription("A comma-separated list of Amazon User ID's or E-mail addresses that specifies who should have permissions to read "
+          "the Access Control List for an object.")
+      .supportsExpressionLanguage(true)
+      .build();
+  EXTENSIONAPI static constexpr auto WriteACLUserList = core::PropertyDefinitionBuilder<>::createProperty("Write ACL User List")
+      .withDescription("A comma-separated list of Amazon User ID's or E-mail addresses that specifies who should have permissions to change "
+          "the Access Control List for an object.")
+      .supportsExpressionLanguage(true)
+      .build();
+  EXTENSIONAPI static constexpr auto CannedACL = core::PropertyDefinitionBuilder<>::createProperty("Canned ACL")
+      .withDescription("Amazon Canned ACL for an object. Allowed values: BucketOwnerFullControl, BucketOwnerRead, AuthenticatedRead, "
+          "PublicReadWrite, PublicRead, Private, AwsExecRead; will be ignored if any other ACL/permission property is specified.")
+      .supportsExpressionLanguage(true)
+      .build();
+  EXTENSIONAPI static constexpr auto UsePathStyleAccess = core::PropertyDefinitionBuilder<>::createProperty("Use Path Style Access")
+      .withDescription("Path-style access can be enforced by setting this property to true. Set it to true if your endpoint does not support "
+          "virtual-hosted-style requests, only path-style requests.")
+      .withPropertyType(core::StandardPropertyTypes::BOOLEAN_TYPE)
+      .withDefaultValue("false")
+      .isRequired(true)
+      .build();
+  EXTENSIONAPI static constexpr auto MultipartThreshold = core::PropertyDefinitionBuilder<>::createProperty("Multipart Threshold")
+      .withDescription("Specifies the file size threshold for switch from the PutS3Object API to the PutS3MultipartUpload API. "
+                        "Flow files bigger than this limit will be sent using the multipart process. The valid range is 5MB to 5GB.")
+      .withPropertyType(core::StandardPropertyTypes::DATA_SIZE_TYPE)
+      .withDefaultValue("5 GB")
+      .isRequired(true)
+      .build();
+  EXTENSIONAPI static constexpr auto MultipartPartSize = core::PropertyDefinitionBuilder<>::createProperty("Multipart Part Size")
+      .withDescription("Specifies the part size for use when the PutS3Multipart Upload API is used. "
+                        "Flow files will be broken into chunks of this size for the upload process, but the last part sent can be smaller since it is not padded. The valid range is 5MB to 5GB.")
+      .withPropertyType(core::StandardPropertyTypes::DATA_SIZE_TYPE)
+      .withDefaultValue("5 GB")
+      .isRequired(true)
+      .build();
+  EXTENSIONAPI static constexpr auto MultipartUploadAgeOffInterval = core::PropertyDefinitionBuilder<>::createProperty("Multipart Upload AgeOff Interval")
+      .withDescription("Specifies the interval at which existing multipart uploads in AWS S3 will be evaluated for ageoff. "
+                        "When processor is triggered it will initiate the ageoff evaluation if this interval has been exceeded.")
+      .withPropertyType(core::StandardPropertyTypes::TIME_PERIOD_TYPE)
+      .withDefaultValue("60 min")
+      .isRequired(true)
+      .build();
+  EXTENSIONAPI static constexpr auto MultipartUploadMaxAgeThreshold = core::PropertyDefinitionBuilder<>::createProperty("Multipart Upload Max Age Threshold")
+      .withDescription("Specifies the maximum age for existing multipart uploads in AWS S3. When the ageoff process occurs, any upload older than this threshold will be aborted.")
+      .withPropertyType(core::StandardPropertyTypes::TIME_PERIOD_TYPE)
+      .withDefaultValue("7 days")
+      .isRequired(true)
+      .build();
+  EXTENSIONAPI static constexpr auto Properties = minifi::utils::array_cat(S3Processor::Properties, std::array<core::PropertyReference, 14>{
       ObjectKey,
       ContentType,
       StorageClass,
@@ -70,13 +148,17 @@ class PutS3Object : public S3Processor {
       ReadACLUserList,
       WriteACLUserList,
       CannedACL,
-      UsePathStyleAccess
-    });
-  }
+      UsePathStyleAccess,
+      MultipartThreshold,
+      MultipartPartSize,
+      MultipartUploadAgeOffInterval,
+      MultipartUploadMaxAgeThreshold
+  });
 
-  EXTENSIONAPI static const core::Relationship Success;
-  EXTENSIONAPI static const core::Relationship Failure;
-  static auto relationships() { return std::array{Success, Failure}; }
+
+  EXTENSIONAPI static constexpr auto Success = core::RelationshipDefinition{"success", "FlowFiles are routed to success relationship"};
+  EXTENSIONAPI static constexpr auto Failure = core::RelationshipDefinition{"failure", "FlowFiles are routed to failure relationship"};
+  EXTENSIONAPI static constexpr auto Relationships = std::array{Success, Failure};
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = true;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
@@ -85,85 +167,60 @@ class PutS3Object : public S3Processor {
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  explicit PutS3Object(std::string name, const minifi::utils::Identifier& uuid = minifi::utils::Identifier())
-    : S3Processor(std::move(name), uuid, core::logging::LoggerFactory<PutS3Object>::getLogger(uuid)) {
+  explicit PutS3Object(std::string_view name, const minifi::utils::Identifier& uuid = minifi::utils::Identifier())
+    : S3Processor(name, uuid, core::logging::LoggerFactory<PutS3Object>::getLogger(uuid)) {
   }
 
   ~PutS3Object() override = default;
 
   void initialize() override;
-  void onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &sessionFactory) override;
-  void onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) override;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& session_factory) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
 
-  class ReadCallback {
-   public:
-    static constexpr uint64_t MAX_SIZE = 5_GiB;
-    static constexpr uint64_t BUFFER_SIZE = 4_KiB;
+ protected:
+  static constexpr uint64_t MIN_PART_SIZE = 5_MiB;
+  static constexpr uint64_t MAX_UPLOAD_SIZE = 5_GiB;
 
-    ReadCallback(uint64_t flow_size, const minifi::aws::s3::PutObjectRequestParameters& options, aws::s3::S3Wrapper& s3_wrapper)
-      : flow_size_(flow_size)
-      , options_(options)
-      , s3_wrapper_(s3_wrapper) {
-    }
-
-    int64_t operator()(const std::shared_ptr<io::InputStream>& stream) {
-      if (flow_size_ > MAX_SIZE) {
-        return -1;
-      }
-      std::vector<std::byte> buffer;
-      buffer.resize(BUFFER_SIZE);
-      auto data_stream = std::make_shared<std::stringstream>();
-      read_size_ = 0;
-      while (read_size_ < flow_size_) {
-        const auto next_read_size = (std::min)(flow_size_ - read_size_, BUFFER_SIZE);
-        const auto read_ret = stream->read(gsl::make_span(buffer).subspan(0, next_read_size));
-        if (io::isError(read_ret)) {
-          return -1;
-        }
-        if (read_ret > 0) {
-          data_stream->write(reinterpret_cast<char*>(buffer.data()), gsl::narrow<std::streamsize>(next_read_size));
-          read_size_ += read_ret;
-        } else {
-          break;
-        }
-      }
-      result_ = s3_wrapper_.putObject(options_, data_stream);
-      return gsl::narrow<int64_t>(read_size_);
-    }
-
-    uint64_t flow_size_;
-    const minifi::aws::s3::PutObjectRequestParameters& options_;
-    aws::s3::S3Wrapper& s3_wrapper_;
-    uint64_t read_size_ = 0;
-    std::optional<minifi::aws::s3::PutObjectResult> result_;
-  };
-
- private:
   friend class ::S3TestsFixture<PutS3Object>;
 
   explicit PutS3Object(const std::string& name, const minifi::utils::Identifier& uuid, std::unique_ptr<aws::s3::S3RequestSender> s3_request_sender)
     : S3Processor(name, uuid, core::logging::LoggerFactory<PutS3Object>::getLogger(uuid), std::move(s3_request_sender)) {
   }
 
-  void fillUserMetadata(const std::shared_ptr<core::ProcessContext> &context);
+  virtual uint64_t getMinPartSize() const {
+    return MIN_PART_SIZE;
+  }
+
+  virtual uint64_t getMaxUploadSize() const {
+    return MAX_UPLOAD_SIZE;
+  }
+
+  void fillUserMetadata(core::ProcessContext& context);
   static std::string parseAccessControlList(const std::string &comma_separated_list);
-  bool setCannedAcl(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::FlowFile> &flow_file, aws::s3::PutObjectRequestParameters &put_s3_request_params) const;
-  bool setAccessControl(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::FlowFile> &flow_file, aws::s3::PutObjectRequestParameters &put_s3_request_params) const;
+  bool setCannedAcl(core::ProcessContext& context, const std::shared_ptr<core::FlowFile> &flow_file, aws::s3::PutObjectRequestParameters &put_s3_request_params) const;
+  bool setAccessControl(core::ProcessContext& context, const std::shared_ptr<core::FlowFile> &flow_file, aws::s3::PutObjectRequestParameters &put_s3_request_params) const;
   void setAttributes(
-    const std::shared_ptr<core::ProcessSession> &session,
+    core::ProcessSession& session,
     const std::shared_ptr<core::FlowFile> &flow_file,
     const aws::s3::PutObjectRequestParameters &put_s3_request_params,
     const minifi::aws::s3::PutObjectResult &put_object_result) const;
   std::optional<aws::s3::PutObjectRequestParameters> buildPutS3RequestParams(
-    const std::shared_ptr<core::ProcessContext> &context,
+    core::ProcessContext& context,
     const std::shared_ptr<core::FlowFile> &flow_file,
     const CommonProperties &common_properties) const;
+  void ageOffMultipartUploads(const CommonProperties &common_properties);
 
   std::string user_metadata_;
   std::map<std::string, std::string> user_metadata_map_;
   std::string storage_class_;
   std::string server_side_encryption_;
   bool use_virtual_addressing_ = true;
+  uint64_t multipart_threshold_{};
+  uint64_t multipart_size_{};
+  std::chrono::milliseconds multipart_upload_ageoff_interval_;
+  std::chrono::milliseconds multipart_upload_max_age_threshold_;
+  std::mutex last_ageoff_mutex_;
+  std::chrono::time_point<std::chrono::system_clock> last_ageoff_time_;
 };
 
 }  // namespace org::apache::nifi::minifi::aws::processors

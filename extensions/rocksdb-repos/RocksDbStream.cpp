@@ -25,22 +25,21 @@
 #include <string>
 #include <Exception.h>
 #include "io/validation.h"
-namespace org {
-namespace apache {
-namespace nifi {
-namespace minifi {
-namespace io {
+
+namespace org::apache::nifi::minifi::io {
 
 RocksDbStream::RocksDbStream(std::string path, gsl::not_null<minifi::internal::RocksDatabase*> db, bool write_enable, minifi::internal::WriteBatch* batch)
     : BaseStream(),
       path_(std::move(path)),
       write_enable_(write_enable),
       db_(db),
-      batch_(batch) {
-  auto opendb = db_->open();
-  exists_ = opendb && opendb->Get(rocksdb::ReadOptions(), path_, &value_).ok();
-  offset_ = 0;
-  size_ = value_.size();
+      exists_([this] {
+        auto opendb = db_->open();
+        return opendb && opendb->Get(rocksdb::ReadOptions(), path_, &value_).ok();
+      }()),
+      offset_(0),
+      batch_(batch),
+      size_(value_.size()) {
 }
 
 void RocksDbStream::close() {
@@ -61,7 +60,7 @@ size_t RocksDbStream::write(const uint8_t *value, size_t size) {
   if (!opendb) {
     return STREAM_ERROR;
   }
-  rocksdb::Slice slice_value((const char*)value, size);
+  rocksdb::Slice slice_value(reinterpret_cast<const char*>(value), size);
   rocksdb::Status status;
   size_ += size;
   if (batch_ != nullptr) {
@@ -78,7 +77,7 @@ size_t RocksDbStream::write(const uint8_t *value, size_t size) {
   }
 }
 
-size_t RocksDbStream::read(gsl::span<std::byte> buf) {
+size_t RocksDbStream::read(std::span<std::byte> buf) {
   // The check have to be in this order for RocksDBStreamTest "Read zero bytes" to succeed
   if (!exists_) return STREAM_ERROR;
   if (buf.empty()) return 0;
@@ -90,9 +89,4 @@ size_t RocksDbStream::read(gsl::span<std::byte> buf) {
   return amtToRead;
 }
 
-} /* namespace io */
-} /* namespace minifi */
-} /* namespace nifi */
-} /* namespace apache */
-} /* namespace org */
-
+}  // namespace org::apache::nifi::minifi::io

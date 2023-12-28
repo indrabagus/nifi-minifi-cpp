@@ -41,7 +41,7 @@ std::optional<std::string> parseProtocol(const std::string& url_input) {
 
 std::optional<int> parsePortNumber(const std::string& port_string) {
   try {
-    size_t pos;
+    size_t pos = 0;
     int port = std::stoi(port_string, &pos);
     if (pos == port_string.size()) {
       return port;
@@ -65,7 +65,7 @@ std::string get_token(utils::BaseHTTPClient* client, const std::string& username
 
   client->setContentType("application/x-www-form-urlencoded");
 
-  client->set_request_method("POST");
+  client->set_request_method(HttpRequestMethod::POST);
 
   std::string payload = "username=" + username + "&" + "password=" + password;
 
@@ -87,31 +87,31 @@ URL::URL(const std::string& url_input) {
   if (protocol) {
     protocol_ = *protocol;
   } else {
-    logger_->log_error("Unknown protocol in URL '%s'", url_input);
+    logger_->log_error("Unknown protocol in URL '{}'", url_input);
     return;
   }
 
   std::string::const_iterator current_pos = url_input.begin();
   std::advance(current_pos, protocol_.size());
 
-  constexpr const char HOST_TERMINATORS[] = ":/?#";
+  static constexpr std::string_view HOST_TERMINATORS = ":/?#";
   std::string::const_iterator end_of_host = std::find_first_of(current_pos, url_input.end(), std::begin(HOST_TERMINATORS), std::end(HOST_TERMINATORS));
   host_ = std::string{current_pos, end_of_host};
   if (host_.empty()) {
-    logger_->log_error("No host found in URL '%s'", url_input);
+    logger_->log_error("No host found in URL '{}'", url_input);
     return;
   }
   current_pos = end_of_host;
 
   if (current_pos != url_input.end() && *current_pos == ':') {
-    constexpr const char PORT_TERMINATORS[] = "/?#";
+    static constexpr std::string_view PORT_TERMINATORS = "/?#";
     ++current_pos;
     std::string::const_iterator end_of_port = std::find_first_of(current_pos, url_input.end(), std::begin(PORT_TERMINATORS), std::end(PORT_TERMINATORS));
     const auto port_number = parsePortNumber(std::string{current_pos, end_of_port});
     if (port_number) {
       port_ = *port_number;
     } else {
-      logger_->log_error("Could not parse the port number in URL '%s'", url_input);
+      logger_->log_error("Could not parse the port number in URL '{}'", url_input);
       return;
     }
     current_pos = end_of_port;
@@ -204,7 +204,7 @@ int HTTPRequestResponse::seek_callback(void *p, int64_t offset, int) {
       return SEEKFUNC_FAIL;
     }
     auto *callback = reinterpret_cast<HTTPUploadCallback *>(p);
-    return callback->setPosition(offset);
+    return gsl::narrow<int>(callback->setPosition(offset));
   } catch (...) {
     return SEEKFUNC_FAIL;
   }
@@ -248,17 +248,17 @@ size_t HTTPUploadByteArrayInputCallback::setPosition(int64_t offset) {
 }
 
 size_t HTTPUploadStreamContentsCallback::getDataChunk(char *data, size_t size) {
-  logger_->log_trace("HTTPUploadStreamContentsCallback is asked for up to %zu bytes", size);
+  logger_->log_trace("HTTPUploadStreamContentsCallback is asked for up to {} bytes", size);
 
-  gsl::span<char> buffer{data, size};
-  size_t num_read = input_stream_->read(buffer.as_span<std::byte>());
+  std::span<char> buffer{data, size};
+  size_t num_read = input_stream_->read(as_writable_bytes(buffer));
 
   if (io::isError(num_read)) {
     logger_->log_error("Error reading the input stream in HTTPUploadStreamContentsCallback");
     return 0;
   }
 
-  logger_->log_debug("HTTPUploadStreamContentsCallback is returning %zu bytes", num_read);
+  logger_->log_debug("HTTPUploadStreamContentsCallback is returning {} bytes", num_read);
   return num_read;
 }
 
@@ -266,7 +266,7 @@ size_t HTTPUploadStreamContentsCallback::setPosition(int64_t offset) {
   if (offset == 0) {
     logger_->log_debug("HTTPUploadStreamContentsCallback is ignoring request to rewind to the beginning");
   } else {
-    logger_->log_warn("HTTPUploadStreamContentsCallback is ignoring request to seek to position %" PRId64, offset);
+    logger_->log_warn("HTTPUploadStreamContentsCallback is ignoring request to seek to position {}", offset);
   }
 
   return HTTPRequestResponse::SEEKFUNC_OK;

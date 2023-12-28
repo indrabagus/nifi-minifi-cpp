@@ -22,6 +22,9 @@
 #include <vector>
 
 #include "Processor.h"
+#include "core/PropertyDefinition.h"
+#include "core/PropertyDefinitionBuilder.h"
+#include "core/RelationshipDefinition.h"
 #include "utils/Export.h"
 
 namespace org::apache::nifi::minifi::core::logging { class Logger; }
@@ -33,13 +36,22 @@ class PutUDP final : public core::Processor {
       "which is then transmitted to the configured UDP server. "
       "The processor doesn't guarantee a successful transfer, even if the flow file is routed to the success relationship.";
 
-  EXTENSIONAPI static const core::Property Hostname;
-  EXTENSIONAPI static const core::Property Port;
-  static auto properties() { return std::array{Hostname, Port}; }
+  EXTENSIONAPI static constexpr auto Hostname = core::PropertyDefinitionBuilder<>::createProperty("Hostname")
+    .withDescription("The ip address or hostname of the destination.")
+    .withDefaultValue("localhost")
+    .isRequired(true)
+    .supportsExpressionLanguage(true)
+    .build();
+  EXTENSIONAPI static constexpr auto Port = core::PropertyDefinitionBuilder<>::createProperty("Port")
+    .withDescription("The port on the destination. Can be a service name like ssh or http, as defined in /etc/services.")
+    .isRequired(true)
+    .supportsExpressionLanguage(true)
+    .build();
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 2>{Hostname, Port};
 
-  EXTENSIONAPI static const core::Relationship Success;
-  EXTENSIONAPI static const core::Relationship Failure;
-  static auto relationships() { return std::array{Success, Failure}; }
+  EXTENSIONAPI static constexpr auto Success = core::RelationshipDefinition{"success", "FlowFiles that are sent to the destination are sent out this relationship."};
+  EXTENSIONAPI static constexpr auto Failure = core::RelationshipDefinition{"failure", "FlowFiles that encountered IO errors are sent out this relationship."};
+  EXTENSIONAPI static constexpr auto Relationships = std::array{Success, Failure};
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
@@ -48,15 +60,15 @@ class PutUDP final : public core::Processor {
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  explicit PutUDP(std::string name, const utils::Identifier& uuid = {});
+  explicit PutUDP(std::string_view name, const utils::Identifier& uuid = {});
   PutUDP(const PutUDP&) = delete;
   PutUDP& operator=(const PutUDP&) = delete;
   ~PutUDP() final;
 
   void initialize() final;
   void notifyStop() final;
-  void onSchedule(core::ProcessContext*, core::ProcessSessionFactory *) final;
-  void onTrigger(core::ProcessContext*, core::ProcessSession*) final;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& session_factory) final;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) final;
 
  private:
   std::shared_ptr<core::logging::Logger> logger_;

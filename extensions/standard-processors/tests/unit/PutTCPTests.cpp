@@ -18,7 +18,6 @@
 
 #include <memory>
 #include <new>
-#include <random>
 #include <string>
 
 #include "SingleProcessorTestController.h"
@@ -33,6 +32,7 @@
 #include "IntegrationTestUtils.h"
 
 using namespace std::literals::chrono_literals;
+using org::apache::nifi::minifi::utils::verifyLogLinePresenceInPollTime;
 
 namespace org::apache::nifi::minifi::processors {
 
@@ -62,15 +62,17 @@ class CancellableTcpServer : public utils::net::TcpServer {
     while (true) {
       auto [accept_error, socket] = co_await acceptor.async_accept(utils::net::use_nothrow_awaitable);
       if (accept_error) {
-        logger_->log_error("Error during accepting new connection: %s", accept_error.message());
+        logger_->log_error("Error during accepting new connection: {}", accept_error.message());
         break;
       }
+      std::error_code error;
+      auto remote_address = socket.lowest_layer().remote_endpoint(error).address();
       auto cancellable_timer = std::make_shared<asio::steady_timer>(io_context_);
       cancellable_timers_.push_back(cancellable_timer);
       if (ssl_data_)
-        co_spawn(io_context_, secureSession(std::move(socket)) || wait_until_cancelled(cancellable_timer), asio::detached);
+        co_spawn(io_context_, secureSession(std::move(socket), std::move(remote_address), port_) || wait_until_cancelled(cancellable_timer), asio::detached);
       else
-        co_spawn(io_context_, insecureSession(std::move(socket)) || wait_until_cancelled(cancellable_timer), asio::detached);
+        co_spawn(io_context_, insecureSession(std::move(socket), std::move(remote_address), port_) || wait_until_cancelled(cancellable_timer), asio::detached);
     }
   }
 
@@ -88,7 +90,7 @@ utils::net::SslData createSslDataForServer() {
   utils::net::SslData ssl_data;
   ssl_data.ca_loc = (executable_dir / "resources" / "ca_A.crt").string();
   ssl_data.cert_loc = (executable_dir / "resources" / "localhost_by_A.pem").string();
-  ssl_data.key_loc = (executable_dir / "resources" / "localhost_by_A.pem").string();
+  ssl_data.key_loc = (executable_dir / "resources" / "localhost.key").string();
   return ssl_data;
 }
 }  // namespace
@@ -103,6 +105,11 @@ class PutTCPTestFixture {
     put_tcp_->setProperty(PutTCP::Timeout, "200 ms");
     put_tcp_->setProperty(PutTCP::OutgoingMessageDelimiter, "\n");
   }
+
+  PutTCPTestFixture(PutTCPTestFixture&&) = delete;
+  PutTCPTestFixture(const PutTCPTestFixture&) = delete;
+  PutTCPTestFixture& operator=(PutTCPTestFixture&&) = delete;
+  PutTCPTestFixture& operator=(const PutTCPTestFixture&) = delete;
 
   ~PutTCPTestFixture() {
     stopServers();
@@ -158,13 +165,15 @@ class PutTCPTestFixture {
     return std::nullopt;
   }
 
-  void addSSLContextToPutTCP(const std::filesystem::path& ca_cert, const std::optional<std::filesystem::path>& client_cert_key) {
-    const std::filesystem::path ca_dir = std::filesystem::path(minifi::utils::file::FileUtils::get_executable_dir()) / "resources";
+  void addSSLContextToPutTCP(const std::filesystem::path& ca_cert, const std::optional<std::filesystem::path>& client_cert, const std::optional<std::filesystem::path>& client_cert_key) {
+    const std::filesystem::path ca_dir = minifi::utils::file::FileUtils::get_executable_dir() / "resources";
     auto ssl_context_service_node = controller_.plan->addController("SSLContextService", "SSLContextService");
-    REQUIRE(controller_.plan->setProperty(ssl_context_service_node, SSLContextService::CACertificate.getName(), (ca_dir / ca_cert).string()));
+    REQUIRE(controller_.plan->setProperty(ssl_context_service_node, SSLContextService::CACertificate, (ca_dir / ca_cert).string()));
+    if (client_cert) {
+      REQUIRE(controller_.plan->setProperty(ssl_context_service_node, SSLContextService::ClientCertificate, (ca_dir / *client_cert).string()));
+    }
     if (client_cert_key) {
-      REQUIRE(controller_.plan->setProperty(ssl_context_service_node, SSLContextService::ClientCertificate.getName(), (ca_dir / *client_cert_key).string()));
-      REQUIRE(controller_.plan->setProperty(ssl_context_service_node, SSLContextService::PrivateKey.getName(), (ca_dir / *client_cert_key).string()));
+      REQUIRE(controller_.plan->setProperty(ssl_context_service_node, SSLContextService::PrivateKey, (ca_dir / *client_cert_key).string()));
     }
     ssl_context_service_node->enable();
 
@@ -172,15 +181,15 @@ class PutTCPTestFixture {
   }
 
   void setHostname(const std::string& hostname) {
-    REQUIRE(controller_.plan->setProperty(put_tcp_, PutTCP::Hostname.getName(), hostname));
+    REQUIRE(controller_.plan->setProperty(put_tcp_, PutTCP::Hostname, hostname));
   }
 
   void enableConnectionPerFlowFile() {
-    REQUIRE(controller_.plan->setProperty(put_tcp_, PutTCP::ConnectionPerFlowFile.getName(), "true"));
+    REQUIRE(controller_.plan->setProperty(put_tcp_, PutTCP::ConnectionPerFlowFile, "true"));
   }
 
   void setIdleConnectionExpiration(const std::string& idle_connection_expiration_str) {
-    REQUIRE(controller_.plan->setProperty(put_tcp_, PutTCP::IdleConnectionExpiration.getName(), idle_connection_expiration_str));
+    REQUIRE(controller_.plan->setProperty(put_tcp_, PutTCP::IdleConnectionExpiration, idle_connection_expiration_str));
   }
 
   uint16_t addTCPServer() {
@@ -281,7 +290,7 @@ TEST_CASE("Server closes in-use socket", "[PutTCP]") {
     test_fixture.setPutTCPPort(port);
   }
   SECTION("SSL") {
-    test_fixture.addSSLContextToPutTCP("ca_A.crt", "alice_by_A.pem");
+    test_fixture.addSSLContextToPutTCP("ca_A.crt", "alice_by_A.pem", "alice.key");
     auto port = test_fixture.addSSLServer();
     test_fixture.setPutTCPPort(port);
   }
@@ -315,7 +324,7 @@ TEST_CASE("Connection per flow file", "[PutTCP]") {
     test_fixture.setPutTCPPort(port);
   }
   SECTION("SSL") {
-    test_fixture.addSSLContextToPutTCP("ca_A.crt", "alice_by_A.pem");
+    test_fixture.addSSLContextToPutTCP("ca_A.crt", "alice_by_A.pem", "alice.key");
     auto port = test_fixture.addSSLServer();
     test_fixture.setPutTCPPort(port);
   }
@@ -346,7 +355,7 @@ TEST_CASE("PutTCP test invalid host", "[PutTCP]") {
   SECTION("No SSL") {
   }
   SECTION("SSL") {
-    test_fixture.addSSLContextToPutTCP("ca_A.crt", "alice_by_A.pem");
+    test_fixture.addSSLContextToPutTCP("ca_A.crt", "alice_by_A.pem", "alice.key");
   }
 
   test_fixture.setPutTCPPort(1235);
@@ -359,7 +368,7 @@ TEST_CASE("PutTCP test invalid server", "[PutTCP]") {
   SECTION("No SSL") {
   }
   SECTION("SSL") {
-    test_fixture.addSSLContextToPutTCP("ca_A.crt", "alice_by_A.pem");
+    test_fixture.addSSLContextToPutTCP("ca_A.crt", "alice_by_A.pem", "alice.key");
   }
   test_fixture.setPutTCPPort(1235);
   test_fixture.setHostname("localhost");
@@ -371,7 +380,7 @@ TEST_CASE("PutTCP test non-routable server", "[PutTCP]") {
   SECTION("No SSL") {
   }
   SECTION("SSL") {
-    test_fixture.addSSLContextToPutTCP("ca_A.crt", "alice_by_A.pem");
+    test_fixture.addSSLContextToPutTCP("ca_A.crt", "alice_by_A.pem", "alice.key");
   }
   test_fixture.setHostname("192.168.255.255");
   test_fixture.setPutTCPPort(1235);
@@ -381,7 +390,7 @@ TEST_CASE("PutTCP test non-routable server", "[PutTCP]") {
 TEST_CASE("PutTCP test invalid server cert", "[PutTCP]") {
   PutTCPTestFixture test_fixture;
 
-  test_fixture.addSSLContextToPutTCP("ca_B.crt", "alice_by_B.pem");
+  test_fixture.addSSLContextToPutTCP("ca_B.crt", "alice_by_B.pem", "alice.key");
   test_fixture.setHostname("localhost");
   auto port = test_fixture.addSSLServer();
   test_fixture.setPutTCPPort(port);
@@ -394,14 +403,14 @@ TEST_CASE("PutTCP test invalid server cert", "[PutTCP]") {
 TEST_CASE("PutTCP test missing client cert", "[PutTCP]") {
   PutTCPTestFixture test_fixture;
 
-  test_fixture.addSSLContextToPutTCP("ca_A.crt", std::nullopt);
+  test_fixture.addSSLContextToPutTCP("ca_A.crt", std::nullopt, std::nullopt);
   test_fixture.setHostname("localhost");
   auto port = test_fixture.addSSLServer();
   test_fixture.setPutTCPPort(port);
 
-  trigger_expect_failure(test_fixture, "message for invalid-cert server");
+  test_fixture.trigger("message for invalid-cert server");
 
-  CHECK(LogTestController::getInstance().matchesRegex("Handshake with .* failed", 0ms));
+  CHECK(verifyLogLinePresenceInPollTime(std::chrono::seconds(3), "peer did not return a certificate (SSL routines)"));
 }
 
 TEST_CASE("PutTCP test idle connection expiration", "[PutTCP]") {
@@ -414,7 +423,7 @@ TEST_CASE("PutTCP test idle connection expiration", "[PutTCP]") {
   SECTION("SSL") {
     auto port = test_fixture.addSSLServer();
     test_fixture.setPutTCPPort(port);
-    test_fixture.addSSLContextToPutTCP("ca_A.crt", "alice_by_A.pem");
+    test_fixture.addSSLContextToPutTCP("ca_A.crt", "alice_by_A.pem", "alice.key");
   }
 
   test_fixture.setIdleConnectionExpiration("100ms");
@@ -435,7 +444,7 @@ TEST_CASE("PutTCP test long flow file chunked sending", "[PutTCP]") {
     test_fixture.setPutTCPPort(port);
   }
   SECTION("SSL") {
-    test_fixture.addSSLContextToPutTCP("ca_A.crt", "alice_by_A.pem");
+    test_fixture.addSSLContextToPutTCP("ca_A.crt", "alice_by_A.pem", "alice.key");
     auto port = test_fixture.addSSLServer();
     test_fixture.setPutTCPPort(port);
   }
@@ -454,7 +463,7 @@ TEST_CASE("PutTCP test multiple servers", "[PutTCP]") {
     }
   }
   SECTION("SSL") {
-    test_fixture.addSSLContextToPutTCP("ca_A.crt", "alice_by_A.pem");
+    test_fixture.addSSLContextToPutTCP("ca_A.crt", "alice_by_A.pem", "alice.key");
     for (size_t i = 0; i < number_of_servers; ++i) {
       ports.push_back(test_fixture.addSSLServer());
     }

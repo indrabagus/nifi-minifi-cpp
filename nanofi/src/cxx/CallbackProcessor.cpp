@@ -19,35 +19,24 @@
 #include "core/cxxstructs.h"
 #include "core/Resource.h"
 
-namespace org {
-namespace apache {
-namespace nifi {
-namespace minifi {
-namespace processors {
-
-const core::Relationship CallbackProcessor::Success("success", "All files are routed to success");
-const core::Relationship CallbackProcessor::Failure("failure", "Failed files (based on callback logic) are transferred to failure");
+namespace org::apache::nifi::minifi::processors {
 
 void CallbackProcessor::initialize() {
-  setSupportedRelationships(relationships());
+  setSupportedRelationships(Relationships);
 }
 
-void CallbackProcessor::onSchedule(core::ProcessContext *context, core::ProcessSessionFactory* /*sessionFactory*/) {
+void CallbackProcessor::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory&) {
   if (onschedule_callback_ != nullptr) {
-    onschedule_callback_(context);
+    onschedule_callback_(&context);
   }
 }
 
-void CallbackProcessor::onTrigger(core::ProcessContext *context, core::ProcessSession *session) {
+void CallbackProcessor::onTrigger(core::ProcessContext& context, core::ProcessSession& session) {
  if (ontrigger_callback_ != nullptr) {
-   ontrigger_callback_(session, context);
+   ontrigger_callback_(&session, &context);
  }
 }
 
 REGISTER_RESOURCE(CallbackProcessor, Processor);
 
-} /* namespace processors */
-} /* namespace minifi */
-} /* namespace nifi */
-} /* namespace apache */
-} /* namespace org */
+}  // namespace org::apache::nifi::minifi::processors

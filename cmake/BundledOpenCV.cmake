@@ -98,7 +98,6 @@ function(use_bundled_opencv SOURCE_DIR BINARY_DIR)
             "-DWITH_OPENJPEG=OFF"
             "-DWITH_TIFF=OFF"
             "-DWITH_CAROTENE=OFF"
-            "-DCMAKE_CXX_STANDARD=17"  # OpenCV fails to build in C++20 mode on Clang-14
     )
 
     append_third_party_passthrough_args(OPENCV_CMAKE_ARGS "${OPENCV_CMAKE_ARGS}")
@@ -106,8 +105,8 @@ function(use_bundled_opencv SOURCE_DIR BINARY_DIR)
     # Build project
     ExternalProject_Add(
             opencv-external
-            GIT_REPOSITORY "https://github.com/opencv/opencv.git"
-            GIT_TAG "4.5.5"
+            URL "https://github.com/opencv/opencv/archive/refs/tags/4.7.0.tar.gz"
+            URL_HASH "SHA256=8df0079cdbe179748a18d44731af62a245a45ebf5085223dc03133954c662973"
             SOURCE_DIR "${BINARY_DIR}/thirdparty/opencv-src"
             CMAKE_ARGS ${OPENCV_CMAKE_ARGS}
             BUILD_BYPRODUCTS "${BYPRODUCTS}"
@@ -211,5 +210,7 @@ function(use_bundled_opencv SOURCE_DIR BINARY_DIR)
 
     add_library(OPENCV::libopencv INTERFACE IMPORTED)
     target_link_libraries(OPENCV::libopencv INTERFACE OPENCV::libopencv-flann OPENCV::libopencv-dnn OPENCV::libopencv-objdetect OPENCV::libopencv-core OPENCV::libopencv-gapi OPENCV::libopencv-imgcodecs OPENCV::libopencv-calib3d OPENCV::libopencv-imgproc OPENCV::libopencv-photo OPENCV::libopencv-videoio OPENCV::libopencv-video OPENCV::libopencv-stitching OPENCV::libopencv-features2d)
-
+    if (APPLE)
+        target_link_libraries(OPENCV::libopencv INTERFACE "-framework AVFoundation" "-framework CoreFoundation" "-framework CoreGraphics" "-framework CoreMedia" "-framework CoreVideo" "-framework Foundation" "-framework OpenCL" "-framework Accelerate")
+    endif()
 endfunction(use_bundled_opencv)

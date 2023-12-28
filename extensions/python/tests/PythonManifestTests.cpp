@@ -25,6 +25,7 @@
 #include "flow-tests/TestControllerWithFlow.h"
 #include "EmptyFlow.h"
 #include "c2/C2MetricsPublisher.h"
+#include "utils/gsl.h"
 
 using minifi::state::response::SerializedResponseNode;
 
@@ -40,13 +41,13 @@ const SerializedResponseNode& getNode(const std::vector<SerializedResponseNode>&
   for (auto& node : nodes) {
     if (node.name == name) return node;
   }
-  assert(false);
+  gsl_FailFast();
 }
 
 TEST_CASE("Python processor's description is part of the manifest") {
   TestControllerWithFlow controller(empty_flow, false /* DEFER FLOW SETUP */);
 
-  auto python_dir = std::filesystem::path(controller.configuration_->getHome()) / "minifi-python";
+  auto python_dir = controller.configuration_->getHome() / "minifi-python";
   utils::file::create_dir(python_dir);
   std::ofstream{python_dir / "MyPyProc.py"} <<
     "def describe(proc):\n"

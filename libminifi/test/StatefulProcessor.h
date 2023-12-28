@@ -30,16 +30,16 @@ class StatefulProcessor : public core::Processor {
   using core::Processor::Processor;
 
   static constexpr const char* Description = "A processor with state for test purposes.";
-  static auto properties() { return std::array<core::Property, 0>{}; }
-  static auto relationships() { return std::array<core::Relationship, 0>{}; }
+  static constexpr auto Properties = std::array<core::PropertyReference, 0>{};
+  static constexpr auto Relationships = std::array<core::RelationshipDefinition, 0>{};
   static constexpr bool SupportsDynamicProperties = false;
   static constexpr bool SupportsDynamicRelationships = false;
   static constexpr core::annotation::Input InputRequirement = core::annotation::Input::INPUT_ALLOWED;
   static constexpr bool IsSingleThreaded = false;
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  void onSchedule(const std::shared_ptr<core::ProcessContext>& context, const std::shared_ptr<core::ProcessSessionFactory>&) override;
-  void onTrigger(const std::shared_ptr<core::ProcessContext>&, const std::shared_ptr<core::ProcessSession>&) override;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& session_factory) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
 
   using HookType = std::function<void(core::StateManager&)>;
   void setHooks(HookType onScheduleHook, std::vector<HookType> onTriggerHooks);

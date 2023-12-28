@@ -23,7 +23,6 @@
 
 #include "utils/file/FileUtils.h"
 #include "utils/StringUtils.h"
-#include "core/PropertyBuilder.h"
 #include "core/Resource.h"
 
 namespace {
@@ -50,24 +49,6 @@ namespace {
 }  // namespace
 
 namespace org::apache::nifi::minifi::controllers {
-
-const core::Property PersistentMapStateStorage::AlwaysPersist(
-    core::PropertyBuilder::createProperty(ALWAYS_PERSIST_PROPERTY_NAME)
-    ->withDescription("Persist every change instead of persisting it periodically.")
-    ->isRequired(false)
-    ->withDefaultValue<bool>(false)
-    ->build());
-const core::Property PersistentMapStateStorage::AutoPersistenceInterval(
-    core::PropertyBuilder::createProperty(AUTO_PERSISTENCE_INTERVAL_PROPERTY_NAME)
-    ->withDescription("The interval of the periodic task persisting all values. Only used if Always Persist is false. If set to 0 seconds, auto persistence will be disabled.")
-    ->isRequired(false)
-    ->withDefaultValue<core::TimePeriodValue>("1 min")
-    ->build());
-const core::Property PersistentMapStateStorage::File(
-    core::PropertyBuilder::createProperty("File")
-    ->withDescription("Path to a file to store state")
-    ->isRequired(true)
-    ->build());
 
 PersistentMapStateStorage::PersistentMapStateStorage(const std::string& name, const utils::Identifier& uuid /*= utils::Identifier()*/)
     : KeyValueStateStorage(name, uuid) {
@@ -102,7 +83,7 @@ bool PersistentMapStateStorage::parseLine(const std::string& line, std::string& 
           current << '=';
           break;
         default:
-          logger_->log_error(R"(Invalid escape sequence in "%s": "\%c")", line.c_str(), c);
+          logger_->log_error(R"(Invalid escape sequence in "{}": "\{}")", line.c_str(), c);
           return false;
       }
       in_escape_sequence = false;
@@ -111,7 +92,7 @@ bool PersistentMapStateStorage::parseLine(const std::string& line, std::string& 
         in_escape_sequence = true;
       } else if (c == '=') {
         if (key_complete) {
-          logger_->log_error(R"(Unterminated '=' in line "%s")", line.c_str());
+          logger_->log_error(R"(Unterminated '=' in line "{}")", line.c_str());
           return false;
         } else {
           key_complete = true;
@@ -122,16 +103,16 @@ bool PersistentMapStateStorage::parseLine(const std::string& line, std::string& 
     }
   }
   if (in_escape_sequence) {
-    logger_->log_error("Unterminated escape sequence in \"%s\"", line.c_str());
+    logger_->log_error("Unterminated escape sequence in \"{}\"", line.c_str());
     return false;
   }
   if (!key_complete) {
-    logger_->log_error("Key not found in \"%s\"", line.c_str());
+    logger_->log_error("Key not found in \"{}\"", line.c_str());
     return false;
   }
   key = key_ss.str();
   if (key.empty()) {
-    logger_->log_error(R"(Line with empty key found in "%s": "%s")", file_.c_str(), line.c_str());
+    logger_->log_error(R"(Line with empty key found in "{}": "{}")", file_.c_str(), line.c_str());
     return false;
   }
   value = value_ss.str();
@@ -141,7 +122,7 @@ bool PersistentMapStateStorage::parseLine(const std::string& line, std::string& 
 void PersistentMapStateStorage::initialize() {
   // VolatileMapStateStorage::initialize() also calls setSupportedProperties, and we don't want that
   ControllerService::initialize();  // NOLINT(bugprone-parent-virtual-call)
-  setSupportedProperties(properties());
+  setSupportedProperties(Properties);
 }
 
 void PersistentMapStateStorage::onEnable() {
@@ -150,13 +131,13 @@ void PersistentMapStateStorage::onEnable() {
     return;
   }
 
-  const auto always_persist = getProperty<bool>(AlwaysPersist.getName()).value_or(false);
-  logger_->log_info("Always Persist property: %s", always_persist ? "true" : "false");
+  const auto always_persist = getProperty<bool>(AlwaysPersist).value_or(false);
+  logger_->log_info("Always Persist property: {}", always_persist);
 
-  const auto auto_persistence_interval = getProperty<core::TimePeriodValue>(AutoPersistenceInterval.getName()).value_or(core::TimePeriodValue{}).getMilliseconds();
-  logger_->log_info("Auto Persistence Interval property: %" PRId64 " ms", auto_persistence_interval.count());
+  const auto auto_persistence_interval = getProperty<core::TimePeriodValue>(AutoPersistenceInterval).value_or(core::TimePeriodValue{}).getMilliseconds();
+  logger_->log_info("Auto Persistence Interval property: {}", auto_persistence_interval);
 
-  if (!getProperty(File.getName(), file_)) {
+  if (!getProperty(File, file_)) {
     logger_->log_error("Invalid or missing property: File");
     return;
   }
@@ -224,7 +205,7 @@ bool PersistentMapStateStorage::persistNonVirtual() {
   std::lock_guard<std::mutex> lock(mutex_);
   std::ofstream ofs(file_);
   if (!ofs.is_open()) {
-    logger_->log_error("Failed to open file \"%s\" to store state", file_.c_str());
+    logger_->log_error("Failed to open file \"{}\" to store state", file_.c_str());
     return false;
   }
   std::unordered_map<std::string, std::string> storage_copy;
@@ -245,7 +226,7 @@ bool PersistentMapStateStorage::load() {
   std::lock_guard<std::mutex> lock(mutex_);
   std::ifstream ifs(file_);
   if (!ifs.is_open()) {
-    logger_->log_debug("Failed to open file \"%s\" to load state", file_.c_str());
+    logger_->log_debug("Failed to open file \"{}\" to load state", file_.c_str());
     return false;
   }
   std::unordered_map<std::string, std::string> map;
@@ -261,11 +242,11 @@ bool PersistentMapStateStorage::load() {
       try {
         format_version = std::stoi(value);
       } catch (...) {
-        logger_->log_error(R"(Invalid format version number found in "%s": "%s")", file_.c_str(), value.c_str());
+        logger_->log_error(R"(Invalid format version number found in "{}": "{}")", file_.c_str(), value.c_str());
         return false;
       }
       if (format_version > FORMAT_VERSION) {
-        logger_->log_error("\"%s\" has been serialized with a larger format version than currently known: %d > %d", file_.c_str(), format_version, FORMAT_VERSION);
+        logger_->log_error("\"{}\" has been serialized with a larger format version than currently known: {} > {}", file_.c_str(), format_version, FORMAT_VERSION);
         return false;
       }
     } else {
@@ -274,7 +255,7 @@ bool PersistentMapStateStorage::load() {
   }
 
   storage_ = InMemoryKeyValueStorage{std::move(map)};
-  logger_->log_debug("Loaded state from \"%s\"", file_.c_str());
+  logger_->log_debug("Loaded state from \"{}\"", file_.c_str());
   return true;
 }
 

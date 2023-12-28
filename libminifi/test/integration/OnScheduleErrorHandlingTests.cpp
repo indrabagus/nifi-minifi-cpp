@@ -23,7 +23,6 @@
 #include "core/Scheduling.h"
 #include "core/state/ProcessorController.h"
 #include "../TestBase.h"
-#include "../Catch.h"
 #include "../../../extensions/test-processors/KamikazeProcessor.h"
 #include "utils/StringUtils.h"
 #include "utils/IntegrationTestUtils.h"
@@ -40,7 +39,7 @@ class KamikazeErrorHandlingTests : public IntegrationBase {
       const int occurrences = result.second;
       return 1 < occurrences;
     }));
-    flowController_->updatePropertyValue("kamikaze", minifi::processors::KamikazeProcessor::ThrowInOnSchedule.getName(), "false");
+    flowController_->updatePropertyValue("kamikaze", std::string(minifi::processors::KamikazeProcessor::ThrowInOnSchedule.name), "false");
 
     const std::vector<std::string> must_appear_byorder_msgs = {minifi::processors::KamikazeProcessor::OnUnScheduleLogStr,
                                                  minifi::processors::KamikazeProcessor::OnScheduleLogStr,
@@ -69,6 +68,7 @@ class KamikazeErrorHandlingTests : public IntegrationBase {
     LogTestController::getInstance().setDebug<core::Processor>();
     LogTestController::getInstance().setDebug<core::ProcessSession>();
     LogTestController::getInstance().setDebug<minifi::processors::KamikazeProcessor>();
+    configuration->set(minifi::Configure::nifi_administrative_yield_duration, "100 ms");
   }
 };
 
@@ -110,6 +110,7 @@ class EventDriverScheduleErrorHandlingTests: public IntegrationBase {
 
   void testSetup() override {
     LogTestController::getInstance().setDebug<core::ProcessGroup>();
+    configuration->set(minifi::Configure::nifi_administrative_yield_duration, "100 ms");
   }
 };
 

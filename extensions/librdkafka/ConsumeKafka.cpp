@@ -21,7 +21,7 @@
 #include <limits>
 
 #include "core/ProcessSession.h"
-#include "core/PropertyValidation.h"
+#include "core/PropertyType.h"
 #include "core/Resource.h"
 #include "FlowFileRecord.h"
 #include "utils/ProcessorConfigUtils.h"
@@ -33,41 +33,39 @@ namespace org::apache::nifi::minifi {
 namespace core {
 // The upper limit for Max Poll Time is 4 seconds. This is because Watchdog would potentially start
 // reporting issues with the processor health otherwise
-ValidationResult ConsumeKafkaMaxPollTimeValidator::validate(const std::string& subject, const std::string& input) const {
+ValidationResult ConsumeKafkaMaxPollTimePropertyType::validate(const std::string& subject, const std::string& input) const {
   auto parsed_value = utils::timeutils::StringToDuration<std::chrono::milliseconds>(input);
-  return ValidationResult::Builder::createBuilder().withSubject(subject).withInput(input).isValid(
-      parsed_value.has_value() &&
-      0ms < *parsed_value && *parsed_value <= 4s).build();
+  bool is_valid = parsed_value.has_value() && 0ms < *parsed_value && *parsed_value <= 4s;
+  return ValidationResult{.valid = is_valid, .subject = subject, .input = input};
 }
 }  // namespace core
 
 namespace processors {
 
 void ConsumeKafka::initialize() {
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
-void ConsumeKafka::onSchedule(core::ProcessContext* context, core::ProcessSessionFactory* /* sessionFactory */) {
-  gsl_Expects(context);
+void ConsumeKafka::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory&) {
   // Required properties
-  kafka_brokers_                = utils::getRequiredPropertyOrThrow(*context, KafkaBrokers.getName());
-  topic_names_                  = utils::listFromRequiredCommaSeparatedProperty(*context, TopicNames.getName());
-  topic_name_format_            = utils::getRequiredPropertyOrThrow(*context, TopicNameFormat.getName());
-  honor_transactions_           = utils::parseBooleanPropertyOrThrow(*context, HonorTransactions.getName());
-  group_id_                     = utils::getRequiredPropertyOrThrow(*context, GroupID.getName());
-  offset_reset_                 = utils::getRequiredPropertyOrThrow(*context, OffsetReset.getName());
-  key_attribute_encoding_       = utils::getRequiredPropertyOrThrow(*context, KeyAttributeEncoding.getName());
-  max_poll_time_milliseconds_   = utils::parseTimePropertyMSOrThrow(*context, MaxPollTime.getName());
-  session_timeout_milliseconds_ = utils::parseTimePropertyMSOrThrow(*context, SessionTimeout.getName());
+  kafka_brokers_                = utils::getRequiredPropertyOrThrow(context, KafkaBrokers.name);
+  topic_names_                  = utils::listFromRequiredCommaSeparatedProperty(context, TopicNames.name);
+  topic_name_format_            = utils::getRequiredPropertyOrThrow(context, TopicNameFormat.name);
+  honor_transactions_           = utils::parseBooleanPropertyOrThrow(context, HonorTransactions.name);
+  group_id_                     = utils::getRequiredPropertyOrThrow(context, GroupID.name);
+  offset_reset_                 = utils::getRequiredPropertyOrThrow(context, OffsetReset.name);
+  key_attribute_encoding_       = utils::getRequiredPropertyOrThrow(context, KeyAttributeEncoding.name);
+  max_poll_time_milliseconds_   = utils::parseTimePropertyMSOrThrow(context, MaxPollTime.name);
+  session_timeout_milliseconds_ = utils::parseTimePropertyMSOrThrow(context, SessionTimeout.name);
 
   // Optional properties
-  context->getProperty(MessageDemarcator.getName(), message_demarcator_);
-  context->getProperty(MessageHeaderEncoding.getName(), message_header_encoding_);
-  context->getProperty(DuplicateHeaderHandling.getName(), duplicate_header_handling_);
+  context.getProperty(MessageDemarcator, message_demarcator_);
+  context.getProperty(MessageHeaderEncoding, message_header_encoding_);
+  context.getProperty(DuplicateHeaderHandling, duplicate_header_handling_);
 
-  headers_to_add_as_attributes_ = utils::listFromCommaSeparatedProperty(*context, HeadersToAddAsAttributes.getName());
-  max_poll_records_ = gsl::narrow<std::size_t>(context->getProperty<uint64_t>(MaxPollRecords).value_or(DEFAULT_MAX_POLL_RECORDS));
+  headers_to_add_as_attributes_ = utils::listFromCommaSeparatedProperty(context, HeadersToAddAsAttributes.name);
+  max_poll_records_ = gsl::narrow<std::size_t>(context.getProperty<uint64_t>(MaxPollRecords).value_or(core::StandardPropertyTypes::UNSIGNED_LONG_TYPE.parse(DEFAULT_MAX_POLL_RECORDS)));
 
   if (!utils::StringUtils::equalsIgnoreCase(KEY_ATTR_ENCODING_UTF_8, key_attribute_encoding_) && !utils::StringUtils::equalsIgnoreCase(KEY_ATTR_ENCODING_HEX, key_attribute_encoding_)) {
     throw Exception(PROCESS_SCHEDULE_EXCEPTION, "Unsupported key attribute encoding: " + key_attribute_encoding_);
@@ -77,7 +75,7 @@ void ConsumeKafka::onSchedule(core::ProcessContext* context, core::ProcessSessio
     throw Exception(PROCESS_SCHEDULE_EXCEPTION, "Unsupported message header encoding: " + key_attribute_encoding_);
   }
 
-  configure_new_connection(*context);
+  configure_new_connection(context);
 }
 
 namespace {
@@ -105,16 +103,16 @@ void rebalance_cb(rd_kafka_t* rk, rd_kafka_resp_err_t trigger, rd_kafka_topic_pa
       break;
 
     default:
-      logger->log_debug("failed: %s", rd_kafka_err2str(trigger));
+      logger->log_debug("failed: {}", rd_kafka_err2str(trigger));
       assign_error = rd_kafka_assign(rk, nullptr);
       break;
   }
-  logger->log_debug("assign failure: %s", rd_kafka_err2str(assign_error));
+  logger->log_debug("assign failure: {}", rd_kafka_err2str(assign_error));
 }
 }  // namespace
 
 void ConsumeKafka::create_topic_partition_list() {
-  kf_topic_partition_list_ = { rd_kafka_topic_partition_list_new(topic_names_.size()), utils::rd_kafka_topic_partition_list_deleter() };
+  kf_topic_partition_list_ = { rd_kafka_topic_partition_list_new(gsl::narrow<int>(topic_names_.size())), utils::rd_kafka_topic_partition_list_deleter() };
 
   // On subscriptions any topics prefixed with ^ will be regex matched
   if (utils::StringUtils::equalsIgnoreCase(TOPIC_FORMAT_PATTERNS, topic_name_format_)) {
@@ -134,7 +132,7 @@ void ConsumeKafka::create_topic_partition_list() {
   // This might happen until the cross-overship between processors and connections are settled
   rd_kafka_resp_err_t subscribe_response = rd_kafka_subscribe(consumer_.get(), kf_topic_partition_list_.get());
   if (RD_KAFKA_RESP_ERR_NO_ERROR != subscribe_response) {
-    logger_->log_error("rd_kafka_subscribe error %d: %s", subscribe_response, rd_kafka_err2str(subscribe_response));
+    logger_->log_error("rd_kafka_subscribe error {}: {}", magic_enum::enum_underlying(subscribe_response), rd_kafka_err2str(subscribe_response));
   }
 }
 
@@ -145,11 +143,11 @@ void ConsumeKafka::extend_config_from_dynamic_properties(const core::ProcessCont
   if (dynamic_prop_keys.empty()) {
     return;
   }
-  logger_->log_info("Loading %d extra kafka configuration fields from ConsumeKafka dynamic properties:", dynamic_prop_keys.size());
+  logger_->log_info("Loading {} extra kafka configuration fields from ConsumeKafka dynamic properties:", dynamic_prop_keys.size());
   for (const std::string& key : dynamic_prop_keys) {
     std::string value;
     gsl_Expects(context.getDynamicProperty(key, value));
-    logger_->log_info("%s: %s", key.c_str(), value.c_str());
+    logger_->log_info("{}: {}", key.c_str(), value.c_str());
     setKafkaConfigurationField(*conf_, key, value);
   }
 }
@@ -212,7 +210,7 @@ void ConsumeKafka::configure_new_connection(core::ProcessContext& context) {
 
   rd_kafka_resp_err_t poll_set_consumer_response = rd_kafka_poll_set_consumer(consumer_.get());
   if (RD_KAFKA_RESP_ERR_NO_ERROR != poll_set_consumer_response) {
-    logger_->log_error("rd_kafka_poll_set_consumer error %d: %s", poll_set_consumer_response, rd_kafka_err2str(poll_set_consumer_response));
+    logger_->log_error("rd_kafka_poll_set_consumer error {}: {}", magic_enum::enum_underlying(poll_set_consumer_response), rd_kafka_err2str(poll_set_consumer_response));
   }
 }
 
@@ -229,14 +227,14 @@ std::vector<std::unique_ptr<rd_kafka_message_t, utils::rd_kafka_message_deleter>
   const auto start = std::chrono::steady_clock::now();
   auto elapsed = std::chrono::steady_clock::now() - start;
   while (messages.size() < max_poll_records_ && elapsed < max_poll_time_milliseconds_) {
-    logger_->log_debug("Polling for new messages for %d milliseconds...", max_poll_time_milliseconds_.count());
-    std::unique_ptr<rd_kafka_message_t, utils::rd_kafka_message_deleter>
-      message { rd_kafka_consumer_poll(consumer_.get(), std::chrono::duration_cast<std::chrono::milliseconds>(max_poll_time_milliseconds_ - elapsed).count()), utils::rd_kafka_message_deleter() };
+    logger_->log_debug("Polling for new messages for {}...", max_poll_time_milliseconds_);
+    const auto timeout_ms = gsl::narrow<int>(std::chrono::duration_cast<std::chrono::milliseconds>(max_poll_time_milliseconds_ - elapsed).count());
+    std::unique_ptr<rd_kafka_message_t, utils::rd_kafka_message_deleter> message{rd_kafka_consumer_poll(consumer_.get(), timeout_ms)};
     if (!message) {
       break;
     }
     if (RD_KAFKA_RESP_ERR_NO_ERROR != message->err) {
-      logger_->log_error("Received message with error %d: %s", message->err, rd_kafka_err2str(message->err));
+      logger_->log_error("Received message with error {}: {}", magic_enum::enum_underlying(message->err), rd_kafka_err2str(message->err));
       break;
     }
     utils::print_kafka_message(*message, *logger_);
@@ -282,25 +280,25 @@ std::string ConsumeKafka::resolve_duplicate_headers(const std::vector<std::strin
 std::vector<std::string> ConsumeKafka::get_matching_headers(const rd_kafka_message_t& message, const std::string& header_name) const {
   // Headers fetched this way are freed when rd_kafka_message_destroy is called
   // Detaching them using rd_kafka_message_detach_headers does not seem to work
-  rd_kafka_headers_t* headers_raw;
+  rd_kafka_headers_t* headers_raw = nullptr;
   const rd_kafka_resp_err_t get_header_response = rd_kafka_message_headers(&message, &headers_raw);
   if (RD_KAFKA_RESP_ERR__NOENT == get_header_response) {
     return {};
   }
   if (RD_KAFKA_RESP_ERR_NO_ERROR != get_header_response) {
-    logger_->log_error("Failed to fetch message headers: %d: %s", rd_kafka_last_error(), rd_kafka_err2str(rd_kafka_last_error()));
+    logger_->log_error("Failed to fetch message headers: {}: {}", magic_enum::enum_underlying(rd_kafka_last_error()), rd_kafka_err2str(rd_kafka_last_error()));
   }
   std::vector<std::string> matching_headers;
   for (std::size_t header_idx = 0;; ++header_idx) {
-    const char* value;  // Not to be freed
-    std::size_t size;
-    if (RD_KAFKA_RESP_ERR_NO_ERROR != rd_kafka_header_get(headers_raw, header_idx, header_name.c_str(), (const void**)(&value), &size)) {
+    const char* value = nullptr;  // Not to be freed
+    std::size_t size = 0;
+    if (RD_KAFKA_RESP_ERR_NO_ERROR != rd_kafka_header_get(headers_raw, header_idx, header_name.c_str(), reinterpret_cast<const void**>(&value), &size)) {
       break;
     }
     if (size < 200) {
-      logger_->log_debug("%.*s", static_cast<int>(size), value);
+      logger_->log_debug("{:.{}}", value, size);
     } else {
-      logger_->log_debug("%.*s...", 200, value);
+      logger_->log_debug("{:.{}}...", value, 200);
     }
     matching_headers.emplace_back(value, size);
   }
@@ -374,12 +372,12 @@ void ConsumeKafka::process_pending_messages(core::ProcessSession& session) {
   pending_messages_.clear();
 }
 
-void ConsumeKafka::onTrigger(core::ProcessContext* /* context */, core::ProcessSession* session) {
+void ConsumeKafka::onTrigger(core::ProcessContext&, core::ProcessSession& session) {
   std::unique_lock<std::mutex> lock(do_not_call_on_trigger_concurrently_);
   logger_->log_debug("ConsumeKafka onTrigger");
 
   if (!pending_messages_.empty()) {
-    process_pending_messages(*session);
+    process_pending_messages(session);
     return;
   }
 
@@ -387,8 +385,10 @@ void ConsumeKafka::onTrigger(core::ProcessContext* /* context */, core::ProcessS
   if (pending_messages_.empty()) {
     return;
   }
-  process_pending_messages(*session);
+  process_pending_messages(session);
 }
+
+REGISTER_RESOURCE(ConsumeKafka, Processor);
 
 }  // namespace processors
 }  // namespace org::apache::nifi::minifi

@@ -26,100 +26,48 @@
 #include <utility>
 #include <vector>
 
-#include "core/PropertyBuilder.h"
 #include "core/Resource.h"
 #include "utils/gsl.h"
 
 namespace org::apache::nifi::minifi::processors {
 
-const uint64_t ListenHTTP::DEFAULT_BUFFER_SIZE = 20000;
-
-const core::Property ListenHTTP::BasePath(
-    core::PropertyBuilder::createProperty("Base Path")
-        ->withDescription("Base path for incoming connections")
-        ->isRequired(false)
-        ->withDefaultValue<std::string>("contentListener")->build());
-
-const core::Property ListenHTTP::Port(
-    core::PropertyBuilder::createProperty("Listening Port")
-        ->withDescription("The Port to listen on for incoming connections. 0 means port is going to be selected randomly.")
-        ->isRequired(true)
-        ->withDefaultValue<int>(80, core::StandardValidators::LISTEN_PORT_VALIDATOR)->build());
-
-const core::Property ListenHTTP::AuthorizedDNPattern("Authorized DN Pattern", "A Regular Expression to apply against the Distinguished Name of incoming"
-                                               " connections. If the Pattern does not match the DN, the connection will be refused.",
-                                               ".*");
-const core::Property ListenHTTP::SSLCertificate("SSL Certificate", "File containing PEM-formatted file including TLS/SSL certificate and key", "");
-const core::Property ListenHTTP::SSLCertificateAuthority("SSL Certificate Authority", "File containing trusted PEM-formatted certificates", "");
-
-const core::Property ListenHTTP::SSLVerifyPeer(
-    core::PropertyBuilder::createProperty("SSL Verify Peer")
-        ->withDescription("Whether or not to verify the client's certificate (yes/no)")
-        ->isRequired(false)
-        ->withAllowableValues<std::string>({"yes", "no"})
-        ->withDefaultValue("no")->build());
-
-const core::Property ListenHTTP::SSLMinimumVersion(
-    core::PropertyBuilder::createProperty("SSL Minimum Version")
-        ->withDescription("Minimum TLS/SSL version allowed (TLS1.2)")
-        ->isRequired(false)
-        ->withAllowableValues<std::string>({"TLS1.2"})
-        ->withDefaultValue("TLS1.2")->build());
-
-const core::Property ListenHTTP::HeadersAsAttributesRegex("HTTP Headers to receive as Attributes (Regex)", "Specifies the Regular Expression that determines the names of HTTP Headers that"
-                                                    " should be passed along as FlowFile attributes",
-                                                    "");
-
-const core::Property ListenHTTP::BatchSize(
-    core::PropertyBuilder::createProperty("Batch Size")
-        ->withDescription("Maximum number of buffered requests to be processed in a single batch. If set to zero all buffered requests are processed.")
-        ->withDefaultValue<uint64_t>(ListenHTTP::DEFAULT_BUFFER_SIZE)->build());
-
-const core::Property ListenHTTP::BufferSize(
-    core::PropertyBuilder::createProperty("Buffer Size")
-        ->withDescription("Maximum number of HTTP Requests allowed to be buffered before processing them when the processor is triggered. "
-                          "If the buffer full, the request is refused. If set to zero the buffer is unlimited.")
-        ->withDefaultValue<uint64_t>(ListenHTTP::DEFAULT_BUFFER_SIZE)->build());
-
-const core::Relationship ListenHTTP::Success("success", "All files are routed to success");
-
 void ListenHTTP::initialize() {
   logger_->log_trace("Initializing ListenHTTP");
 
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
-void ListenHTTP::onSchedule(core::ProcessContext *context, core::ProcessSessionFactory* /*sessionFactory*/) {
+void ListenHTTP::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory&) {
   std::string basePath;
 
-  if (!context->getProperty(BasePath.getName(), basePath)) {
-    logger_->log_info("%s attribute is missing, so default value of %s will be used", BasePath.getName(), BasePath.getValue().to_string());
-    basePath = BasePath.getValue().to_string();
+  if (!context.getProperty(BasePath, basePath)) {
+    static_assert(BasePath.default_value);
+    logger_->log_info("{} attribute is missing, so default value of {} will be used", BasePath.name, *BasePath.default_value);
+    basePath = *BasePath.default_value;
   }
 
   basePath.insert(0, "/");
 
-
-  if (!context->getProperty(Port.getName(), listeningPort)) {
-    logger_->log_error("%s attribute is missing or invalid", Port.getName());
+  if (!context.getProperty(Port, listeningPort)) {
+    logger_->log_error("{} attribute is missing or invalid", Port.name);
     return;
   }
 
   bool randomPort = listeningPort == "0";
 
   std::string authDNPattern;
-  if (context->getProperty(AuthorizedDNPattern.getName(), authDNPattern) && !authDNPattern.empty()) {
-    logger_->log_debug("ListenHTTP using %s: %s", AuthorizedDNPattern.getName(), authDNPattern);
+  if (context.getProperty(AuthorizedDNPattern, authDNPattern) && !authDNPattern.empty()) {
+    logger_->log_debug("ListenHTTP using {}: {}", AuthorizedDNPattern.name, authDNPattern);
   } else {
     authDNPattern = ".*";
-    logger_->log_debug("Authorized DN Pattern not set or invalid, using default '%s' pattern", authDNPattern);
+    logger_->log_debug("Authorized DN Pattern not set or invalid, using default '{}' pattern", authDNPattern);
   }
 
   std::string sslCertFile;
 
-  if (context->getProperty(SSLCertificate.getName(), sslCertFile) && !sslCertFile.empty()) {
-    logger_->log_debug("ListenHTTP using %s: %s", SSLCertificate.getName(), sslCertFile);
+  if (context.getProperty(SSLCertificate, sslCertFile) && !sslCertFile.empty()) {
+    logger_->log_debug("ListenHTTP using {}: {}", SSLCertificate.name, sslCertFile);
   }
 
   // Read further TLS/SSL options only if TLS/SSL usage is implied by virtue of certificate value being set
@@ -128,11 +76,11 @@ void ListenHTTP::onSchedule(core::ProcessContext *context, core::ProcessSessionF
   std::string sslMinVer;
 
   if (!sslCertFile.empty()) {
-    if (context->getProperty(SSLCertificateAuthority.getName(), sslCertAuthorityFile) && !sslCertAuthorityFile.empty()) {
-      logger_->log_debug("ListenHTTP using %s: %s", SSLCertificateAuthority.getName(), sslCertAuthorityFile);
+    if (context.getProperty(SSLCertificateAuthority, sslCertAuthorityFile) && !sslCertAuthorityFile.empty()) {
+      logger_->log_debug("ListenHTTP using {}: {}", SSLCertificateAuthority.name, sslCertAuthorityFile);
     }
 
-    if (context->getProperty(SSLVerifyPeer.getName(), sslVerifyPeer)) {
+    if (context.getProperty(SSLVerifyPeer, sslVerifyPeer)) {
       if (sslVerifyPeer.empty() || sslVerifyPeer == "no") {
         logger_->log_debug("ListenHTTP will not verify peers");
       } else {
@@ -142,20 +90,20 @@ void ListenHTTP::onSchedule(core::ProcessContext *context, core::ProcessSessionF
       logger_->log_debug("ListenHTTP will not verify peers");
     }
 
-    if (context->getProperty(SSLMinimumVersion.getName(), sslMinVer)) {
-      logger_->log_debug("ListenHTTP using %s: %s", SSLMinimumVersion.getName(), sslMinVer);
+    if (context.getProperty(SSLMinimumVersion, sslMinVer)) {
+      logger_->log_debug("ListenHTTP using {}: {}", SSLMinimumVersion.name, sslMinVer);
     }
   }
 
   std::string headersAsAttributesPattern;
 
-  if (context->getProperty(HeadersAsAttributesRegex.getName(), headersAsAttributesPattern) && !headersAsAttributesPattern.empty()) {
-    logger_->log_debug("ListenHTTP using %s: %s", HeadersAsAttributesRegex.getName(), headersAsAttributesPattern);
+  if (context.getProperty(HeadersAsAttributesRegex, headersAsAttributesPattern) && !headersAsAttributesPattern.empty()) {
+    logger_->log_debug("ListenHTTP using {}: {}", HeadersAsAttributesRegex.name, headersAsAttributesPattern);
   }
 
   auto numThreads = getMaxConcurrentTasks();
 
-  logger_->log_info("ListenHTTP starting HTTP server on port %s and path %s with %d threads", randomPort ? "random" : listeningPort, basePath, numThreads);
+  logger_->log_info("ListenHTTP starting HTTP server on port {} and path {} with {} threads", randomPort ? "random" : listeningPort, basePath, numThreads);
 
   // Initialize web server
   std::vector<std::string> options;
@@ -200,10 +148,10 @@ void ListenHTTP::onSchedule(core::ProcessContext *context, core::ProcessSessionF
 
   server_ = std::make_unique<CivetServer>(options, &callbacks_, &logger_);
 
-  context->getProperty(BatchSize.getName(), batch_size_);
-  logger_->log_debug("ListenHTTP using %s: %zu", BatchSize.getName(), batch_size_);
+  context.getProperty(BatchSize, batch_size_);
+  logger_->log_debug("ListenHTTP using {}: {}", BatchSize.name, batch_size_);
 
-  handler_ = std::make_unique<Handler>(basePath, context, std::move(authDNPattern),
+  handler_ = std::make_unique<Handler>(basePath, &context, std::move(authDNPattern),
     headersAsAttributesPattern.empty() ? std::nullopt : std::make_optional<utils::Regex>(headersAsAttributesPattern));
   server_->addHandler(basePath, handler_.get());
 
@@ -217,18 +165,17 @@ void ListenHTTP::onSchedule(core::ProcessContext *context, core::ProcessSessionF
       if (is_secure) {
         listeningPort += "s";
       }
-      logger_->log_info("Listening on port %s", listeningPort);
+      logger_->log_info("Listening on port {}", listeningPort);
     }
   }
 }
 
 ListenHTTP::~ListenHTTP() = default;
 
-void ListenHTTP::onTrigger(core::ProcessContext*, core::ProcessSession* session) {
-  gsl_Expects(session);
+void ListenHTTP::onTrigger(core::ProcessContext&, core::ProcessSession& session) {
   logger_->log_trace("OnTrigger ListenHTTP");
-  const bool incoming_processed = processIncomingFlowFile(*session);
-  const bool request_processed = processRequestBuffer(*session);
+  const bool incoming_processed = processIncomingFlowFile(session);
+  const bool request_processed = processRequestBuffer(session);
   if (!incoming_processed && !request_processed) {
     yield();
   }
@@ -249,10 +196,10 @@ bool ListenHTTP::processIncomingFlowFile(core::ProcessSession &session) {
     flow_file->getAttribute("filename", response.uri);
     flow_file->getAttribute("mime.type", response.mime_type);
     if (response.mime_type.empty()) {
-      logger_->log_warn("Using default mime type of application/octet-stream for response body file: %s", response.uri);
+      logger_->log_warn("Using default mime type of application/octet-stream for response body file: {}", response.uri);
       response.mime_type = "application/octet-stream";
     }
-    response.body = to_string(session.readBuffer(flow_file));
+    response.body = session.readBuffer(flow_file).buffer;
     handler_->setResponseBody(response);
   }
 
@@ -280,7 +227,7 @@ bool ListenHTTP::processRequestBuffer(core::ProcessSession& session) {
     session.transfer(flow_file, Success);
   }
 
-  logger_->log_debug("ListenHTTP transferred %zu flow files from HTTP request buffer", flow_file_count);
+  logger_->log_debug("ListenHTTP transferred {} flow files from HTTP request buffer", flow_file_count);
   return flow_file_count > 0;
 }
 
@@ -289,8 +236,8 @@ ListenHTTP::Handler::Handler(std::string base_uri, core::ProcessContext *context
       auth_dn_regex_(std::move(auth_dn_regex)),
       headers_as_attrs_regex_(std::move(headers_as_attrs_regex)),
       process_context_(context) {
-  context->getProperty(BufferSize.getName(), buffer_size_);
-  logger_->log_debug("ListenHTTP using %s: %zu", BufferSize.getName(), buffer_size_);
+  context->getProperty(BufferSize, buffer_size_);
+  logger_->log_debug("ListenHTTP using {}: {}", BufferSize.name, buffer_size_);
 }
 
 void ListenHTTP::Handler::sendHttp500(mg_connection* const conn) {
@@ -334,7 +281,7 @@ void ListenHTTP::Handler::enqueueRequest(mg_connection *conn, const mg_request_i
   if (buffer_size_ == 0 || request_buffer_.size() < buffer_size_) {
     request_buffer_.enqueue(std::make_pair(std::move(flow_file), std::move(content_buffer)));
   } else {
-    logger_->log_warn("ListenHTTP buffer is full, '%s' request for '%s' uri was dropped", req_info->request_method, req_info->request_uri);
+    logger_->log_warn("ListenHTTP buffer is full, '{}' request for '{}' uri was dropped", req_info->request_method, req_info->request_uri);
     sendHttp503(conn);
     return;
   }
@@ -349,7 +296,7 @@ bool ListenHTTP::Handler::handlePost(CivetServer* /*server*/, struct mg_connecti
       logger_->log_error("ListenHTTP handling POST resulted in a null request");
       return false;
   }
-  logger_->log_debug("ListenHTTP handling POST request of length %lld", req_info->content_length);
+  logger_->log_debug("ListenHTTP handling POST request of length {}", req_info->content_length);
 
   if (!authRequest(conn, req_info)) {
     return true;
@@ -370,7 +317,7 @@ bool ListenHTTP::Handler::authRequest(mg_connection *conn, const mg_request_info
       mg_printf(conn, "HTTP/1.1 403 Forbidden\r\n"
                 "Content-Type: text/html\r\n"
                 "Content-Length: 0\r\n\r\n");
-      logger_->log_warn("ListenHTTP client DN not authorized: %s", req_info->client_cert->subject);
+      logger_->log_warn("ListenHTTP client DN not authorized: {}", req_info->client_cert->subject);
       authorized = false;
     }
   }
@@ -383,7 +330,7 @@ bool ListenHTTP::Handler::handleGet(CivetServer* /*server*/, struct mg_connectio
       logger_->log_error("ListenHTTP handling GET resulted in a null request");
       return false;
   }
-  logger_->log_debug("ListenHTTP handling GET request of URI %s", req_info->request_uri);
+  logger_->log_debug("ListenHTTP handling GET request of URI {}", req_info->request_uri);
 
   if (!authRequest(conn, req_info)) {
     return true;
@@ -399,7 +346,7 @@ bool ListenHTTP::Handler::handleHead(CivetServer* /*server*/, struct mg_connecti
     logger_->log_error("ListenHTTP handling HEAD resulted in a null request");
     return false;
   }
-  logger_->log_debug("ListenHTTP handling HEAD request of URI %s", req_info->request_uri);
+  logger_->log_debug("ListenHTTP handling HEAD request of URI {}", req_info->request_uri);
 
   if (!authRequest(conn, req_info)) {
     return true;
@@ -429,11 +376,11 @@ void ListenHTTP::Handler::setResponseBody(const ResponseBody& response) {
   std::lock_guard<std::mutex> guard(uri_map_mutex_);
 
   if (response.body.empty()) {
-    logger_->log_info("Unregistering response body for URI '%s'",
+    logger_->log_info("Unregistering response body for URI '{}'",
                       response.uri);
     response_uri_map_.erase(response.uri);
   } else {
-    logger_->log_info("Registering response body for URI '%s' of length %lu",
+    logger_->log_info("Registering response body for URI '{}' of length {}",
                       response.uri,
                       response.body.size());
     response_uri_map_[response.uri] = response;
@@ -449,7 +396,6 @@ void ListenHTTP::Handler::writeBody(mg_connection *conn, const mg_request_info *
 
   if (request_uri_str.size() > base_uri_.size() + 1) {
     ResponseBody response;
-
     {
       // Attempt to minimize time holding mutex (it would be nice to have a lock-free concurrent map here)
       std::lock_guard<std::mutex> guard(uri_map_mutex_);
@@ -461,7 +407,7 @@ void ListenHTTP::Handler::writeBody(mg_connection *conn, const mg_request_info *
     }
 
     if (!response.body.empty()) {
-      logger_->log_debug("Writing response body of %lu bytes for URI: %s", response.body.size(), req_info->request_uri);
+      logger_->log_debug("Writing response body of {} bytes for URI: {}", response.body.size(), req_info->request_uri);
       mg_printf(conn, "Content-type: ");
       mg_printf(conn, "%s", response.mime_type.c_str());
       mg_printf(conn, "\r\n");
@@ -469,14 +415,14 @@ void ListenHTTP::Handler::writeBody(mg_connection *conn, const mg_request_info *
       mg_printf(conn, "%s", std::to_string(response.body.size()).c_str());
       mg_printf(conn, "\r\n\r\n");
       if (include_payload) {
-        mg_printf(conn, "%s", response.body.c_str());
+        mg_write(conn, reinterpret_cast<char*>(response.body.data()), response.body.size());
       }
     } else {
-      logger_->log_debug("No response body available for URI: %s", req_info->request_uri);
+      logger_->log_debug("No response body available for URI: {}", req_info->request_uri);
       mg_printf(conn, "Content-length: 0\r\n\r\n");
     }
   } else {
-    logger_->log_debug("No response body available for URI: %s", req_info->request_uri);
+    logger_->log_debug("No response body available for URI: {}", req_info->request_uri);
     mg_printf(conn, "Content-length: 0\r\n\r\n");
   }
 }
@@ -485,25 +431,25 @@ std::unique_ptr<io::BufferStream> ListenHTTP::Handler::createContentBuffer(struc
   auto content_buffer = std::make_unique<io::BufferStream>();
   size_t nlen = 0;
   int64_t tlen = req_info->content_length;
-  uint8_t buf[16384];
+  std::array<uint8_t, 16384> buf{};
 
   // if we have no content length we should call mg_read until
   // there is no data left from the stream to be HTTP/1.1 compliant
   while (tlen == -1 || (tlen > 0 && nlen < gsl::narrow<size_t>(tlen))) {
-    auto rlen = tlen == -1 ? sizeof(buf) : gsl::narrow<size_t>(tlen) - nlen;
-    if (rlen > sizeof(buf)) {
-      rlen = sizeof(buf);
+    auto rlen = tlen == -1 ? buf.size() : gsl::narrow<size_t>(tlen) - nlen;
+    if (rlen > buf.size()) {
+      rlen = buf.size();
     }
 
     // Read a buffer of data from client
-    const auto mg_read_return = mg_read(conn, &buf[0], rlen);
+    const auto mg_read_return = mg_read(conn, buf.data(), rlen);
     if (mg_read_return <= 0) {
       break;
     }
     rlen = gsl::narrow<size_t>(mg_read_return);
 
     // Transfer buffer data to the output stream
-    content_buffer->write(&buf[0], rlen);
+    content_buffer->write(buf.data(), rlen);
 
     nlen += rlen;
   }

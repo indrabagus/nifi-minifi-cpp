@@ -18,16 +18,13 @@
 
 // loading extensions increases the baseline memory usage
 // as we measure the absolute memory usage that would fail this test
-#define EXTENSION_LIST ""
+#define EXTENSION_LIST ""  // NOLINT(cppcoreguidelines-macro-usage)
 
-#ifdef WIN32
-#include <Windows.h>
-#endif
-#include <cstring>
 #include <list>
 
 #include "utils/gsl.h"
 #include "utils/OsUtils.h"
+#include "utils/TestUtils.h"
 #include "../TestBase.h"
 #include "../Catch.h"
 #include "utils/Literals.h"
@@ -61,9 +58,9 @@ TEST_CASE("Test Physical memory usage", "[testphysicalmemoryusage]") {
   auto resource_id = content_session->create();
   auto stream = content_session->write(resource_id);
   size_t file_size = 20_MB;
-  gsl::span<const char> fragment = "well, hello there";
+  std::span<const char> fragment = "well, hello there";
   for (size_t i = 0; i < file_size / fragment.size() + 1; ++i) {
-    stream->write(fragment.as_span<const std::byte>());
+    stream->write(as_bytes(fragment));
   }
 
   using org::apache::nifi::minifi::utils::verifyEventHappenedInPollTime;
@@ -114,18 +111,10 @@ TEST_CASE("FileSystemRepository can retry removing entry that previously failed 
     REQUIRE(files.size() == 1);
     // ensure that the content is not deleted during resource claim destruction
     filename = (files[0].first / files[0].second).string();
-#ifdef WIN32
-    REQUIRE(SetFileAttributes(filename.c_str(), FILE_ATTRIBUTE_READONLY));
-#else
-    minifi::utils::file::set_permissions(dir, 0555);
-#endif
+    utils::makeFileOrDirectoryNotWritable(dir);
   }
 
-#ifdef WIN32
-  REQUIRE(SetFileAttributes(filename.c_str(), GetFileAttributes(filename.c_str()) & ~FILE_ATTRIBUTE_READONLY));
-#else
-  minifi::utils::file::set_permissions(dir, 0777);
-#endif
+  utils::makeFileOrDirectoryWritable(dir);
   REQUIRE(minifi::utils::file::list_dir_all(dir, testController.getLogger()).size() == 1);
   {
     minifi::ResourceClaim claim(content_repo);
@@ -153,18 +142,10 @@ TEST_CASE("FileSystemRepository removes non-existing resource file from purge li
     REQUIRE(files.size() == 1);
     // ensure that the content is not deleted during resource claim destruction
     filename = (files[0].first / files[0].second).string();
-#ifdef WIN32
-    REQUIRE(SetFileAttributes(filename.c_str(), FILE_ATTRIBUTE_READONLY));
-#else
-    minifi::utils::file::set_permissions(dir, 0555);
-#endif
+    utils::makeFileOrDirectoryNotWritable(dir);
   }
 
-#ifdef WIN32
-  REQUIRE(SetFileAttributes(filename.c_str(), GetFileAttributes(filename.c_str()) & ~FILE_ATTRIBUTE_READONLY));
-#else
-  minifi::utils::file::set_permissions(dir, 0777);
-#endif
+  utils::makeFileOrDirectoryWritable(dir);
   REQUIRE(std::filesystem::remove(filename));
   REQUIRE(minifi::utils::file::list_dir_all(dir, testController.getLogger()).empty());
   {

@@ -26,6 +26,9 @@
 
 #include "core/logging/LoggerConfiguration.h"
 #include "core/Processor.h"
+#include "core/PropertyDefinition.h"
+#include "core/PropertyDefinitionBuilder.h"
+#include "core/RelationshipDefinition.h"
 
 #include "rapidjson/stream.h"
 #include "rapidjson/writer.h"
@@ -57,23 +60,39 @@ class PerformanceDataMonitor : public core::Processor {
       "This Windows only processor can create FlowFiles populated with various performance data with the help of Windows Performance Counters. "
       "Windows Performance Counters provide a high-level abstraction layer with a consistent interface for collecting various kinds of system data such as CPU, memory, and disk usage statistics.";
 
-  EXTENSIONAPI static const core::Property PredefinedGroups;
-  EXTENSIONAPI static const core::Property CustomPDHCounters;
-  EXTENSIONAPI static const core::Property OutputFormatProperty;
-  EXTENSIONAPI static const core::Property OutputCompactness;
-  EXTENSIONAPI static const core::Property DecimalPlaces;
-  static auto properties() {
-    return std::array{
+  EXTENSIONAPI static constexpr auto PredefinedGroups = core::PropertyDefinitionBuilder<>::createProperty("Predefined Groups")
+      .withDescription(R"(Comma separated list from the allowable values, to monitor multiple common Windows Performance counters related to these groups (e.g. "CPU,Network"))")
+      .withDefaultValue("")
+      .build();
+  EXTENSIONAPI static constexpr auto CustomPDHCounters = core::PropertyDefinitionBuilder<>::createProperty("Custom PDH Counters")
+      .withDescription(R"(Comma separated list of Windows Performance Counters to monitor (e.g. "\\System\\Threads,\\Process(*)\\ID Process"))")
+      .withDefaultValue("")
+      .build();
+  EXTENSIONAPI static constexpr auto OutputFormatProperty = core::PropertyDefinitionBuilder<2>::createProperty("Output Format")
+      .withDescription("Format of the created flowfiles")
+      .withAllowedValues({ JSON_FORMAT_STR, OPEN_TELEMETRY_FORMAT_STR })
+      .withDefaultValue(JSON_FORMAT_STR)
+      .build();
+  EXTENSIONAPI static constexpr auto OutputCompactness = core::PropertyDefinitionBuilder<2>::createProperty("Output Compactness")
+      .withDescription("Format of the created flowfiles")
+      .withAllowedValues({ PRETTY_FORMAT_STR, COMPACT_FORMAT_STR})
+      .withDefaultValue(PRETTY_FORMAT_STR)
+      .build();
+  EXTENSIONAPI static constexpr auto DecimalPlaces = core::PropertyDefinitionBuilder<>::createProperty("Round to decimal places")
+      .withDescription("The number of decimal places to round the values to (blank for no rounding)")
+      .withDefaultValue("")
+      .build();
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 5>{
       PredefinedGroups,
       CustomPDHCounters,
       OutputFormatProperty,
       OutputCompactness,
       DecimalPlaces
-    };
-  }
+  };
 
-  EXTENSIONAPI static const core::Relationship Success;
-  static auto relationships() { return std::array{Success}; }
+
+  EXTENSIONAPI static constexpr auto Success = core::RelationshipDefinition{"success", "All files are routed to success"};
+  EXTENSIONAPI static constexpr auto Relationships = std::array{Success};
 
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
@@ -82,8 +101,8 @@ class PerformanceDataMonitor : public core::Processor {
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  void onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &sessionFactory) override;
-  void onTrigger(core::ProcessContext *context, core::ProcessSession *session) override;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& session_factory) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
   void initialize() override;
 
  protected:
@@ -93,11 +112,11 @@ class PerformanceDataMonitor : public core::Processor {
 
   rapidjson::Value& prepareJSONBody(rapidjson::Document& root);
 
-  void setupMembersFromProperties(const std::shared_ptr<core::ProcessContext>& context);
-  void setupCountersFromProperties(const std::shared_ptr<core::ProcessContext>& context);
-  void setupPredefinedGroupsFromProperties(const std::shared_ptr<core::ProcessContext>& context);
-  void setupOutputFormatFromProperties(const std::shared_ptr<core::ProcessContext>& context);
-  void setupDecimalPlacesFromProperties(const std::shared_ptr<core::ProcessContext>& context);
+  void setupMembersFromProperties(core::ProcessContext& context);
+  void setupCountersFromProperties(core::ProcessContext& context);
+  void setupPredefinedGroupsFromProperties(core::ProcessContext& context);
+  void setupOutputFormatFromProperties(core::ProcessContext& context);
+  void setupDecimalPlacesFromProperties(core::ProcessContext& context);
   void addCountersFromPredefinedGroupsProperty(const std::string& custom_pdh_counters);
   void addCustomPDHCountersFromProperty(const std::string& custom_pdh_counters);
 

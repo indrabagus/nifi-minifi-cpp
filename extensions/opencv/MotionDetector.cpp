@@ -21,67 +21,35 @@
 #include "MotionDetector.h"
 #include "core/ProcessContext.h"
 #include "core/ProcessSession.h"
-#include "core/PropertyBuilder.h"
 #include "core/Resource.h"
 
 namespace org::apache::nifi::minifi::processors {
 
-const core::Property MotionDetector::ImageEncoding(
-    core::PropertyBuilder::createProperty("Image Encoding")
-        ->withDescription("The encoding that should be applied to the output")
-        ->isRequired(true)
-        ->withAllowableValues<std::string>({".jpg", ".png"})
-        ->withDefaultValue(".jpg")->build());
-const core::Property MotionDetector::MinInterestArea(
-    core::PropertyBuilder::createProperty("Minimum Area")
-        ->withDescription("We only consider the movement regions with area greater than this.")
-        ->isRequired(true)
-        ->withDefaultValue<uint32_t>(100)->build());
-const core::Property MotionDetector::Threshold(
-    core::PropertyBuilder::createProperty("Threshold for segmentation")
-        ->withDescription("Pixel greater than this will be white, otherwise black.")
-        ->isRequired(true)
-        ->withDefaultValue<uint32_t>(42)->build());
-const core::Property MotionDetector::BackgroundFrame(
-    core::PropertyBuilder::createProperty("Path to background frame")
-        ->withDescription("If not provided then the processor will take the first input frame as background")
-        ->isRequired(true)
-        ->build());
-const core::Property MotionDetector::DilateIter(
-    core::PropertyBuilder::createProperty("Dilate iteration")
-        ->withDescription("For image processing, if an object is detected as 2 separate objects, increase this value")
-        ->isRequired(true)
-        ->withDefaultValue<uint32_t>(10)->build());
-
-const core::Relationship MotionDetector::Success("success", "Successful to detect motion");
-const core::Relationship MotionDetector::Failure("failure", "Failure to detect motion");
-
 void MotionDetector::initialize() {
-  setSupportedProperties(properties());
-  setSupportedRelationships(relationships());
+  setSupportedProperties(Properties);
+  setSupportedRelationships(Relationships);
 }
 
-void MotionDetector::onSchedule(const std::shared_ptr<core::ProcessContext> &context,
-                                  const std::shared_ptr<core::ProcessSessionFactory>& /*sessionFactory*/) {
+void MotionDetector::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory&) {
   std::string value;
 
-  if (context->getProperty(ImageEncoding.getName(), value)) {
+  if (context.getProperty(ImageEncoding, value)) {
     image_encoding_ = value;
   }
 
-  if (context->getProperty(MinInterestArea.getName(), value)) {
+  if (context.getProperty(MinInterestArea, value)) {
     core::Property::StringToInt(value, min_area_);
   }
 
-  if (context->getProperty(Threshold.getName(), value)) {
+  if (context.getProperty(Threshold, value)) {
     core::Property::StringToInt(value, threshold_);
   }
 
-  if (context->getProperty(DilateIter.getName(), value)) {
+  if (context.getProperty(DilateIter, value)) {
     core::Property::StringToInt(value, dil_iter_);
   }
 
-  if (context->getProperty(BackgroundFrame.getName(), value) && !value.empty()) {
+  if (context.getProperty(BackgroundFrame, value) && !value.empty()) {
     bg_img_ = cv::imread(value, cv::IMREAD_GRAYSCALE);
     double scale = IMG_WIDTH / bg_img_.size().width;
     cv::resize(bg_img_, bg_img_, cv::Size(0, 0), scale, scale);
@@ -104,7 +72,7 @@ bool MotionDetector::detectAndDraw(cv::Mat &frame) {
   cv::GaussianBlur(gray, gray, cv::Size(21, 21), 0, 0);
 
   // Get difference between current frame and background
-  logger_->log_trace("Get difference [%d x %d] [%d x %d]", bg_img_.rows, bg_img_.cols, gray.rows, gray.cols);
+  logger_->log_trace("Get difference [{} x {}] [{} x {}]", bg_img_.rows, bg_img_.cols, gray.rows, gray.cols);
   cv::absdiff(gray, bg_img_, img_diff);
   logger_->log_trace("Apply threshold");
   cv::threshold(img_diff, thresh, threshold_, 255, cv::THRESH_BINARY);
@@ -136,26 +104,25 @@ bool MotionDetector::detectAndDraw(cv::Mat &frame) {
   return moved;
 }
 
-void MotionDetector::onTrigger(const std::shared_ptr<core::ProcessContext> &context,
-                                 const std::shared_ptr<core::ProcessSession> &session) {
+void MotionDetector::onTrigger(core::ProcessContext& context, core::ProcessSession& session) {
   std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
   if (!lock.owns_lock()) {
     logger_->log_info("Cannot process due to an unfinished onTrigger");
-    context->yield();
+    context.yield();
     return;
   }
 
-  auto flow_file = session->get();
+  auto flow_file = session.get();
   if (flow_file->getSize() == 0) {
     logger_->log_info("Empty flow file");
     return;
   }
   cv::Mat frame;
 
-  session->read(flow_file, [&frame](const std::shared_ptr<io::InputStream>& input_stream) -> int64_t {
+  session.read(flow_file, [&frame](const std::shared_ptr<io::InputStream>& input_stream) -> int64_t {
     std::vector<uchar> image_buf;
     image_buf.resize(input_stream->size());
-    const auto ret = input_stream->read(gsl::make_span(image_buf).as_span<std::byte>());
+    const auto ret = input_stream->read(as_writable_bytes(std::span(image_buf)));
     if (io::isError(ret) || ret != input_stream->size()) {
       throw std::runtime_error("ImageReadCallback failed to fully read flow file input stream");
     }
@@ -165,7 +132,7 @@ void MotionDetector::onTrigger(const std::shared_ptr<core::ProcessContext> &cont
 
   if (frame.empty()) {
     logger_->log_error("Empty frame.");
-    session->transfer(flow_file, Failure);
+    session.transfer(flow_file, Failure);
   }
 
   double scale = IMG_WIDTH / frame.size().width;
@@ -189,15 +156,15 @@ void MotionDetector::onTrigger(const std::shared_ptr<core::ProcessContext> &cont
 
   detectAndDraw(frame);
 
-  session->putAttribute(flow_file, "filename", filename);
+  session.putAttribute(flow_file, "filename", filename);
 
-  session->write(flow_file, [&frame, this](const auto& output_stream) -> int64_t {
+  session.write(flow_file, [&frame, this](const auto& output_stream) -> int64_t {
     std::vector<uchar> image_buf;
     imencode(image_encoding_, frame, image_buf);
     const auto ret = output_stream->write(image_buf.data(), image_buf.size());
     return io::isError(ret) ? -1 : gsl::narrow<int64_t>(ret);
   });
-  session->transfer(flow_file, Success);
+  session.transfer(flow_file, Success);
   logger_->log_trace("Finish motion detecting");
 }
 

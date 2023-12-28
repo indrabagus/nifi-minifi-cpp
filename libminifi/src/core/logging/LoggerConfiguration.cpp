@@ -94,10 +94,10 @@ LoggerConfiguration::LoggerConfiguration()
       formatter_(std::make_shared<spdlog::pattern_formatter>(spdlog_default_pattern)) {
   controller_ = std::make_shared<LoggerControl>();
   logger_ = std::make_shared<LoggerImpl>(
-      core::getClassName<LoggerConfiguration>(),
+      core::className<LoggerConfiguration>(),
       std::nullopt,
       controller_,
-      get_logger(nullptr, root_namespace_, core::getClassName<LoggerConfiguration>(), formatter_));
+      get_logger(nullptr, root_namespace_, core::className<LoggerConfiguration>(), formatter_));
   loggers.push_back(logger_);
 }
 
@@ -132,6 +132,18 @@ void LoggerConfiguration::initialize(const std::shared_ptr<LoggerProperties> &lo
     include_uuid_ = utils::StringUtils::toBool(*include_uuid_str).value_or(true);
   }
 
+  if (const auto max_log_entry_length_str = logger_properties->getString("max.log.entry.length")) {
+    try {
+      if (internal::UNLIMITED_LOG_ENTRY_LENGTH == *max_log_entry_length_str) {
+        max_log_entry_length_ = -1;
+      } else {
+        max_log_entry_length_ = std::stoi(*max_log_entry_length_str);
+      }
+    } catch (const std::exception& ex) {
+      logger_->log_error("Parsing max log entry length property failed with the following exception: {}", ex.what());
+    }
+  }
+
   formatter_ = std::make_shared<spdlog::pattern_formatter>(spdlog_pattern);
   std::map<std::string, std::shared_ptr<spdlog::logger>> spdloggers;
   for (auto const & logger_impl : loggers) {
@@ -145,16 +157,16 @@ void LoggerConfiguration::initialize(const std::shared_ptr<LoggerProperties> &lo
     }
     logger_impl->set_delegate(spdlogger);
   }
-  logger_->log_debug("Set following pattern on loggers: %s", spdlog_pattern);
+  logger_->log_debug("Set following pattern on loggers: {}", spdlog_pattern);
 }
 
-std::shared_ptr<Logger> LoggerConfiguration::getLogger(const std::string& name, const std::optional<utils::Identifier>& id) {
+std::shared_ptr<Logger> LoggerConfiguration::getLogger(std::string_view name, const std::optional<utils::Identifier>& id) {
   std::lock_guard<std::mutex> lock(mutex);
   return getLogger(name, id, lock);
 }
 
-std::shared_ptr<Logger> LoggerConfiguration::getLogger(const std::string& name, const std::optional<utils::Identifier>& id, const std::lock_guard<std::mutex>& /*lock*/) {
-  std::string adjusted_name = name;
+std::shared_ptr<Logger> LoggerConfiguration::getLogger(std::string_view name, const std::optional<utils::Identifier>& id, const std::lock_guard<std::mutex>& /*lock*/) {
+  std::string adjusted_name{name};
   const std::string clazz = "class ";
   auto haz_clazz = name.find(clazz);
   if (haz_clazz == 0)
@@ -167,6 +179,9 @@ std::shared_ptr<Logger> LoggerConfiguration::getLogger(const std::string& name, 
 
   std::shared_ptr<LoggerImpl> result = std::make_shared<LoggerImpl>(adjusted_name, id_if_enabled, controller_, get_logger(logger_, root_namespace_, adjusted_name, formatter_));
   loggers.push_back(result);
+  if (max_log_entry_length_) {
+    result->set_max_log_size(gsl::narrow<int>(*max_log_entry_length_));
+  }
   return result;
 }
 
@@ -227,7 +242,7 @@ std::shared_ptr<internal::LoggerNamespace> LoggerConfiguration::initialize_names
         if (auto it = sink_map.find(level_name); it != sink_map.end()) {
           sinks.push_back(it->second);
         } else {
-          logger->log_error("Couldn't find sink '%s'", level_name);
+          logger->log_error("Couldn't find sink '{}'", level_name);
         }
       }
     }
@@ -252,8 +267,9 @@ std::shared_ptr<internal::LoggerNamespace> LoggerConfiguration::initialize_names
   return root_namespace;
 }
 
-std::shared_ptr<spdlog::logger> LoggerConfiguration::get_logger(const std::shared_ptr<Logger>& logger, const std::shared_ptr<internal::LoggerNamespace> &root_namespace, const std::string &name,
+std::shared_ptr<spdlog::logger> LoggerConfiguration::get_logger(const std::shared_ptr<Logger>& logger, const std::shared_ptr<internal::LoggerNamespace> &root_namespace, std::string_view name_view,
                                                                 const std::shared_ptr<spdlog::formatter>& formatter, bool remove_if_present) {
+  std::string name{name_view};
   std::shared_ptr<spdlog::logger> spdlogger = spdlog::get(name);
   if (spdlogger) {
     if (remove_if_present) {
@@ -288,8 +304,7 @@ std::shared_ptr<spdlog::logger> LoggerConfiguration::get_logger(const std::share
     current_namespace_str += "::";
   }
   if (logger != nullptr) {
-    const auto levelView(spdlog::level::to_string_view(level));
-    logger->log_debug("%s logger got sinks from namespace %s and level %s from namespace %s", name, sink_namespace_str, std::string(levelView.begin(), levelView.end()), level_namespace_str);
+    logger->log_debug("{} logger got sinks from namespace {} and level {} from namespace {}", name, sink_namespace_str, spdlog::level::to_string_view(level), level_namespace_str);
   }
   std::copy(inherited_sinks.begin(), inherited_sinks.end(), std::back_inserter(sinks));
   spdlogger = std::make_shared<spdlog::logger>(name, begin(sinks), end(sinks));
@@ -375,7 +390,7 @@ std::shared_ptr<spdlog::sinks::rotating_file_sink_mt> LoggerConfiguration::getRo
     }
   }
 
-  int max_file_size = 5_MiB;
+  size_t max_file_size = 5_MiB;
   std::string max_file_size_str;
   if (properties->getString(appender_key + ".max_file_size", max_file_size_str)) {
     core::DataSizeValue::StringToInt(max_file_size_str, max_file_size);

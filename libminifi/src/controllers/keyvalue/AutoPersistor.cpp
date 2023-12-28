@@ -18,7 +18,6 @@
 #include <cinttypes>
 
 #include "controllers/keyvalue/AutoPersistor.h"
-#include "core/PropertyBuilder.h"
 #include "core/TypedValues.h"
 
 using namespace std::literals::chrono_literals;
@@ -61,7 +60,7 @@ void AutoPersistor::persistingThreadFunc() {
   std::unique_lock<std::mutex> lock(persisting_mutex_);
 
   while (true) {
-    logger_->log_trace("Persisting thread is going to sleep for %" PRId64 " ms", int64_t{auto_persistence_interval_.count()});
+    logger_->log_trace("Persisting thread is going to sleep for {}", auto_persistence_interval_);
     persisting_cv_.wait_for(lock, auto_persistence_interval_, [this] {
       return !running_;
     });

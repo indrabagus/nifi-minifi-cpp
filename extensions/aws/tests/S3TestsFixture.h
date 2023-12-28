@@ -24,16 +24,20 @@
 #include <utility>
 #include <string>
 
+#include "controllerservices/AWSCredentialsService.h"
 #include "core/Processor.h"
 #include "TestBase.h"
 #include "Catch.h"
 #include "processors/GetFile.h"
 #include "processors/LogAttribute.h"
+#include "processors/S3Processor.h"
 #include "processors/UpdateAttribute.h"
 #include "utils/file/FileUtils.h"
 #include "MockS3RequestSender.h"
 #include "utils/TestUtils.h"
 #include "AWSCredentialsProvider.h"
+#include "s3/MultipartUploadStateStorage.h"
+#include "s3/S3Wrapper.h"
 
 template<typename T>
 class S3TestsFixture {
@@ -49,6 +53,8 @@ class S3TestsFixture {
     LogTestController::getInstance().setDebug<minifi::processors::LogAttribute>();
     LogTestController::getInstance().setTrace<T>();
     LogTestController::getInstance().setDebug<minifi::aws::AWSCredentialsProvider>();
+    LogTestController::getInstance().setDebug<minifi::aws::s3::MultipartUploadStateStorage>();
+    LogTestController::getInstance().setDebug<minifi::aws::s3::S3Wrapper>();
 
     // Build MiNiFi processing graph
     plan = test_controller.createPlan();
@@ -59,8 +65,8 @@ class S3TestsFixture {
   }
 
   void setAccessKeyCredentialsInController() {
-    plan->setProperty(aws_credentials_service, "Access Key", "key");
-    plan->setProperty(aws_credentials_service, "Secret Key", "secret");
+    plan->setProperty(aws_credentials_service, minifi::aws::controllers::AWSCredentialsService::AccessKey, "key");
+    plan->setProperty(aws_credentials_service, minifi::aws::controllers::AWSCredentialsService::SecretKey, "secret");
   }
 
   template<typename Component>
@@ -72,7 +78,7 @@ class S3TestsFixture {
     aws_credentials_file_stream << "accessKey=key" << std::endl;
     aws_credentials_file_stream << "secretKey=secret" << std::endl;
     aws_credentials_file_stream.close();
-    plan->setProperty(component, "Credentials File", aws_credentials_file.string());
+    plan->setProperty(component, minifi::aws::processors::S3Processor::CredentialsFile, aws_credentials_file.string());
   }
 
   template<typename Component>
@@ -88,7 +94,7 @@ class S3TestsFixture {
   }
 
   void setCredentialsService() {
-    plan->setProperty(s3_processor, "AWS Credentials Provider service", "AWSCredentialsService");
+    plan->setProperty(s3_processor, minifi::aws::processors::S3Processor::AWSCredentialsProviderService, "AWSCredentialsService");
   }
 
   virtual void setAccesKeyCredentialsInProcessor() = 0;
@@ -124,7 +130,7 @@ template<typename T>
 class FlowProcessorS3TestsFixture : public S3TestsFixture<T> {
  public:
   const std::string INPUT_FILENAME = "input_data.log";
-  const std::string INPUT_DATA = "input_data";
+  const std::string INPUT_DATA = "This data is has a length of 37 bytes";
 
   FlowProcessorS3TestsFixture() {
     LogTestController::getInstance().setTrace<minifi::processors::GetFile>();
@@ -135,8 +141,8 @@ class FlowProcessorS3TestsFixture : public S3TestsFixture<T> {
     input_file_stream << INPUT_DATA;
     input_file_stream.close();
     auto get_file = this->plan->addProcessor("GetFile", "GetFile");
-    this->plan->setProperty(get_file, minifi::processors::GetFile::Directory.getName(), input_dir.string());
-    this->plan->setProperty(get_file, minifi::processors::GetFile::KeepSourceFile.getName(), "false");
+    this->plan->setProperty(get_file, minifi::processors::GetFile::Directory, input_dir.string());
+    this->plan->setProperty(get_file, minifi::processors::GetFile::KeepSourceFile, "true");
     update_attribute = this->plan->addProcessor(
       "UpdateAttribute",
       "UpdateAttribute",
@@ -152,29 +158,30 @@ class FlowProcessorS3TestsFixture : public S3TestsFixture<T> {
       "LogAttribute",
       core::Relationship("success", "d"),
       true);
-    this->plan->setProperty(log_attribute, minifi::processors::LogAttribute::FlowFilesToLog.getName(), "0");
+    this->plan->setProperty(log_attribute, minifi::processors::LogAttribute::FlowFilesToLog, "0");
+    log_attribute->setAutoTerminatedRelationships(std::array{core::Relationship("success", "d")});
   }
 
   void setAccesKeyCredentialsInProcessor() override {
-    this->plan->setProperty(update_attribute, "s3.accessKey", "key", true);
+    this->plan->setDynamicProperty(update_attribute, "s3.accessKey", "key");
     this->plan->setProperty(this->s3_processor, "Access Key", "${s3.accessKey}");
-    this->plan->setProperty(update_attribute, "s3.secretKey", "secret", true);
+    this->plan->setDynamicProperty(update_attribute, "s3.secretKey", "secret");
     this->plan->setProperty(this->s3_processor, "Secret Key", "${s3.secretKey}");
   }
 
   void setBucket() override {
-    this->plan->setProperty(update_attribute, "test.bucket", this->S3_BUCKET, true);
+    this->plan->setDynamicProperty(update_attribute, "test.bucket", this->S3_BUCKET);
     this->plan->setProperty(this->s3_processor, "Bucket", "${test.bucket}");
   }
 
   void setProxy() override {
-    this->plan->setProperty(update_attribute, "test.proxyHost", "host", true);
+    this->plan->setDynamicProperty(update_attribute, "test.proxyHost", "host");
     this->plan->setProperty(this->s3_processor, "Proxy Host", "${test.proxyHost}");
-    this->plan->setProperty(update_attribute, "test.proxyPort", "1234", true);
+    this->plan->setDynamicProperty(update_attribute, "test.proxyPort", "1234");
     this->plan->setProperty(this->s3_processor, "Proxy Port", "${test.proxyPort}");
-    this->plan->setProperty(update_attribute, "test.proxyUsername", "username", true);
+    this->plan->setDynamicProperty(update_attribute, "test.proxyUsername", "username");
     this->plan->setProperty(this->s3_processor, "Proxy Username", "${test.proxyUsername}");
-    this->plan->setProperty(update_attribute, "test.proxyPassword", "password", true);
+    this->plan->setDynamicProperty(update_attribute, "test.proxyPassword", "password");
     this->plan->setProperty(this->s3_processor, "Proxy Password", "${test.proxyPassword}");
   }
 
@@ -194,7 +201,7 @@ class FlowProducerS3TestsFixture : public S3TestsFixture<T> {
       "LogAttribute",
       core::Relationship("success", "d"),
       true);
-    this->plan->setProperty(log_attribute, minifi::processors::LogAttribute::FlowFilesToLog.getName(), "0");
+    this->plan->setProperty(log_attribute, minifi::processors::LogAttribute::FlowFilesToLog, "0");
   }
 
   void setAccesKeyCredentialsInProcessor() override {

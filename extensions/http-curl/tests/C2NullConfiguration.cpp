@@ -23,7 +23,6 @@
 #include <iostream>
 #include "InvokeHTTP.h"
 #include "TestBase.h"
-#include "Catch.h"
 #include "core/logging/Logger.h"
 #include "core/ProcessGroup.h"
 #include "TestServer.h"
@@ -70,7 +69,7 @@ class VerifyC2Server : public HTTPIntegrationBase {
 
     assert(inv != nullptr);
     std::string url;
-    inv->getProperty(processors::InvokeHTTP::URL.getName(), url);
+    inv->getProperty(processors::InvokeHTTP::URL, url);
 
     std::string port;
     std::string scheme;

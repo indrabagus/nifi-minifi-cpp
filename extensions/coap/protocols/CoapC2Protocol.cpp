@@ -22,13 +22,14 @@
 #include "io/OutputStream.h"
 #include "core/Resource.h"
 #include "utils/gsl.h"
+#include "utils/span.h"
 
 namespace org::apache::nifi::minifi::coap::c2 {
 
 uint8_t CoapProtocol::REGISTRATION_MSG[8] = { 0x72, 0x65, 0x67, 0x69, 0x73, 0x74, 0x65, 0x72 };
 
-CoapProtocol::CoapProtocol(std::string name, const utils::Identifier &uuid)
-    : RESTSender(std::move(name), uuid),
+CoapProtocol::CoapProtocol(std::string_view name, const utils::Identifier &uuid)
+    : RESTSender(name, uuid),
       require_registration_(false) {
 }
 
@@ -91,7 +92,7 @@ int CoapProtocol::writeHeartbeat(io::OutputStream *stream, const minifi::c2::C2P
 
     stream->write(deviceIdent, false);
 
-    logger_->log_trace("Writing heartbeat with device Ident %s and agent Ident %s", deviceIdent, agentIdent);
+    logger_->log_trace("Writing heartbeat with device Ident {} and agent Ident {}", deviceIdent, agentIdent);
 
     if (agentIdent.empty()) {
       return -1;
@@ -150,13 +151,13 @@ int CoapProtocol::writeHeartbeat(io::OutputStream *stream, const minifi::c2::C2P
       stream->write(bucketId);
       stream->write(flowId);
     } catch (const minifi::c2::PayloadParseException &pe) {
-      logger_->log_error("Parser exception occurred, but is ignorable, reason %s", pe.what());
+      logger_->log_error("Parser exception occurred, but is ignorable, reason {}", pe.what());
       // okay to ignore
       byte = false;
       stream->write(byte);
     }
   } catch (const minifi::c2::PayloadParseException &e) {
-    logger_->log_error("Parser exception occurred, reason %s", e.what());
+    logger_->log_error("Parser exception occurred, reason {}", e.what());
     return -1;
   }
   return 0;
@@ -165,25 +166,25 @@ int CoapProtocol::writeHeartbeat(io::OutputStream *stream, const minifi::c2::C2P
 minifi::c2::Operation CoapProtocol::getOperation(int type) {
   switch (type) {
     case 0:
-      return minifi::c2::Operation::ACKNOWLEDGE;
+      return minifi::c2::Operation::acknowledge;
     case 1:
-      return minifi::c2::Operation::HEARTBEAT;
+      return minifi::c2::Operation::heartbeat;
     case 2:
-      return minifi::c2::Operation::CLEAR;
+      return minifi::c2::Operation::clear;
     case 3:
-      return minifi::c2::Operation::DESCRIBE;
+      return minifi::c2::Operation::describe;
     case 4:
-      return minifi::c2::Operation::RESTART;
+      return minifi::c2::Operation::restart;
     case 5:
-      return minifi::c2::Operation::START;
+      return minifi::c2::Operation::start;
     case 6:
-      return minifi::c2::Operation::UPDATE;
+      return minifi::c2::Operation::update;
     case 7:
-      return minifi::c2::Operation::STOP;
+      return minifi::c2::Operation::stop;
     case 8:
-      return minifi::c2::Operation::PAUSE;
+      return minifi::c2::Operation::pause;
     case 9:
-      return minifi::c2::Operation::RESUME;
+      return minifi::c2::Operation::resume;
     default:
       gsl_FailFast();
   }
@@ -217,8 +218,8 @@ minifi::c2::C2Payload CoapProtocol::serialize(const minifi::c2::C2Payload &paylo
 
   stream.write(version);
   std::string endpoint = "heartbeat";
-  switch (payload.getOperation().value()) {
-    case minifi::c2::Operation::ACKNOWLEDGE:
+  switch (payload.getOperation()) {
+    case minifi::c2::Operation::acknowledge:
       endpoint = "acknowledge";
       payload_type = 0;
       stream.write(&payload_type, 1);
@@ -226,7 +227,7 @@ minifi::c2::C2Payload CoapProtocol::serialize(const minifi::c2::C2Payload &paylo
         return {payload.getOperation(), state::UpdateState::READ_ERROR};
       }
       break;
-    case minifi::c2::Operation::HEARTBEAT:
+    case minifi::c2::Operation::heartbeat:
       payload_type = 1;
       stream.write(&payload_type, 1);
       if (writeHeartbeat(&stream, payload) != 0) {
@@ -242,7 +243,7 @@ minifi::c2::C2Payload CoapProtocol::serialize(const minifi::c2::C2Payload &paylo
   size_t bsize = stream.size();
 
   CoapMessage msg;
-  msg.data_ = const_cast<uint8_t *>(stream.getBuffer().as_span<const uint8_t>().data());
+  msg.data_ = const_cast<uint8_t *>(utils::as_span<const uint8_t>(stream.getBuffer()).data());
   msg.size_ = bsize;
 
   coap::controllers::CoapResponse message = coap_service_->sendPayload(COAP_REQUEST_POST, endpoint, &msg);
@@ -254,7 +255,7 @@ minifi::c2::C2Payload CoapProtocol::serialize(const minifi::c2::C2Payload &paylo
     io::BufferStream responseStream(message_data);
     responseStream.read(version);
     responseStream.read(size);
-    logger_->log_trace("Received ack. version %d. number of operations %d", version, size);
+    logger_->log_trace("Received ack. version {}. number of operations {}", version, size);
     minifi::c2::C2Payload new_payload(payload.getOperation(), state::UpdateState::NESTED);
     for (int i = 0; i < size; i++) {
       uint8_t operationType;
@@ -265,7 +266,7 @@ minifi::c2::C2Payload CoapProtocol::serialize(const minifi::c2::C2Payload &paylo
       REQUIRE_VALID(responseStream.read(id, false))
       REQUIRE_VALID(responseStream.read(operand, false))
 
-      logger_->log_trace("Received op %d, with id %s and operand %s", operationType, id, operand);
+      logger_->log_trace("Received op {}, with id {} and operand {}", operationType, id, operand);
       auto newOp = getOperation(operationType);
       minifi::c2::C2Payload nested_payload(newOp, state::UpdateState::READ_COMPLETE);
       nested_payload.setIdentifier(id);

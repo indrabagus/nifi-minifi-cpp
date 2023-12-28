@@ -17,7 +17,9 @@
 #
 
 # First stage: the build environment
-FROM centos:7
+ARG BASE_IMAGE="centos:7"
+
+FROM ${BASE_IMAGE} AS build
 LABEL maintainer="Apache NiFi <dev@nifi.apache.org>"
 
 ARG MINIFI_VERSION
@@ -41,12 +43,11 @@ RUN mkdir -p $MINIFI_BASE_DIR
 COPY . ${MINIFI_BASE_DIR}
 
 # gpsd-devel and ccache are in EPEL
-RUN yum -y install epel-release && yum -y install sudo git which make libarchive ccache ca-certificates && \
+RUN ulimit -n 1024000 && yum -y install epel-release && yum -y install sudo git which make libarchive ccache ca-certificates perl-IPC-Cmd && \
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_GPS=ON"; then yum -y install gpsd-devel; fi && \
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_JNI=ON"; then yum -y install java-1.8.0-openjdk maven; fi && \
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_PCAP=ON"; then yum -y install libpcap-devel; fi && \
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_USB_CAMERA=ON"; then yum -y install libpng-devel libusbx-devel; fi && \
-    if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_OPENCV=ON" || echo "$MINIFI_OPTIONS" | grep -q "ENABLE_BUSTACHE=ON"; then yum -y install boost-devel; fi && \
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_LUA_SCRIPTING=ON"; then yum -y install lua-devel; fi && \
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_PYTHON_SCRIPTING=ON"; then yum -y install python36-devel; fi && \
     if echo "$MINIFI_OPTIONS" | grep -q "ENABLE_SFTP=ON" && [ "${DOCKER_SKIP_TESTS}" == "OFF" ]; then yum -y install java-1.8.0-openjdk maven; fi
@@ -67,5 +68,5 @@ RUN cd $MINIFI_BASE_DIR && \
     source /opt/rh/devtoolset-11/enable && \
     export PATH=/usr/lib64/ccache${PATH:+:${PATH}} && \
     export CCACHE_DIR=${MINIFI_BASE_DIR}/.ccache && \
-    cmake3 -DSTATIC_BUILD= -DSKIP_TESTS=${DOCKER_SKIP_TESTS} ${MINIFI_OPTIONS} -DAWS_ENABLE_UNITY_BUILD=OFF -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" .. && \
+    cmake -DSTATIC_BUILD= -DSKIP_TESTS=${DOCKER_SKIP_TESTS} ${MINIFI_OPTIONS} -DAWS_ENABLE_UNITY_BUILD=OFF -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" .. && \
     make -j "$(nproc)" ${DOCKER_MAKE_TARGET}

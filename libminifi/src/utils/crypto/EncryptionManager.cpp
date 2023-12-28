@@ -33,24 +33,24 @@ std::shared_ptr<core::logging::Logger> EncryptionManager::logger_{core::logging:
 
 std::optional<XSalsa20Cipher> EncryptionManager::createXSalsa20Cipher(const std::string &key_name) const {
   return readKey(key_name)
-         | utils::map([] (const Bytes& key) {return XSalsa20Cipher{key};});
+         | utils::transform([] (const Bytes& key) {return XSalsa20Cipher{key};});
 }
 
 std::optional<Aes256EcbCipher> EncryptionManager::createAes256EcbCipher(const std::string &key_name) const {
   auto key = readKey(key_name);
   if (!key) {
-    logger_->log_info("No encryption key found for '%s'", key_name);
+    logger_->log_info("No encryption key found for '{}'", key_name);
     return std::nullopt;
   }
   if (key->empty()) {
     // generate new key
-    logger_->log_info("Generating encryption key '%s'", key_name);
+    logger_->log_info("Generating encryption key '{}'", key_name);
     key = Aes256EcbCipher::generateKey();
     if (!writeKey(key_name, key.value())) {
-      logger_->log_warn("Failed to write key '%s'", key_name);
+      logger_->log_warn("Failed to write key '{}'", key_name);
     }
   } else {
-    logger_->log_info("Using existing encryption key '%s'", key_name);
+    logger_->log_info("Using existing encryption key '{}'", key_name);
   }
   return Aes256EcbCipher{key.value()};
 }
@@ -61,7 +61,7 @@ std::optional<Bytes> EncryptionManager::readKey(const std::string& key_name) con
   bootstrap_conf.setHome(key_dir_);
   bootstrap_conf.loadConfigureFile(DEFAULT_NIFI_BOOTSTRAP_FILE);
   return bootstrap_conf.getString(key_name)
-         | utils::map([](const std::string &encryption_key_hex) { return utils::StringUtils::from_hex(encryption_key_hex); });
+         | utils::transform([](const std::string &encryption_key_hex) { return utils::StringUtils::from_hex(encryption_key_hex); });
 }
 
 bool EncryptionManager::writeKey(const std::string &key_name, const Bytes& key) const {

@@ -21,19 +21,15 @@
 
 #include "rapidjson/document.h"
 #include "NetworkInterfaceInfo.h"
-#include "io/ClientSocket.h"
+#include "utils/net/DNS.h"
 
-namespace org {
-namespace apache {
-namespace nifi {
-namespace minifi {
-namespace utils {
+namespace org::apache::nifi::minifi::utils {
 
 class OpenTelemetryLogDataModel {
  public:
   static void appendEventInformation(rapidjson::Document& root, const std::string& event_identifier) {
     rapidjson::Value name;
-    name.SetString(event_identifier.c_str(), event_identifier.length(), root.GetAllocator());
+    name.SetString(event_identifier.c_str(), gsl::narrow<rapidjson::SizeType>(event_identifier.length()), root.GetAllocator());
     root.AddMember("Name", name, root.GetAllocator());
     root.AddMember("Timestamp", rapidjson::Value().SetInt64(std::time(0)), root.GetAllocator());
   }
@@ -50,9 +46,9 @@ class OpenTelemetryLogDataModel {
 
  private:
   static void appendHostName(rapidjson::Value& resource, rapidjson::Document::AllocatorType& allocator) {
-    std::string hostname = io::Socket::getMyHostName();
+    std::string hostname = utils::net::getMyHostName();
     rapidjson::Value hostname_value;
-    hostname_value.SetString(hostname.c_str(), hostname.length(), allocator);
+    hostname_value.SetString(hostname.c_str(), gsl::narrow<rapidjson::SizeType>(hostname.length()), allocator);
     resource.AddMember("host.hostname", hostname_value, allocator);
   }
 
@@ -61,14 +57,14 @@ class OpenTelemetryLogDataModel {
     rapidjson::Value& ip = resource["host.ip"];
     auto network_interface_infos = utils::NetworkInterfaceInfo::getNetworkInterfaceInfos();
     for (const auto& network_interface_info : network_interface_infos) {
-      rapidjson::Value interface_name(network_interface_info.getName().c_str(), network_interface_info.getName().length(), alloc);
+      rapidjson::Value interface_name(network_interface_info.getName().c_str(), gsl::narrow<rapidjson::SizeType>(network_interface_info.getName().length()), alloc);
       rapidjson::Value interface_address_array(rapidjson::kArrayType);
       for (auto& ip_v4_address : network_interface_info.getIpV4Addresses()) {
-        rapidjson::Value address_value(ip_v4_address.c_str(), ip_v4_address.length(), alloc);
+        rapidjson::Value address_value(ip_v4_address.c_str(), gsl::narrow<rapidjson::SizeType>(ip_v4_address.length()), alloc);
         interface_address_array.PushBack(address_value.Move(), alloc);
       }
       for (auto& ip_v6_address : network_interface_info.getIpV6Addresses()) {
-        rapidjson::Value address_value(ip_v6_address.c_str(), ip_v6_address.length(), alloc);
+        rapidjson::Value address_value(ip_v6_address.c_str(), gsl::narrow<rapidjson::SizeType>(ip_v6_address.length()), alloc);
         interface_address_array.PushBack(address_value.Move(), alloc);
       }
       ip.AddMember(interface_name, interface_address_array, alloc);
@@ -76,8 +72,4 @@ class OpenTelemetryLogDataModel {
   }
 };
 
-} /* namespace utils */
-} /* namespace minifi */
-} /* namespace nifi */
-} /* namespace apache */
-} /* namespace org */
+}  // namespace org::apache::nifi::minifi::utils

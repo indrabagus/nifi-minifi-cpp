@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+include(Catch2)
 
 ### test functions
 MACRO(GETSOURCEFILES result curdir)
@@ -30,8 +31,24 @@ ENDMACRO()
 
 set(NANOFI_TEST_DIR "${CMAKE_SOURCE_DIR}/nanofi/tests/")
 
+function(copyTestResources SOURCE_DIR DEST_DIR)
+    file(GLOB_RECURSE RESOURCE_FILES "${SOURCE_DIR}/*")
+    foreach(RESOURCE_FILE ${RESOURCE_FILES})
+        if(IS_DIRECTORY "${RESOURCE_FILE}")
+            continue()
+        endif()
+
+        file(RELATIVE_PATH RESOURCE_RELATIVE_PATH "${SOURCE_DIR}" "${RESOURCE_FILE}")
+        get_filename_component(RESOURCE_DEST_DIR "${DEST_DIR}/${RESOURCE_RELATIVE_PATH}" DIRECTORY)
+
+        file(MAKE_DIRECTORY "${RESOURCE_DEST_DIR}")
+        set(dest_file "${DEST_DIR}/${RESOURCE_RELATIVE_PATH}")
+
+        configure_file(${RESOURCE_FILE} ${dest_file} COPYONLY)
+    endforeach()
+endfunction()
+
 function(appendIncludes testName)
-    target_include_directories(${testName} SYSTEM BEFORE PRIVATE "${CMAKE_SOURCE_DIR}/thirdparty/catch")
     target_include_directories(${testName} BEFORE PRIVATE "${CMAKE_SOURCE_DIR}/include")
     target_include_directories(${testName} BEFORE PRIVATE "${CMAKE_SOURCE_DIR}/libminifi/include/")
     target_include_directories(${testName} BEFORE PRIVATE "${CMAKE_SOURCE_DIR}/libminifi/include/c2/protocols")
@@ -59,16 +76,9 @@ function(createTests testName)
     message(DEBUG "-- Adding test: ${testName}")
     appendIncludes("${testName}")
 
-    if (Boost_FOUND)
-        target_include_directories(${testName} BEFORE PRIVATE "${Boost_INCLUDE_DIRS}")
-    endif()
     target_link_libraries(${testName} ${CMAKE_DL_LIBS})
     target_wholearchive_library(${testName} ${TEST_BASE_LIB})
     target_link_libraries(${testName} core-minifi yaml-cpp spdlog Threads::Threads)
-    if (Boost_FOUND)
-        target_link_libraries(${testName} ${Boost_SYSTEM_LIBRARY})
-        target_link_libraries(${testName} ${Boost_FILESYSTEM_LIBRARY})
-    endif()
     target_compile_definitions(${testName} PRIVATE LOAD_EXTENSIONS)
     set_target_properties(${testName} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 endfunction()
@@ -76,22 +86,16 @@ endfunction()
 enable_testing(test)
 
 SET(TEST_BASE_LIB test_base)
-set(TEST_BASE_SOURCES "TestBase.cpp" "RandomServerSocket.cpp" "StatefulProcessor.cpp" "WriteToFlowFileTestProcessor.cpp" "ReadFromFlowFileTestProcessor.cpp" "DummyProcessor.cpp")
+set(TEST_BASE_SOURCES "TestBase.cpp" "StatefulProcessor.cpp" "WriteToFlowFileTestProcessor.cpp" "ReadFromFlowFileTestProcessor.cpp" "DummyProcessor.cpp")
 list(TRANSFORM TEST_BASE_SOURCES PREPEND "${TEST_DIR}/")
 add_library(${TEST_BASE_LIB} STATIC "${TEST_BASE_SOURCES}")
 target_link_libraries(${TEST_BASE_LIB} core-minifi)
-target_include_directories(${TEST_BASE_LIB} SYSTEM BEFORE PRIVATE "${CMAKE_SOURCE_DIR}/thirdparty/catch")
 target_include_directories(${TEST_BASE_LIB} BEFORE PRIVATE "${CMAKE_SOURCE_DIR}/libminifi/include/")
 if(WIN32)
     target_include_directories(${TEST_BASE_LIB} BEFORE PRIVATE "${CMAKE_SOURCE_DIR}/libminifi/opsys/win")
 else()
     target_include_directories(${TEST_BASE_LIB} BEFORE PRIVATE "${CMAKE_SOURCE_DIR}/libminifi/opsys/posix")
 endif()
-
-SET(CATCH_MAIN_LIB catch_main)
-add_library(${CATCH_MAIN_LIB} STATIC "${TEST_DIR}/CatchMain.cpp")
-target_include_directories(${CATCH_MAIN_LIB} SYSTEM BEFORE PRIVATE "${CMAKE_SOURCE_DIR}/thirdparty/catch")
-target_link_libraries(${CATCH_MAIN_LIB} spdlog)  # for fmt
 
 SET(TEST_RESOURCES ${TEST_DIR}/resources)
 
@@ -100,13 +104,17 @@ GETSOURCEFILES(TLS_UNIT_TESTS "${TEST_DIR}/unit/tls/")
 GETSOURCEFILES(NANOFI_UNIT_TESTS "${NANOFI_TEST_DIR}")
 GETSOURCEFILES(INTEGRATION_TESTS "${TEST_DIR}/integration/")
 
+if (NOT WIN32)
+    list(REMOVE_ITEM UNIT_TESTS WindowsCertStoreLocationTests.cpp)
+endif()
+
 SET(UNIT_TEST_COUNT 0)
 FOREACH(testfile ${UNIT_TESTS})
     get_filename_component(testfilename "${testfile}" NAME_WE)
     add_executable("${testfilename}" "${TEST_DIR}/unit/${testfile}")
     target_compile_definitions("${testfilename}" PRIVATE TZ_DATA_DIR="${CMAKE_BINARY_DIR}/tzdata")
     createTests("${testfilename}")
-    target_link_libraries(${testfilename} ${CATCH_MAIN_LIB})
+    target_link_libraries(${testfilename} Catch2WithMain)
     MATH(EXPR UNIT_TEST_COUNT "${UNIT_TEST_COUNT}+1")
     add_test(NAME "${testfilename}" COMMAND "${testfilename}" WORKING_DIRECTORY ${TEST_DIR})
 ENDFOREACH()
@@ -134,7 +142,7 @@ if(NOT WIN32 AND ENABLE_NANOFI)
         target_include_directories(${testfilename} BEFORE PRIVATE "${CMAKE_SOURCE_DIR}/extensions/standard-processors/processors/")
         target_include_directories(${testfilename} BEFORE PRIVATE "${CMAKE_SOURCE_DIR}/libminifi/test")
         appendIncludes("${testfilename}")
-        target_link_libraries(${testfilename} ${CATCH_MAIN_LIB} Threads::Threads)
+        target_link_libraries(${testfilename} Catch2WithMain Threads::Threads)
 
         target_wholearchive_library(${testfilename} nanofi)
 
@@ -144,10 +152,6 @@ if(NOT WIN32 AND ENABLE_NANOFI)
 
         MATH(EXPR UNIT_TEST_COUNT "${UNIT_TEST_COUNT}+1")
         add_test(NAME "${testfilename}" COMMAND "${testfilename}" WORKING_DIRECTORY ${TEST_DIR})
-        if (Boost_FOUND)
-            target_link_libraries(${testfilename} ${Boost_SYSTEM_LIBRARY})
-            target_link_libraries(${testfilename} ${Boost_FILESYSTEM_LIBRARY})
-        endif()
     ENDFOREACH()
     message("-- Finished building ${UNIT_TEST_COUNT} NanoFi unit test file(s)...")
 endif()

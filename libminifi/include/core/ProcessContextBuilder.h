@@ -50,13 +50,13 @@ namespace org::apache::nifi::minifi::core {
  */
 class ProcessContextBuilder : public core::CoreComponent, public std::enable_shared_from_this<ProcessContextBuilder> {
  public:
-  ProcessContextBuilder(std::string name, const minifi::utils::Identifier &uuid);
+  ProcessContextBuilder(std::string_view name, const minifi::utils::Identifier &uuid);
 
-  explicit ProcessContextBuilder(std::string name);
+  explicit ProcessContextBuilder(std::string_view name);
 
   ~ProcessContextBuilder() override = default;
 
-  static auto properties() { return std::array<core::Property, 0>{}; }
+  MINIFIAPI static constexpr auto Properties = std::array<core::PropertyReference, 0>{};
   MINIFIAPI static constexpr bool SupportsDynamicProperties = false;
   MINIFIAPI static constexpr bool SupportsDynamicRelationships = false;
 
@@ -74,7 +74,7 @@ class ProcessContextBuilder : public core::CoreComponent, public std::enable_sha
 
  protected:
   std::shared_ptr<minifi::Configure> configuration_;
-  core::controller::ControllerServiceProvider* controller_service_provider_;
+  core::controller::ControllerServiceProvider* controller_service_provider_ = nullptr;
   std::shared_ptr<core::Repository> prov_repo_;
   std::shared_ptr<core::Repository> flow_repo_;
   std::shared_ptr<core::ContentRepository> content_repo_;

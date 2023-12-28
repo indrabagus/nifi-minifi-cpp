@@ -36,8 +36,8 @@ TEST_CASE("Script engine is not set", "[executescriptMisconfiguration]") {
 
   auto execute_script = plan->addProcessor("ExecuteScript", "executeScript");
 
-  plan->setProperty(execute_script, ExecuteScript::ScriptEngine.getName(), "");
-  plan->setProperty(execute_script, ExecuteScript::ScriptFile.getName(), "/path/to/script.lua");
+  plan->setProperty(execute_script, ExecuteScript::ScriptEngine, "");
+  plan->setProperty(execute_script, ExecuteScript::ScriptFile, "/path/to/script.lua");
 
   REQUIRE_THROWS_AS(test_controller.runSession(plan, true), minifi::Exception);
 }
@@ -48,7 +48,7 @@ TEST_CASE("Neither script body nor script file is set", "[executescriptMisconfig
 
   auto execute_script = plan->addProcessor("ExecuteScript", "executeScript");
 
-  plan->setProperty(execute_script, ExecuteScript::ScriptEngine.getName(), "lua");
+  plan->setProperty(execute_script, ExecuteScript::ScriptEngine, "lua");
 
   REQUIRE_THROWS_AS(test_controller.runSession(plan, true), minifi::Exception);
 }
@@ -59,9 +59,9 @@ TEST_CASE("Test both script body and script file set", "[executescriptMisconfigu
 
   auto execute_script = plan->addProcessor("ExecuteScript", "executeScript");
 
-  plan->setProperty(execute_script, ExecuteScript::ScriptEngine.getName(), "lua");
-  plan->setProperty(execute_script, ExecuteScript::ScriptFile.getName(), "/path/to/script.lua");
-  plan->setProperty(execute_script, ExecuteScript::ScriptBody.getName(), R"(
+  plan->setProperty(execute_script, ExecuteScript::ScriptEngine, "lua");
+  plan->setProperty(execute_script, ExecuteScript::ScriptFile, "/path/to/script.lua");
+  plan->setProperty(execute_script, ExecuteScript::ScriptBody, R"(
 function onTrigger(context, session)
   log:info('hello from lua')
 end
@@ -244,8 +244,8 @@ TEST_CASE("Lua: Test Require", "[executescriptLuaRequire]") {
 
   auto executeScript = plan->addProcessor("ExecuteScript", "executeScript");
 
-  plan->setProperty(executeScript, ExecuteScript::ScriptEngine.getName(), "lua");
-  plan->setProperty(executeScript, ExecuteScript::ScriptBody.getName(), R"(
+  plan->setProperty(executeScript, ExecuteScript::ScriptEngine, "lua");
+  plan->setProperty(executeScript, ExecuteScript::ScriptBody, R"(
     require 'os'
     require 'coroutine'
     require 'math'
@@ -275,8 +275,7 @@ TEST_CASE("Lua: Test Module Directory property", "[executescriptLuaModuleDirecto
   minifi::test::SingleProcessorTestController controller{execute_script};
   LogTestController::getInstance().setTrace<ExecuteScript>();
 
-  const auto script_files_directory = std::filesystem::path(__FILE__).parent_path() / "test_lua_scripts";
-
+  const auto script_files_directory =  minifi::utils::file::FileUtils::get_executable_dir() / "resources" / "test_lua_scripts";
 
   execute_script->setProperty(ExecuteScript::ScriptEngine, "lua");
   execute_script->setProperty(ExecuteScript::ScriptFile, (script_files_directory / "foo_bar_processor.lua").string());
@@ -307,7 +306,7 @@ TEST_CASE("Lua can remove flowfiles", "[ExecuteScript]") {
   minifi::test::SingleProcessorTestController controller{execute_script};
   LogTestController::getInstance().setTrace<ExecuteScript>();
   execute_script->setProperty(ExecuteScript::ScriptEngine, "lua");
-  execute_script->setProperty(ExecuteScript::ScriptBody.getName(),
+  execute_script->setProperty(ExecuteScript::ScriptBody,
       R"(
         function onTrigger(context, session)
           flow_file = session:get()
@@ -325,7 +324,7 @@ TEST_CASE("Lua can store states in StateManager", "[ExecuteScript]") {
   minifi::test::SingleProcessorTestController controller{execute_script};
   LogTestController::getInstance().setTrace<minifi::processors::ExecuteScript>();
   execute_script->setProperty(ExecuteScript::ScriptEngine, "lua");
-  execute_script->setProperty(ExecuteScript::ScriptBody.getName(),
+  execute_script->setProperty(ExecuteScript::ScriptBody,
       R"(
         function onTrigger(context, session)
           state_manager = context:getStateManager()

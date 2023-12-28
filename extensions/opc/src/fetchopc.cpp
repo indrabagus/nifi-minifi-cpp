@@ -25,15 +25,16 @@
 #include "core/ProcessSession.h"
 #include "core/Resource.h"
 #include "utils/StringUtils.h"
+#include "utils/Enum.h"
 
 namespace org::apache::nifi::minifi::processors {
 
   void FetchOPCProcessor::initialize() {
-    setSupportedProperties(properties());
-    setSupportedRelationships(relationships());
+    setSupportedProperties(Properties);
+    setSupportedRelationships(Relationships);
   }
 
-  void FetchOPCProcessor::onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &factory) {
+  void FetchOPCProcessor::onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& factory) {
     logger_->log_trace("FetchOPCProcessor::onSchedule");
 
     translatedNodeIDs_.clear();  // Path might has changed during restart
@@ -41,11 +42,11 @@ namespace org::apache::nifi::minifi::processors {
     BaseOPCProcessor::onSchedule(context, factory);
 
     std::string value;
-    context->getProperty(NodeID.getName(), nodeID_);
-    context->getProperty(NodeIDType.getName(), value);
+    context.getProperty(NodeID, nodeID_);
+    context.getProperty(NodeIDType, value);
 
     maxDepth_ = 0;
-    context->getProperty(MaxDepth.getName(), maxDepth_);
+    context.getProperty(MaxDepth, maxDepth_);
 
     if (value == "String") {
       idType_ = opc::OPCNodeIDType::String;
@@ -68,17 +69,17 @@ namespace org::apache::nifi::minifi::processors {
       }
     }
     if (idType_ != opc::OPCNodeIDType::Path) {
-      if (!context->getProperty(NameSpaceIndex.getName(), nameSpaceIdx_)) {
-        auto error_msg = utils::StringUtils::join_pack(NameSpaceIndex.getName(), " is mandatory in case ", NodeIDType.getName(), " is not Path");
+      if (!context.getProperty(NameSpaceIndex, nameSpaceIdx_)) {
+        auto error_msg = utils::StringUtils::join_pack(NameSpaceIndex.name, " is mandatory in case ", NodeIDType.name, " is not Path");
         throw Exception(PROCESS_SCHEDULE_EXCEPTION, error_msg);
       }
     }
 
-    context->getProperty(Lazy.getName(), value);
+    context.getProperty(Lazy, value);
     lazy_mode_ = value == "On";
   }
 
-  void FetchOPCProcessor::onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) {
+  void FetchOPCProcessor::onTrigger(core::ProcessContext& context, core::ProcessSession& session) {
     logger_->log_trace("FetchOPCProcessor::onTrigger");
 
     if (!reconnect()) {
@@ -95,12 +96,12 @@ namespace org::apache::nifi::minifi::processors {
       myID.namespaceIndex = nameSpaceIdx_;
       if (idType_ == opc::OPCNodeIDType::Int) {
         myID.identifierType = UA_NODEIDTYPE_NUMERIC;
-        myID.identifier.numeric = std::stoi(nodeID_);
+        myID.identifier.numeric = std::stoi(nodeID_);  // NOLINT(cppcoreguidelines-pro-type-union-access)
       } else if (idType_ == opc::OPCNodeIDType::String) {
         myID.identifierType = UA_NODEIDTYPE_STRING;
-        myID.identifier.string = UA_STRING_ALLOC(nodeID_.c_str());
+        myID.identifier.string = UA_STRING_ALLOC(nodeID_.c_str());  // NOLINT(cppcoreguidelines-pro-type-union-access)
       } else {
-        logger_->log_error("Unhandled id type: '%d'. No flowfiles are generated.", idType_);
+        logger_->log_error("Unhandled id type: '{}'. No flowfiles are generated.", magic_enum::enum_underlying(idType_));
         yield();
         return;
       }
@@ -109,7 +110,7 @@ namespace org::apache::nifi::minifi::processors {
       if (translatedNodeIDs_.empty()) {
         auto sc = connection_->translateBrowsePathsToNodeIdsRequest(nodeID_, translatedNodeIDs_, logger_);
         if (sc != UA_STATUSCODE_GOOD) {
-          logger_->log_error("Failed to translate %s to node id, no flow files will be generated (%s)", nodeID_.c_str(), UA_StatusCode_name(sc));
+          logger_->log_error("Failed to translate {} to node id, no flow files will be generated ({})", nodeID_.c_str(), UA_StatusCode_name(sc));
           yield();
           return;
         }
@@ -128,7 +129,7 @@ namespace org::apache::nifi::minifi::processors {
   }
 
   bool FetchOPCProcessor::nodeFoundCallBack(opc::Client& /*client*/, const UA_ReferenceDescription *ref, const std::string& path,
-      const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) {
+      core::ProcessContext& context, core::ProcessSession& session) {
     nodesFound_++;
     if (ref->nodeClass == UA_NODECLASS_VARIABLE) {
       try {
@@ -141,7 +142,7 @@ namespace org::apache::nifi::minifi::processors {
           std::string new_timestamp = nodedata.attributes["Sourcetimestamp"];
           if (cur_timestamp != new_timestamp) {
             node_timestamp_[nodeid] = new_timestamp;
-            logger_->log_debug("Node %s has new source timestamp %s", nodeid, new_timestamp);
+            logger_->log_debug("Node {} has new source timestamp {}", nodeid, new_timestamp);
             write = true;
           }
         }
@@ -151,14 +152,14 @@ namespace org::apache::nifi::minifi::processors {
         }
       } catch (const std::exception& exception) {
         std::string browse_name(reinterpret_cast<char*>(ref->browseName.name.data), ref->browseName.name.length);
-        logger_->log_warn("Caught Exception while trying to get data from node %s: %s", path + "/" + browse_name, exception.what());
+        logger_->log_warn("Caught Exception while trying to get data from node {}: {}", path + "/" + browse_name, exception.what());
       }
     }
     return true;
   }
 
-  void FetchOPCProcessor::OPCData2FlowFile(const opc::NodeData& opcnode, const std::shared_ptr<core::ProcessContext>& /*context*/, const std::shared_ptr<core::ProcessSession> &session) {
-    auto flowFile = session->create();
+  void FetchOPCProcessor::OPCData2FlowFile(const opc::NodeData& opcnode, core::ProcessContext&, core::ProcessSession& session) {
+    auto flowFile = session.create();
     if (flowFile == nullptr) {
       logger_->log_error("Failed to create flowfile!");
       return;
@@ -168,16 +169,18 @@ namespace org::apache::nifi::minifi::processors {
     }
     if (!opcnode.data.empty()) {
       try {
-        session->writeBuffer(flowFile, opc::nodeValue2String(opcnode));
+        session.writeBuffer(flowFile, opc::nodeValue2String(opcnode));
       } catch (const std::exception& e) {
         std::string browsename;
         flowFile->getAttribute("Browsename", browsename);
-        logger_->log_info("Failed to extract data of OPC node %s: %s", browsename, e.what());
-        session->transfer(flowFile, Failure);
+        logger_->log_info("Failed to extract data of OPC node {}: {}", browsename, e.what());
+        session.transfer(flowFile, Failure);
         return;
       }
     }
-    session->transfer(flowFile, Success);
+    session.transfer(flowFile, Success);
   }
+
+REGISTER_RESOURCE(FetchOPCProcessor, Processor);
 
 }  // namespace org::apache::nifi::minifi::processors

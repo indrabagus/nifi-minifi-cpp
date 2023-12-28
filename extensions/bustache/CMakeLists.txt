@@ -17,12 +17,11 @@
 # under the License.
 #
 
-if (NOT ENABLE_BUSTACHE)
+if (NOT (ENABLE_ALL OR ENABLE_BUSTACHE))
     return()
 endif()
 
-include(BundledBustache)
-use_bundled_bustache(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR})
+include(Bustache)
 
 include(${CMAKE_SOURCE_DIR}/extensions/ExtensionHeader.txt)
 
@@ -31,7 +30,7 @@ file(GLOB SOURCES "*.cpp")
 add_library(minifi-bustache-extensions SHARED ${SOURCES})
 
 target_link_libraries(minifi-bustache-extensions ${LIBMINIFI})
-target_link_libraries(minifi-bustache-extensions BUSTACHE::libbustache)
+target_link_libraries(minifi-bustache-extensions bustache)
 
-register_extension(minifi-bustache-extensions "BUSTACHE EXTENSIONS" BUSTACHE-EXTENSIONS "This enables bustache functionality including ApplyTemplate." "${TEST_DIR}/bustache-tests")
+register_extension(minifi-bustache-extensions "BUSTACHE EXTENSIONS" BUSTACHE-EXTENSIONS "This enables bustache functionality including ApplyTemplate." "extensions/bustache/tests")
 register_extension_linter(minifi-bustache-extensions-linter)

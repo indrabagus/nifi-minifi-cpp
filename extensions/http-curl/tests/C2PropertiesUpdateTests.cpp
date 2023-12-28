@@ -24,7 +24,7 @@
 #include "utils/gsl.h"
 #include "utils/IntegrationTestUtils.h"
 #include "EmptyFlow.h"
-#include "spdlog/spdlog.h"
+#include "fmt/format.h"
 #include "spdlog/sinks/stdout_sinks.h"
 #include "spdlog/sinks/ostream_sink.h"
 #include "spdlog/sinks/dist_sink.h"
@@ -93,6 +93,7 @@ class VerifyPropertyUpdate : public HTTPIntegrationBase {
   VerifyPropertyUpdate(VerifyPropertyUpdate&&) = default;
   VerifyPropertyUpdate& operator=(const VerifyPropertyUpdate&) = delete;
   VerifyPropertyUpdate& operator=(VerifyPropertyUpdate&&) = default;
+  ~VerifyPropertyUpdate() override = default;
 
   void testSetup() override {}
 
@@ -140,7 +141,7 @@ int main() {
   // this sets the ostream logger
   auto log_test_controller = LogTestController::getInstance(logger_properties);
 
-  logger_properties->setHome(home_dir.string());
+  logger_properties->setHome(home_dir);
   logger_properties->loadConfigureFile("conf/minifi-log.properties");
   core::logging::LoggerConfiguration::getConfiguration().initialize(logger_properties);
 

@@ -24,10 +24,11 @@
 
 #include "utils/ByteArrayCallback.h"
 #include "FlowFileRecord.h"
+#include "core/Core.h"
 #include "core/Processor.h"
 #include "core/ProcessSession.h"
-#include "core/Core.h"
-#include "core/Property.h"
+#include "core/PropertyDefinition.h"
+#include "core/RelationshipDefinition.h"
 #include "utils/Id.h"
 #include "RTIMULib.h"
 #include "SensorBase.h"
@@ -43,9 +44,9 @@ class GetEnvironmentalSensors : public SensorBase {
   ~GetEnvironmentalSensors() override;
 
   EXTENSIONAPI static constexpr const char* Description = "Provides sensor information from known sensors to include humidity and pressure data";
-  static auto properties() { return std::array<core::Property, 0>{}; }
-  EXTENSIONAPI static const core::Relationship Success;
-  static auto relationships() { return std::array{Success}; }
+  EXTENSIONAPI static constexpr auto Properties = std::array<core::PropertyReference, 0>{};
+  EXTENSIONAPI static constexpr auto Success = core::RelationshipDefinition{"success", "All files are routed to success"};
+  EXTENSIONAPI static constexpr auto Relationships = std::array{Success};
   EXTENSIONAPI static constexpr bool SupportsDynamicProperties = false;
   EXTENSIONAPI static constexpr bool SupportsDynamicRelationships = false;
   EXTENSIONAPI static constexpr core::annotation::Input InputRequirement = core::annotation::Input::INPUT_ALLOWED;
@@ -53,9 +54,9 @@ class GetEnvironmentalSensors : public SensorBase {
 
   ADD_COMMON_VIRTUAL_FUNCTIONS_FOR_PROCESSORS
 
-  void onTrigger(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSession> &session) override;
+  void onTrigger(core::ProcessContext& context, core::ProcessSession& session) override;
   void initialize() override;
-  void onSchedule(const std::shared_ptr<core::ProcessContext> &context, const std::shared_ptr<core::ProcessSessionFactory> &sessionFactory) override;
+  void onSchedule(core::ProcessContext& context, core::ProcessSessionFactory& session_factory) override;
 
  protected:
   void notifyStop() override;

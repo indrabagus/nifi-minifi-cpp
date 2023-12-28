@@ -27,6 +27,7 @@
 #include "azure/identity.hpp"
 
 #include "utils/AzureSdkLogger.h"
+#include "utils/span.h"
 
 namespace org::apache::nifi::minifi::azure::storage {
 
@@ -38,7 +39,7 @@ std::unique_ptr<Azure::Storage::Files::DataLake::DataLakeFileSystemClient> Azure
     const AzureStorageCredentials& credentials, const std::string& file_system_name, std::optional<uint64_t> number_of_retries) {
   Azure::Storage::Files::DataLake::DataLakeClientOptions options;
   if (number_of_retries) {
-    options.Retry.MaxRetries = *number_of_retries;
+    options.Retry.MaxRetries = gsl::narrow<int32_t>(*number_of_retries);
   }
 
   if (credentials.getUseManagedIdentityCredentials()) {
@@ -70,9 +71,9 @@ bool AzureDataLakeStorageClient::createFile(const PutAzureDataLakeStorageParamet
   return response.Value.Created;
 }
 
-std::string AzureDataLakeStorageClient::uploadFile(const PutAzureDataLakeStorageParameters& params, gsl::span<const std::byte> buffer) {
+std::string AzureDataLakeStorageClient::uploadFile(const PutAzureDataLakeStorageParameters& params, std::span<const std::byte> buffer) {
   auto file_client = getFileClient(params);
-  file_client.UploadFrom(buffer.as_span<const uint8_t>().data(), buffer.size());
+  file_client.UploadFrom(minifi::utils::as_span<const uint8_t>(buffer).data(), buffer.size());
   return file_client.GetUrl();
 }
 
@@ -88,7 +89,7 @@ std::unique_ptr<io::InputStream> AzureDataLakeStorageClient::fetchFile(const Fet
   if (params.range_start || params.range_length) {
     Azure::Core::Http::HttpRange range;
     if (params.range_start) {
-      range.Offset = *params.range_start;
+      range.Offset = gsl::narrow<int64_t>(*params.range_start);
     }
 
     if (params.range_length) {
